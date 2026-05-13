@@ -1,0 +1,23 @@
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+
+contextBridge.exposeInMainWorld("cicd", {
+  checkPrerequisites: () => ipcRenderer.invoke("check-prerequisites"),
+  selectDirectory: () => ipcRenderer.invoke("select-directory"),
+  selectFiles: (extensions) => ipcRenderer.invoke("select-files", extensions),
+  selectActionDocument: () => ipcRenderer.invoke("select-action-document"),
+  selectEvidenceImages: () => ipcRenderer.invoke("select-evidence-images"),
+  captureAppWindow: () => ipcRenderer.invoke("capture-app-window"),
+  captureScreenRegion: () => ipcRenderer.invoke("capture-screen-region"),
+  getPathForFile: (file) => webUtils?.getPathForFile(file) ?? file?.path ?? "",
+  scanRepositories: (basePath) => ipcRenderer.invoke("scan-repositories", basePath),
+  cloneRepository: (payload) => ipcRenderer.invoke("clone-repository", payload),
+  prepareRfcDraft: (payload) => ipcRenderer.invoke("prepare-rfc-draft", payload),
+  getDraftSummary: (payload) => ipcRenderer.invoke("get-draft-summary", payload),
+  finalizeRfc: (payload) => ipcRenderer.invoke("finalize-rfc", payload),
+  inspectArtifacts: (filePaths) => ipcRenderer.invoke("inspect-artifacts", filePaths),
+  exportEvidenceDocx: (payload) => ipcRenderer.invoke("export-evidence-docx", payload),
+  exportEvidencePdf: (payload) => ipcRenderer.invoke("export-evidence-pdf", payload),
+  backupUserData: (payload) => ipcRenderer.invoke("backup-user-data", payload),
+  clearUserFiles: () => ipcRenderer.invoke("clear-user-files"),
+  openExternal: (url) => ipcRenderer.invoke("open-external", url)
+});

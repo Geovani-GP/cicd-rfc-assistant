@@ -1,0 +1,66 @@
+{
+  "name": "cicd-rfc-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop assistant for OIC CI/CD RFC package preparation.",
+  "author": "CSS Team Mex / EU",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on tcp:5173 && node scripts/start-electron-dev.cjs\"",
+    "build": "tsc && vite build && tsc -p electron/tsconfig.json && node scripts/copy-preload.cjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "electron:pack": "npm run build && electron-builder --dir",
+    "electron:dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "vite": "^7.1.10",
+    "typescript": "^5.9.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "lucide-react": "^0.545.0",
+    "concurrently": "^9.2.1",
+    "wait-on": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.bimbo.cicd.rfcassistant",
+    "productName": "CICD Assistant",
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "CFBundleDisplayName": "CI/CD Assistant"
+      }
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    }
+  }
+}
