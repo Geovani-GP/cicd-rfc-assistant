@@ -17,6 +17,7 @@ import {
   Languages,
   Loader2,
   Menu,
+  MessageSquareText,
   Palette,
   PanelRightOpen,
   Play,
@@ -30,12 +31,14 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import type { CSSProperties } from "react";
 import type {
   ActionSourceDocument,
   ArtifactInspection,
   DraftSummary,
   EvidenceImage,
+  FinalizeResult,
   Prerequisite,
   RepositoryInfo,
   SelectedFile
@@ -80,12 +83,16 @@ function avatarUrl(seed: string, style = defaultProfile.avatarStyle) {
   return `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(seed)}&radius=50`;
 }
 
-type StepId = "actionPlan" | "package" | "review" | "pipeline" | "prodPipeline";
+type StepId = "actionPlan" | "package" | "review" | "pipeline";
+type PipelinePhase = "TEST" | "PROD";
+type ExecutionMode = "general" | "cicd";
 type Lang = "es" | "en" | "pt";
 type EvidenceItem = EvidenceImage & {
   id: string;
   step: StepId;
+  rfc?: string;
   pipelineStep?: number;
+  pipelinePhase?: PipelinePhase;
   createdAt: string;
   note: string;
   source: "capture" | "region" | "file" | "clipboard";
@@ -94,6 +101,7 @@ type EvidenceLog = {
   id: string;
   at: string;
   step: StepId;
+  rfc?: string;
   text: string;
 };
 type ExecutionHistoryItem = {
@@ -109,6 +117,49 @@ type ManualActionPhase = {
   title: string;
   content: string;
 };
+type PipelineExecutionStep = {
+  title: string;
+  detail: string;
+};
+
+const cicdExecutionSteps: PipelineExecutionStep[] = [
+  {
+    title: "Abrir Visual Builder Studio",
+    detail: "Acceder al proyecto CI/CD en Visual Builder Studio."
+  },
+  {
+    title: "Crear Merge Request",
+    detail: "Ir a Merge Requests, seleccionar el repositorio, target release y review branch con el RFC."
+  },
+  {
+    title: "Solicitar aprobadores",
+    detail: "Seleccionar revisores/aprobadores y dejar el merge request listo para revision."
+  },
+  {
+    title: "Aprobar y completar merge",
+    detail: "Dar seguimiento a la aprobacion y completar el merge hacia release."
+  },
+  {
+    title: "Ejecutar pipeline",
+    detail: "Ir a Builds > Pipelines, buscar el pipeline correspondiente y ejecutar el run."
+  },
+  {
+    title: "Registrar run",
+    detail: "Capturar el numero de run generado por Visual Builder Studio y validar la URL del run."
+  },
+  {
+    title: "Dar seguimiento a aprobaciones",
+    detail: "Monitorear aprobaciones del pipeline y validar que la ejecucion termine correctamente."
+  },
+  {
+    title: "Validacion post-deployment",
+    detail: "Validar los artefactos/componentes instalados en el ambiente destino."
+  },
+  {
+    title: "Compartir evidencia",
+    detail: "Descargar evidencia DOCX/PDF y adjuntarla al RFC."
+  }
+];
 type InstantTooltip = {
   text: string;
   x: number;
@@ -242,10 +293,9 @@ const copy = {
       actionPlan: ["Action Plan", "Plantilla independiente"],
       setup: ["Instalacion", "Git, Node y carpeta base"],
       repositories: ["Repositorios", "Detectar o clonar region"],
-      package: ["RFC", "Artefactos y manifiestos"],
-      review: ["Confirmacion", "Resumen, logs y push"],
-      pipeline: ["Pipeline TEST", "Ejecucion, evidencia y cierre"],
-      prodPipeline: ["Pipeline PROD", "Mismo flujo con run productivo"]
+      package: ["CI/CD RFC", "Artefactos y manifiestos"],
+      review: ["CI/CD Confirmacion", "Resumen, logs y push"],
+      pipeline: ["Ejecucion RFC", "Action Plan, evidencia y cierre"]
     },
     messages: {
       unexpected: "Ocurrio un error inesperado.",
@@ -299,8 +349,8 @@ const copy = {
       prepare: "Preparar RFC"
     },
     pkg: {
-      title: "Paquete RFC",
-      body: "Selecciona RFC, ruta destino y archivos OIC. La copia real ocurre al confirmar commit y push.",
+      title: "Paquete RFC CI/CD",
+      body: "Flujo exclusivo de CI/CD: selecciona RFC, ruta destino y archivos OIC. La copia real ocurre al confirmar commit y push.",
       addFiles: "Agregar archivos",
       baseBranch: "Rama base",
       ricePath: "Ruta RICE_FOLDER_PATH",
@@ -314,8 +364,8 @@ const copy = {
       prepareDraft: "Revisar paquete"
     },
     review: {
-      title: "Confirmacion final",
-      body: "Revisa el resumen antes de crear commit y subir la rama del RFC.",
+      title: "Confirmacion CI/CD",
+      body: "Prepara la rama y cambios CI/CD para revisarlos antes de ejecutar add, commit y push.",
       refresh: "Actualizar",
       repository: "Repositorio",
       target: "Target OIC",
@@ -324,17 +374,32 @@ const copy = {
       from: "desde",
       edit: "Editar paquete",
       openVbs: "Abrir VBS",
+      commitLocal: "Preparar cambios",
+      pushBranch: "Add, commit y push",
+      undoCommit: "Descartar cambios",
       commitPush: "Commit y push"
     },
     pipeline: {
-      title: "Seguimiento de pipeline",
-      bodyTest: "Guia asistida para registrar el run de TEST, tomar evidencia y cerrar la Fase 1.",
-      bodyProd: "Guia asistida para registrar cualquier run productivo, tomar evidencia y cerrar PROD.",
+      title: "Ejecucion guiada",
+      bodyTest: "Carga o usa el Action Plan para generar pasos de ejecucion, registrar evidencia y cerrar TEST.",
+      bodyProd: "Carga o usa el Action Plan para generar pasos de ejecucion, registrar evidencia y cerrar PROD.",
       rfc: "RFC",
+      mode: "CI/CD Tool",
+      modeGeneral: "No",
+      modeCicd: "Si",
+      executionType: "Ejecucion",
       environment: "Ambiente",
       pipeline: "Pipeline",
       run: "Run",
       runUrl: "URL del run",
+      actionPlan: "Action Plan base",
+      loadActionPlan: "Cargar Action Plan",
+      useGeneratedPlan: "Usar Action Plan generado",
+      refreshSteps: "Actualizar pasos",
+      clearExecution: "Limpiar ejecucion",
+      stepsLoaded: "Pasos generados desde el Action Plan.",
+      planPlaceholder: "Pega aqui el Action Plan o usa el que generaste en la app.",
+      cicdHint: "En modo CI/CD Tool registra pipeline, run y URL para unir evidencia de Git con capturas de ejecucion.",
       checklist: "Ejecucion guiada",
       message: "Mensaje para actualizar RFC",
       finalMessage: "Cierre del seguimiento",
@@ -344,6 +409,9 @@ const copy = {
       next: "Siguiente",
       downloadDocx: "Descargar DOCX",
       downloadPdf: "Descargar PDF",
+      prodMessage: "Mensaje PROD",
+      prodMessageTitle: "Mensaje para continuar en PROD",
+      prodMessageBody: "Revisa el texto y copialo al RFC para guiar la ejecucion productiva.",
       copy: "Copiar mensaje",
       openRun: "Abrir run",
       steps: [
@@ -441,10 +509,9 @@ const copy = {
       actionPlan: ["Action Plan", "Independent template"],
       setup: ["Setup", "Git, Node, and base folder"],
       repositories: ["Repositories", "Detect or clone region"],
-      package: ["RFC", "Artifacts and manifests"],
-      review: ["Review", "Summary, logs, and push"],
-      pipeline: ["TEST Pipeline", "Execution, evidence, and close"],
-      prodPipeline: ["PROD Pipeline", "Same flow with production run"]
+      package: ["CI/CD RFC", "Artifacts and manifests"],
+      review: ["CI/CD Review", "Summary, logs, and push"],
+      pipeline: ["RFC Execution", "Action Plan, evidence, and close"]
     },
     messages: {
       unexpected: "Something unexpected happened.",
@@ -498,8 +565,8 @@ const copy = {
       prepare: "Prepare RFC"
     },
     pkg: {
-      title: "RFC package",
-      body: "Select RFC, target path, and OIC files. Files are copied only when commit and push are confirmed.",
+      title: "CI/CD RFC package",
+      body: "CI/CD-only flow: select RFC, target path, and OIC files. Files are copied only when commit and push are confirmed.",
       addFiles: "Add files",
       baseBranch: "Base branch",
       ricePath: "RICE_FOLDER_PATH",
@@ -513,8 +580,8 @@ const copy = {
       prepareDraft: "Review package"
     },
     review: {
-      title: "Final confirmation",
-      body: "Review the summary before creating the commit and pushing the RFC branch.",
+      title: "CI/CD confirmation",
+      body: "Prepare the CI/CD branch and changes for review before running add, commit, and push.",
       refresh: "Refresh",
       repository: "Repository",
       target: "Target OIC",
@@ -523,17 +590,32 @@ const copy = {
       from: "from",
       edit: "Edit package",
       openVbs: "Open VBS",
+      commitLocal: "Prepare changes",
+      pushBranch: "Add, commit, push",
+      undoCommit: "Discard changes",
       commitPush: "Commit and push"
     },
     pipeline: {
-      title: "Pipeline tracking",
-      bodyTest: "Assisted guide to record the TEST run, capture evidence, and close Phase 1.",
-      bodyProd: "Assisted guide to record any production run, capture evidence, and close PROD.",
+      title: "Guided execution",
+      bodyTest: "Load or reuse the Action Plan to generate execution steps, capture evidence, and close TEST.",
+      bodyProd: "Load or reuse the Action Plan to generate execution steps, capture evidence, and close PROD.",
       rfc: "RFC",
+      mode: "CI/CD Tool",
+      modeGeneral: "No",
+      modeCicd: "Yes",
+      executionType: "Execution",
       environment: "Environment",
       pipeline: "Pipeline",
       run: "Run",
       runUrl: "Run URL",
+      actionPlan: "Base Action Plan",
+      loadActionPlan: "Load Action Plan",
+      useGeneratedPlan: "Use generated Action Plan",
+      refreshSteps: "Refresh steps",
+      clearExecution: "Clear execution",
+      stepsLoaded: "Steps generated from the Action Plan.",
+      planPlaceholder: "Paste the Action Plan here or use the one generated in the app.",
+      cicdHint: "In CI/CD Tool mode, record pipeline, run, and URL to combine Git evidence with execution screenshots.",
       checklist: "Guided execution",
       message: "RFC update message",
       finalMessage: "Tracking closeout",
@@ -543,6 +625,9 @@ const copy = {
       next: "Next",
       downloadDocx: "Download DOCX",
       downloadPdf: "Download PDF",
+      prodMessage: "PROD message",
+      prodMessageTitle: "Message to continue in PROD",
+      prodMessageBody: "Review the text and copy it to the RFC to guide the production execution.",
       copy: "Copy message",
       openRun: "Open run",
       steps: [
@@ -640,10 +725,9 @@ const copy = {
       actionPlan: ["Action Plan", "Template independente"],
       setup: ["Instalacao", "Git, Node e pasta base"],
       repositories: ["Repositorios", "Detectar ou clonar regiao"],
-      package: ["RFC", "Artefatos e manifestos"],
-      review: ["Confirmacao", "Resumo, logs e push"],
-      pipeline: ["Pipeline TEST", "Execucao, evidencia e fechamento"],
-      prodPipeline: ["Pipeline PROD", "Mesmo fluxo com run produtivo"]
+      package: ["CI/CD RFC", "Artefatos e manifestos"],
+      review: ["CI/CD Confirmacao", "Resumo, logs e push"],
+      pipeline: ["Execucao RFC", "Action Plan, evidencia e fechamento"]
     },
     messages: {
       unexpected: "Ocorreu um erro inesperado.",
@@ -697,8 +781,8 @@ const copy = {
       prepare: "Preparar RFC"
     },
     pkg: {
-      title: "Pacote RFC",
-      body: "Selecione RFC, rota destino e arquivos OIC. A copia real ocorre ao confirmar commit e push.",
+      title: "Pacote RFC CI/CD",
+      body: "Fluxo exclusivo de CI/CD: selecione RFC, rota destino e arquivos OIC. A copia real ocorre ao confirmar commit e push.",
       addFiles: "Adicionar arquivos",
       baseBranch: "Branch base",
       ricePath: "Rota RICE_FOLDER_PATH",
@@ -712,8 +796,8 @@ const copy = {
       prepareDraft: "Revisar pacote"
     },
     review: {
-      title: "Confirmacao final",
-      body: "Revise o resumo antes de criar o commit e subir a branch do RFC.",
+      title: "Confirmacao CI/CD",
+      body: "Prepare a branch e as mudancas CI/CD para revisar antes de executar add, commit e push.",
       refresh: "Atualizar",
       repository: "Repositorio",
       target: "Target OIC",
@@ -722,17 +806,32 @@ const copy = {
       from: "de",
       edit: "Editar pacote",
       openVbs: "Abrir VBS",
+      commitLocal: "Preparar mudancas",
+      pushBranch: "Add, commit e push",
+      undoCommit: "Descartar mudancas",
       commitPush: "Commit e push"
     },
     pipeline: {
-      title: "Acompanhamento de pipeline",
-      bodyTest: "Guia assistida para registrar o run de TEST, capturar evidencia e fechar a Fase 1.",
-      bodyProd: "Guia assistida para registrar qualquer run produtivo, capturar evidencia e fechar PROD.",
+      title: "Execucao guiada",
+      bodyTest: "Carregue ou reutilize o Action Plan para gerar passos de execucao, capturar evidencia e fechar TEST.",
+      bodyProd: "Carregue ou reutilize o Action Plan para gerar passos de execucao, capturar evidencia e fechar PROD.",
       rfc: "RFC",
+      mode: "CI/CD Tool",
+      modeGeneral: "Nao",
+      modeCicd: "Sim",
+      executionType: "Execucao",
       environment: "Ambiente",
       pipeline: "Pipeline",
       run: "Run",
       runUrl: "URL do run",
+      actionPlan: "Action Plan base",
+      loadActionPlan: "Carregar Action Plan",
+      useGeneratedPlan: "Usar Action Plan gerado",
+      refreshSteps: "Atualizar passos",
+      clearExecution: "Limpar execucao",
+      stepsLoaded: "Passos gerados a partir do Action Plan.",
+      planPlaceholder: "Cole aqui o Action Plan ou use o que foi gerado no app.",
+      cicdHint: "No modo CI/CD Tool, registre pipeline, run e URL para unir evidencia Git com capturas da execucao.",
       checklist: "Execucao guiada",
       message: "Mensagem para atualizar RFC",
       finalMessage: "Fechamento do acompanhamento",
@@ -742,6 +841,9 @@ const copy = {
       next: "Proximo",
       downloadDocx: "Baixar DOCX",
       downloadPdf: "Baixar PDF",
+      prodMessage: "Mensagem PROD",
+      prodMessageTitle: "Mensagem para continuar em PROD",
+      prodMessageBody: "Revise o texto e copie para o RFC para guiar a execucao produtiva.",
       copy: "Copiar mensagem",
       openRun: "Abrir run",
       steps: [
@@ -853,6 +955,7 @@ const actionCopy = {
     manualReviewBody: "Confirma o ajusta las fases detectadas antes de generar el Action Plan.",
     acceptReview: "Generar Action Plan",
     generate: "Generar plan",
+    clear: "Limpiar Action Plan",
     copy: "Copiar",
     continue: "Continuar a paquete",
     preview: "Action Plan generado",
@@ -883,6 +986,7 @@ const actionCopy = {
     manualReviewBody: "Confirm or adjust the detected phases before generating the Action Plan.",
     acceptReview: "Generate Action Plan",
     generate: "Generate plan",
+    clear: "Clear Action Plan",
     copy: "Copy",
     continue: "Continue to package",
     preview: "Generated Action Plan",
@@ -913,6 +1017,7 @@ const actionCopy = {
     manualReviewBody: "Confirme ou ajuste as fases detectadas antes de gerar o Action Plan.",
     acceptReview: "Gerar Action Plan",
     generate: "Gerar plano",
+    clear: "Limpar Action Plan",
     copy: "Copiar",
     continue: "Continuar para pacote",
     preview: "Action Plan gerado",
@@ -992,7 +1097,9 @@ async function readZipText(buffer: ArrayBuffer, targetName: string) {
 }
 
 async function extractDocxTextFromBrowserFile(file: File) {
-  const documentXml = await readZipText(await file.arrayBuffer(), "word/document.xml");
+  const documentXml = (await readZipText(await file.arrayBuffer(), "word/document.xml"))
+    .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, "")
+    .replace(/<w:fldSimple\b[^>]*>[\s\S]*?<\/w:fldSimple>/g, "");
   return documentXml
     .replace(/<\/w:p>/g, "\n")
     .replace(/<w:tab\/>/g, "\t")
@@ -1128,6 +1235,7 @@ function cleanIm090Text(text: string) {
       if (/^Installation Instructions for Grupo Bimbo \d+ of \d+$/i.test(line)) return false;
       if (/^Document Control\s+/i.test(line)) return false;
       if (/^Open and Closed Issues\. \d+ of \d+$/i.test(line)) return false;
+      if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
       if (/^[A-Za-z]+ \d{1,2}, \d{4}$/i.test(line)) return false;
       return true;
     })
@@ -1139,7 +1247,11 @@ function cleanIm090Text(text: string) {
 function operationalIm090Text(text: string) {
   const cleaned = cleanIm090Text(text);
   const marker = cleaned.match(/2\s+Installation Instructions for Grupo Bimbo\s*\n2\.1\s+Environment Information/i);
-  return marker?.index !== undefined ? cleaned.slice(marker.index).trim() : cleaned;
+  if (marker?.index !== undefined) return cleaned.slice(marker.index).trim();
+  const looseMarker =
+    looseIndexOf(cleaned, "2 Installation Instructions for Grupo Bimbo 2.1 Environment Information") ??
+    looseIndexOf(cleaned, "Environment Information Environment Name");
+  return looseMarker !== null ? cleaned.slice(looseMarker).trim() : cleaned;
 }
 
 function actionPlanLinesFromIm090(text: string) {
@@ -1154,7 +1266,10 @@ function findHeadingLine(lines: string[], pattern: RegExp, from = 0) {
 }
 
 function findNextMajorHeading(lines: string[], from: number) {
-  const index = lines.findIndex((line, lineIndex) => lineIndex > from && /^2\.\d+\s+\S/i.test(line) && !line.includes("..."));
+  const index = lines.findIndex((line, lineIndex) => lineIndex > from && (
+    (/^2\.\d+\s+\S/i.test(line) && !line.includes("...")) ||
+    /^(Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\b/i.test(line)
+  ));
   return index >= 0 ? index : lines.length;
 }
 
@@ -1174,27 +1289,151 @@ function sectionByHeading(lines: string[], pattern: RegExp, from = 0) {
   return normalizeManualSection(lines.slice(start, findNextMajorHeading(lines, start)));
 }
 
+function sectionByAnyHeading(lines: string[], patterns: RegExp[], from = 0) {
+  const starts = patterns
+    .map((pattern) => findHeadingLine(lines, pattern, from))
+    .filter((index) => index >= 0);
+  if (!starts.length) return "";
+  const start = Math.min(...starts);
+  return normalizeManualSection(lines.slice(start, findNextMajorHeading(lines, start)));
+}
+
+function looseIndexOf(text: string, phrase: string, from = 0) {
+  const normalized: string[] = [];
+  const map: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (/\s/.test(char)) continue;
+    normalized.push(char.toLowerCase());
+    map.push(index);
+  }
+  const normalizedFrom = Math.max(0, map.findIndex((index) => index >= from));
+  const needle = phrase.replace(/\s+/g, "").toLowerCase();
+  const found = normalized.join("").indexOf(needle, normalizedFrom < 0 ? 0 : normalizedFrom);
+  return found >= 0 ? map[found] : null;
+}
+
+function looseSectionByHeadings(text: string, starts: string[], ends: string[]) {
+  const startIndexes = starts
+    .map((heading) => looseIndexOf(text, heading))
+    .filter((index): index is number => index !== null);
+  if (!startIndexes.length) return "";
+  const start = Math.min(...startIndexes);
+  const endIndexes = ends
+    .map((heading) => looseIndexOf(text, heading, start + 1))
+    .filter((index): index is number => index !== null && index > start);
+  const end = endIndexes.length ? Math.min(...endIndexes) : text.length;
+  return normalizeManualSection(text.slice(start, end).split("\n"));
+}
+
 function extractArtifactNames(text: string) {
-  const matches = text.match(/[A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
-  return Array.from(new Set(matches.map((item) => item.replace(/\s+/g, ""))));
+  const normalMatches = text.match(/[A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
+  const compactText = text.replace(/\s+/g, "");
+  const compactMatches = compactText.match(/(?:[A-Z0-9]+[_.-])+[A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
+  return Array.from(new Set([...normalMatches, ...compactMatches].map((item) => item.replace(/\s+/g, ""))));
 }
 
 function asBullets(items: string[]) {
   return items.length ? items.map((item) => `- ${item}`).join("\n") : "- Confirm artifacts listed in the IM090.";
 }
 
-function buildManualPhasesFromDocument(text: string): ManualActionPhase[] {
+function environmentAliases(environment: string) {
+  const value = normalizeEnvironmentName(environment);
+  if (!value) return [];
+  if (value === "DEV" || value === "DEVELOPMENT") return ["DEV", "DEVELOPMENT"];
+  if (value === "TEST" || value === "REGRESSION") return ["TEST", "REGRESSION", "PREPROD", "TE"];
+  if (value === "PREPROD" || value === "TE") return ["PREPROD", "TE"];
+  if (value === "PROD" || value === "PRODUCTION" || value === "PR") return ["PROD", "PRODUCTION", "PR"];
+  return [value];
+}
+
+function normalizeEnvironmentName(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function environmentNameFromLine(line: string) {
+  const match = line.match(/^Environment Name:\s*(.+?)(?:\s+IC Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function environmentBlocks(section: string) {
+  const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
+  const heading = lines[0] && /^2\.\d+\s+Environment Information/i.test(lines[0]) ? lines[0] : "2.1 Environment Information";
+  const body = lines[0] === heading ? lines.slice(1) : lines;
+  const environmentIndexes = body
+    .map((line, index) => (/^Environment Name:/i.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  const blocks = environmentIndexes.map((start, index) => {
+    const end = index + 1 < environmentIndexes.length ? environmentIndexes[index + 1] : body.length;
+    return body.slice(start, end);
+  });
+  return { heading, blocks };
+}
+
+function findEnvironmentBlock(section: string, environment: string) {
+  const aliases = environmentAliases(environment);
+  const { heading, blocks } = environmentBlocks(section);
+  if (!section || !aliases.length || !blocks.length) return { heading, block: null, hasBlocks: blocks.length > 0 };
+  const selected = blocks.find((block) => aliases.includes(normalizeEnvironmentName(environmentNameFromLine(block[0] ?? ""))));
+  return { heading, block: selected ?? null, hasBlocks: true };
+}
+
+function filterEnvironmentSection(section: string, environment: string) {
+  const result = findEnvironmentBlock(section, environment);
+  if (!section || !environmentAliases(environment).length || !result.hasBlocks) return section;
+  return result.block ? [result.heading, ...result.block].join("\n") : section;
+}
+
+function environmentIsMissingInDocument(section: string, environment: string) {
+  if (!section || !environmentAliases(environment).length) return false;
+  const result = findEnvironmentBlock(section, environment);
+  return result.hasBlocks && !result.block;
+}
+
+function environmentSectionFromDocument(text: string) {
+  const operational = operationalIm090Text(text);
+  const lines = actionPlanLinesFromIm090(text);
+  return sectionByAnyHeading(lines, [/^2\.\d+\s+Environment Information\b/i, /^Environment Information\b/i], 0) ||
+    looseSectionByHeadings(operational, ["2.1 Environment Information", "Environment Information"], [
+      "Installation artifacts",
+      "Pre installation steps",
+      "Installation Steps"
+    ]);
+}
+
+function selectedEnvironmentMissingFromDocument(text: string, environment: string) {
+  return environmentIsMissingInDocument(environmentSectionFromDocument(text), environment);
+}
+
+function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
   const operational = operationalIm090Text(text);
   const lines = actionPlanLinesFromIm090(text);
   const startAt = 0;
   const artifacts = extractArtifactNames(operational);
-  const environment = sectionByHeading(lines, /^2\.\d+\s+Environment Information\b/i, startAt);
-  const artifactSection = sectionByHeading(lines, /^2\.\d+\s+Installation artifacts\b/i, startAt);
-  const preInstall = sectionByHeading(lines, /^2\.\d+\s+Pre installation steps\b/i, startAt);
-  const installation = sectionByHeading(lines, /^2\.\d+\s+Installation Steps\b/i, startAt);
-  const schedule = sectionByHeading(lines, /^2\.\d+\s+Schedule activation\b/i, startAt);
-  const validation = sectionByHeading(lines, /^2\.\d+\s+Verification Checklist\b/i, startAt);
-  const returnPoint = sectionByHeading(lines, /^2\.\d+\s+Return Point\b/i, startAt);
+  const artifactSection = sectionByAnyHeading(lines, [/^2\.\d+\s+Installation artifacts\b/i, /^Installation artifacts\b/i], startAt);
+  const preInstall = sectionByAnyHeading(lines, [/^2\.\d+\s+Pre installation steps\b/i, /^Pre installation steps\b/i], startAt);
+  const installation = sectionByAnyHeading(lines, [/^2\.\d+\s+Installation Steps\b/i, /^Installation Steps\b/i], startAt);
+  const schedule = sectionByAnyHeading(lines, [/^2\.\d+\s+Schedule activation\b/i, /^Schedule activation\b/i], startAt);
+  const validation = sectionByAnyHeading(lines, [/^2\.\d+\s+Verification Checklist\b/i, /^Verification Checklist\b/i], startAt);
+  const returnPoint = sectionByAnyHeading(lines, [/^2\.\d+\s+Return Point\b/i, /^Return Point\b/i], startAt);
+  const environmentContentRaw = environmentSectionFromDocument(text);
+  const environmentContent = filterEnvironmentSection(environmentContentRaw, selectedEnvironment);
+  const artifactContent = artifactSection || looseSectionByHeadings(operational, ["Installation artifacts"], [
+    "Pre installation steps",
+    "Installation Steps"
+  ]);
+  const preInstallContent = preInstall || looseSectionByHeadings(operational, ["Pre installation steps"], ["Installation Steps"]);
+  const installationContent = installation || looseSectionByHeadings(operational, ["Installation Steps"], [
+    "Schedule activation",
+    "Verification Checklist",
+    "Return Point"
+  ]);
+  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation"], [
+    "Verification Checklist",
+    "Return Point"
+  ]);
+  const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
+  const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
 
   return [
     {
@@ -1202,11 +1441,11 @@ function buildManualPhasesFromDocument(text: string): ManualActionPhase[] {
       title: "Prerequisites",
       content: [
         "Validate target environment, access, and artifacts before starting the manual installation.",
-        environment,
-        artifactSection,
+        environmentContent,
+        artifactContent,
         "Artifacts detected:",
         asBullets(artifacts),
-        preInstall
+        preInstallContent
       ].filter(Boolean).join("\n\n")
     },
     {
@@ -1222,22 +1461,22 @@ function buildManualPhasesFromDocument(text: string): ManualActionPhase[] {
     {
       id: "installation",
       title: "Installation Steps",
-      content: installation || "Execute the manual installation steps described in the IM090."
+      content: installationContent || "Execute the manual installation steps described in the IM090."
     },
     {
       id: "schedule",
       title: "Schedule Activation",
-      content: schedule || "Validate whether schedule activation applies. If applicable, start schedules and capture evidence."
+      content: scheduleContent || "Validate whether schedule activation applies. If applicable, start schedules and capture evidence."
     },
     {
       id: "validation",
       title: "Validation",
-      content: validation || "Validate deployed artifacts/components and confirm there are no deployment errors."
+      content: validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors."
     },
     {
       id: "returnPoint",
       title: "Return Point / Contingency",
-      content: returnPoint || "If the installation or validation fails, review configuration and consult the technical team."
+      content: returnPointContent || "If the installation or validation fails, review configuration and consult the technical team."
     },
     {
       id: "evidence",
@@ -1275,10 +1514,93 @@ function pipelineInstanceFrom(instance: string) {
   return instance.trim().replace(/(TE|PR)$/i, "");
 }
 
+function trimExecutionStepTitle(value: string) {
+  return value
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\d+(?:\.\d+)*\s*[-.)]\s*/, "")
+    .replace(/^[a-z]\s*[-.)]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/[:.]\s*$/, "")
+    .trim();
+}
+
+function splitActionPlanSections(text: string) {
+  const lines = text
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^=+$/.test(line));
+  const sections: Array<{ title: string; lines: string[] }> = [];
+  let current: { title: string; lines: string[] } | null = null;
+
+  for (const line of lines) {
+    const heading = line.match(/^(\d+|[A-Z])\s*[-.)]\s*(.+)$/);
+    if (heading && !line.includes("://")) {
+      current = { title: trimExecutionStepTitle(heading[2]), lines: [] };
+      sections.push(current);
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  return sections;
+}
+
+function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly string[]): PipelineExecutionStep[] {
+  const sections = splitActionPlanSections(text);
+  const steps: PipelineExecutionStep[] = [];
+
+  for (const section of sections) {
+    const substeps: PipelineExecutionStep[] = [];
+    let current: PipelineExecutionStep | null = null;
+    for (const line of section.lines) {
+      const substep = line.match(/^(\d+\.\d+|[a-z])\s*[-.)]\s*(.+)$/i);
+      if (substep && !line.includes("://")) {
+        current = {
+          title: trimExecutionStepTitle(substep[2]),
+          detail: section.title
+        };
+        substeps.push(current);
+        continue;
+      }
+      if (current && !/^(https?:\/\/|Pipeline >)/i.test(line)) {
+        current.detail = [current.detail, line].filter(Boolean).join("\n");
+      }
+    }
+
+    if (substeps.length) {
+      steps.push(...substeps);
+    } else if (section.title) {
+      steps.push({
+        title: section.title,
+        detail: section.lines.join("\n")
+      });
+    }
+  }
+
+  const source = steps.length
+    ? steps
+    : fallbackSteps.map((title) => ({ title, detail: "" }));
+
+  const seen = new Set<string>();
+  return source
+    .map((step) => ({
+      title: trimExecutionStepTitle(step.title),
+      detail: step.detail.trim()
+    }))
+    .filter((step) => step.title && !/^Action Plan$/i.test(step.title))
+    .filter((step) => {
+      const key = `${step.title}\n${step.detail}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 export function App() {
   const actionDocumentInputRef = useRef<HTMLInputElement | null>(null);
+  const executionPlanInputRef = useRef<HTMLInputElement | null>(null);
   const [activeStep, setActiveStep] = useState<StepId>("actionPlan");
-  const [lang, setLang] = useState<Lang>("es");
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem("lang") as Lang) || "es");
   const [documentLang, setDocumentLang] = useState<Lang>(() => (localStorage.getItem("documentLang") as Lang) || "en");
   const [outputFolder, setOutputFolder] = useState(() => localStorage.getItem("outputFolder") || "");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1341,19 +1663,24 @@ export function App() {
   const [artifactInspections, setArtifactInspections] = useState<ArtifactInspection[]>([]);
   const [summary, setSummary] = useState<DraftSummary | null>(null);
   const [finalOutput, setFinalOutput] = useState("");
-  const [testTargetEnvironment, setTestTargetEnvironment] = useState("GBOIC3GLR2TE");
-  const [prodTargetEnvironment, setProdTargetEnvironment] = useState("GBOIC3GLR2PR");
+  const [localCommitResult, setLocalCommitResult] = useState<FinalizeResult | null>(null);
+  const [testTargetEnvironment, setTestTargetEnvironment] = useState("");
+  const [prodTargetEnvironment, setProdTargetEnvironment] = useState("");
   const [testPipelineName, setTestPipelineName] = useState("");
   const [prodPipelineName, setProdPipelineName] = useState("");
   const [testPipelineRun, setTestPipelineRun] = useState("");
   const [prodPipelineRun, setProdPipelineRun] = useState("");
   const [testPipelineRunUrl, setTestPipelineRunUrl] = useState("");
   const [prodPipelineRunUrl, setProdPipelineRunUrl] = useState("");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("general");
+  const [pipelineExecutionPhase, setPipelineExecutionPhase] = useState<PipelinePhase>("TEST");
+  const [pipelineActionPlan, setPipelineActionPlan] = useState("");
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLog, setEvidenceLog] = useState<EvidenceLog[]>([]);
   const [lastExportPath, setLastExportPath] = useState("");
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [prodMessageOpen, setProdMessageOpen] = useState(false);
   const [pipelineStepIndex, setPipelineStepIndex] = useState(0);
   const [pipelineStepComments, setPipelineStepComments] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<EvidenceItem | null>(null);
@@ -1397,9 +1724,19 @@ export function App() {
   );
   const readyForDraft = Boolean(repoPath && rfc.trim() && riceFolderPath.trim() && files.length);
   const canCommit = Boolean(summary && readyForDraft && summary.filesToCopy.length > 0);
-  const isProdPipelineStep = activeStep === "prodPipeline";
-  const trackingEnvironment = isProdPipelineStep ? "PROD" : "TEST";
+  const canPushBranch = Boolean(localCommitResult?.ok && localCommitResult.branch === rfc.trim());
+  const isProdPipelineStep = pipelineExecutionPhase === "PROD";
+  const trackingEnvironment = pipelineExecutionPhase;
   const pipelineBody = isProdPipelineStep ? t.pipeline.bodyProd : t.pipeline.bodyTest;
+  const executionActionPlan = executionMode === "cicd" ? "" : pipelineActionPlan.trim();
+  const hasExecutionActionPlan = executionMode === "cicd" || Boolean(executionActionPlan.trim());
+  const currentPipelineSteps = useMemo(
+    () => {
+      if (executionMode === "cicd") return cicdExecutionSteps;
+      return executionActionPlan.trim() ? parseActionPlanExecutionSteps(executionActionPlan, t.pipeline.steps) : [];
+    },
+    [executionActionPlan, executionMode, t.pipeline.steps]
+  );
   const defaultPipelineName = `${(selectedRepo?.name ?? "BIMBO-R2-REPOSITORY").replace("BIMBO-", "").replace("-REPOSITORY", "")}-${pipelineInstanceFrom(actionInstance)}-OIC-DEPLOYMENT_PIPELINE`;
   const targetEnvironment = isProdPipelineStep ? prodTargetEnvironment : testTargetEnvironment;
   const pipelineNameValue = isProdPipelineStep ? prodPipelineName : testPipelineName;
@@ -1417,7 +1754,6 @@ export function App() {
       ? actionInstance
       : testTargetEnvironment;
   const artifactCount = files.length || artifactText.split(/\r?\n/).filter((line) => line.trim()).length;
-  const caseRun = isProdPipelineStep ? prodPipelineRun : testPipelineRun;
   function buildPipelineRfcMessage(language: Lang) {
     const pendingRun = language === "en" ? "<run pending>" : language === "pt" ? "<run pendente>" : "<run pendiente>";
     const prodClose =
@@ -1438,12 +1774,33 @@ export function App() {
   }
   const pipelineRfcMessage = buildPipelineRfcMessage(lang);
   const documentPipelineRfcMessage = buildPipelineRfcMessage(documentLang);
-  const currentPipelineStep = t.pipeline.steps[pipelineStepIndex] ?? t.pipeline.steps[0];
-  const isPipelineTrackingStep = activeStep === "pipeline" || activeStep === "prodPipeline";
-  const isFinalPipelineStep = pipelineStepIndex === t.pipeline.steps.length - 1;
-  const pipelineStepKey = `${activeStep}-${pipelineStepIndex}`;
+  const pipelineSearchName = pipelineDisplayName.replace(/^R\d+-/, "").replace(/-OIC-DEPLOYMENT_PIPELINE$/i, "");
+  const prodContinuationMessage = [
+    `1. Login to ${projectUrl}`,
+    "2. Validate the necessary connections and devices in the production environment.",
+    "3. Click on Builds.",
+    "4. Click on Pipelines.",
+    `5. Search "${pipelineSearchName || "<Pipeline search>"}".`,
+    `6. Pipeline > ${pipelineDisplayName || "<Pipeline>"} > ${pipelineRunValue.trim() || "<Run>"}`,
+    `   ${pipelineDisplayUrl || "<Run URL>"}`,
+    "7. Validate the installation of the integrations."
+  ].join("\n");
+  const currentPipelineStep = currentPipelineSteps[pipelineStepIndex] ?? currentPipelineSteps[0];
+  const isPipelineTrackingStep = activeStep === "pipeline";
+  const isFinalPipelineStep = pipelineStepIndex === currentPipelineSteps.length - 1;
+  const pipelineStepKey = `${activeStep}-${trackingEnvironment}-${pipelineStepIndex}`;
+  const currentRfc = rfc.trim();
+  const matchesCurrentRfc = (recordRfc?: string, text = "") => {
+    if (!currentRfc) return !recordRfc;
+    if (recordRfc) return recordRfc === currentRfc;
+    return text.includes(currentRfc);
+  };
   const currentStepEvidence = evidenceItems.filter(
-    (item) => item.step === activeStep && item.pipelineStep === pipelineStepIndex
+    (item) =>
+      item.step === activeStep &&
+      matchesCurrentRfc(item.rfc) &&
+      item.pipelineStep === pipelineStepIndex &&
+      (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
   );
   const currentStepComment = pipelineStepComments[pipelineStepKey]?.trim() ?? "";
   const currentStepComplete = Boolean(currentStepComment || currentStepEvidence.length);
@@ -1451,7 +1808,9 @@ export function App() {
     () => new Map(artifactInspections.map((inspection) => [inspection.filePath, inspection])),
     [artifactInspections]
   );
-  const activeStepLog = evidenceLog.filter((entry) => entry.step === activeStep);
+  const activeStepLog = evidenceLog.filter(
+    (entry) => entry.step === activeStep && matchesCurrentRfc(entry.rfc, entry.text)
+  );
 
   function fileBadge(kind: SelectedFile["kind"]) {
     if (kind === "integration") return ".iar";
@@ -1472,7 +1831,7 @@ export function App() {
   }
 
   function stepTitle(step: StepId) {
-    return t.steps[step][0];
+    return t.steps[step]?.[0] ?? t.pipeline.title;
   }
 
   function addLog(text: string, step = activeStep) {
@@ -1481,6 +1840,7 @@ export function App() {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         at: new Date().toISOString(),
         step,
+        rfc: rfc.trim() || undefined,
         text
       },
       ...current
@@ -1492,7 +1852,9 @@ export function App() {
       ...image,
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       step: activeStep,
+      rfc: rfc.trim() || undefined,
       pipelineStep: isPipelineTrackingStep ? pipelineStepIndex : undefined,
+      pipelinePhase: isPipelineTrackingStep ? trackingEnvironment : undefined,
       createdAt: new Date().toISOString(),
       note,
       source
@@ -1535,7 +1897,7 @@ export function App() {
       return;
     }
     const image = await runTask(() => desktopApi.captureScreenRegion());
-    addEvidence(image, "region", String(currentPipelineStep ?? stepTitle(activeStep)));
+    addEvidence(image, "region", String(currentPipelineStep?.title ?? stepTitle(activeStep)));
   }
 
   async function addEvidenceImages() {
@@ -1573,37 +1935,53 @@ export function App() {
       setMessage(t.messages.stepRequired);
       return;
     }
-    setPipelineStepIndex((current) => Math.min(Math.max(current + direction, 0), t.pipeline.steps.length - 1));
+    setPipelineStepIndex((current) => Math.min(Math.max(current + direction, 0), currentPipelineSteps.length - 1));
   }
 
   function buildEvidencePayload() {
     const documentCopy = copy[documentLang];
+    const documentSteps = executionMode === "cicd"
+      ? cicdExecutionSteps
+      : executionActionPlan.trim()
+        ? parseActionPlanExecutionSteps(executionActionPlan, documentCopy.pipeline.steps)
+        : documentCopy.pipeline.steps.map((title) => ({ title, detail: "" }));
     return {
       rfc,
-      phase: isProdPipelineStep ? "PROD" : "TEST",
+      phase: trackingEnvironment,
       documentLanguage: documentLang,
       outputDirectory: outputFolder.trim() || undefined,
       environment: targetEnvironment,
-      pipeline: pipelineDisplayName,
-      run: pipelineRunValue.trim(),
-      runUrl: pipelineDisplayUrl,
-      message: documentPipelineRfcMessage,
-      steps: documentCopy.pipeline.steps.map((step, index) => ({
+      pipeline: executionMode === "cicd" ? pipelineDisplayName : "",
+      run: executionMode === "cicd" ? pipelineRunValue.trim() : "",
+      runUrl: executionMode === "cicd" ? pipelineDisplayUrl : "",
+      message: executionMode === "cicd" ? documentPipelineRfcMessage : "",
+      steps: documentSteps.map((step, index) => ({
         index: index + 1,
-        title: step,
-        comment:
-          index === documentCopy.pipeline.steps.length - 1
-            ? documentPipelineRfcMessage
-            : pipelineStepComments[`${activeStep}-${index}`] ?? "",
+        title: step.title,
+        comment: [step.detail, pipelineStepComments[`${activeStep}-${trackingEnvironment}-${index}`]]
+          .filter((value) => value?.trim())
+          .join("\n\n"),
         images: evidenceItems
-          .filter((item) => item.step === activeStep && item.pipelineStep === index)
+          .filter(
+            (item) =>
+              item.step === activeStep &&
+              matchesCurrentRfc(item.rfc) &&
+              item.pipelineStep === index &&
+              (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
+          )
           .map((item) => ({ name: item.name, dataUrl: item.dataUrl, createdAt: item.createdAt }))
       })),
-      logs: evidenceLog.map((entry) => ({
-        at: entry.at,
-        step: stepTitle(entry.step),
-        text: entry.text
-      }))
+      logs: evidenceLog
+        .filter(
+          (entry) =>
+            matchesCurrentRfc(entry.rfc, entry.text) &&
+            (entry.step === activeStep || (executionMode === "cicd" && Boolean(currentRfc)))
+        )
+        .map((entry) => ({
+          at: entry.at,
+          step: stepTitle(entry.step),
+          text: entry.text
+        }))
     };
   }
 
@@ -1653,6 +2031,9 @@ export function App() {
         prodTargetEnvironment,
         testPipelineName,
         prodPipelineName,
+        executionMode,
+        pipelineExecutionPhase,
+        pipelineActionPlan,
         evidenceLog,
         profileName,
         profileEmail,
@@ -1712,14 +2093,18 @@ export function App() {
     setArtifactInspections([]);
     setSummary(null);
     setFinalOutput("");
-    setTestTargetEnvironment("GBOIC3GLR2TE");
-    setProdTargetEnvironment("GBOIC3GLR2PR");
+    setLocalCommitResult(null);
+    setTestTargetEnvironment("");
+    setProdTargetEnvironment("");
     setTestPipelineName("");
     setProdPipelineName("");
     setTestPipelineRun("");
     setProdPipelineRun("");
     setTestPipelineRunUrl("");
     setProdPipelineRunUrl("");
+    setExecutionMode("general");
+    setPipelineExecutionPhase("TEST");
+    setPipelineActionPlan("");
     setEvidenceItems([]);
     setEvidenceLog([]);
     setExecutionHistory([]);
@@ -1750,14 +2135,18 @@ export function App() {
       setMessage(t.messages.exportNeedRfc);
       return false;
     }
-    if (!pipelineRunValue.trim()) {
-      setMessage(t.messages.exportNeedRun);
+    if (!hasExecutionActionPlan || currentPipelineSteps.length === 0) {
+      setMessage(t.pipeline.planPlaceholder);
       return false;
     }
-    const missingStepIndex = t.pipeline.steps.findIndex((_, index) => {
-      if (index === t.pipeline.steps.length - 1) return false;
-      const comment = pipelineStepComments[`${activeStep}-${index}`]?.trim();
-      const images = evidenceItems.filter((item) => item.step === activeStep && item.pipelineStep === index);
+    const missingStepIndex = currentPipelineSteps.findIndex((_, index) => {
+      const comment = pipelineStepComments[`${activeStep}-${trackingEnvironment}-${index}`]?.trim();
+      const images = evidenceItems.filter(
+        (item) =>
+          item.step === activeStep &&
+          item.pipelineStep === index &&
+          (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
+      );
       return !comment && images.length === 0;
     });
     if (missingStepIndex >= 0) {
@@ -1786,7 +2175,7 @@ export function App() {
         {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           rfc: rfc.trim(),
-          phase: isProdPipelineStep ? "PROD" : "TEST",
+          phase: trackingEnvironment,
           kind,
           path: output,
           exportedAt: new Date().toISOString()
@@ -1908,6 +2297,10 @@ export function App() {
   }
 
   async function selectActionDocument() {
+    if (!actionEnvironment.trim()) {
+      setMessage("Selecciona el ambiente antes de cargar o revisar el IM090.");
+      return;
+    }
     if (!desktopApi?.selectActionDocument) {
       actionDocumentInputRef.current?.click();
       return;
@@ -1934,11 +2327,14 @@ export function App() {
     setActionSourceDocument(document);
     setManualInstructions(text);
     if (text) {
-      setManualPhases(buildManualPhasesFromDocument(text));
+      setManualPhases(buildManualPhasesFromDocument(text, actionEnvironment));
       setManualPhaseIndex(0);
       const detectedArtifacts = extractArtifactNames(text);
       if (detectedArtifacts.length && !artifactText.trim()) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
+      if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
+        setMessage(`El ambiente ${actionEnvironment} no se encontro en el IM090. Se conserva el bloque completo de ambientes para revision.`);
+      }
     } else {
       setManualPhases([]);
     }
@@ -1948,6 +2344,24 @@ export function App() {
 
   function updateManualPhaseContent(content: string) {
     setManualPhases((current) => current.map((phase, index) => index === manualPhaseIndex ? { ...phase, content } : phase));
+  }
+
+  function reviewManualPhases() {
+    if (!manualInstructions.trim()) {
+      setManualReviewOpen(true);
+      return;
+    }
+    if (!actionEnvironment.trim()) {
+      setMessage("Selecciona el ambiente antes de revisar las fases del IM090.");
+      return;
+    }
+    const phases = buildManualPhasesFromDocument(manualInstructions, actionEnvironment);
+    setManualPhases(phases);
+    setManualPhaseIndex(0);
+    setManualReviewOpen(true);
+    if (selectedEnvironmentMissingFromDocument(manualInstructions, actionEnvironment)) {
+      setMessage(`El ambiente ${actionEnvironment} no se encontro en el IM090. Se conserva el bloque completo de ambientes para revision.`);
+    }
   }
 
   function buildManualActionPlan(phases: ManualActionPhase[]) {
@@ -1972,7 +2386,7 @@ export function App() {
   function acceptManualReview() {
     const reviewedPhases = manualPhases.length
       ? manualPhases
-      : buildManualPhasesFromDocument(manualInstructions);
+      : buildManualPhasesFromDocument(manualInstructions, actionEnvironment);
     setManualPhases(reviewedPhases);
     setManualInstructions(reviewedPhases.map((phase) => `${phase.title}\n${phase.content}`).join("\n\n"));
     setActionPlan(buildManualActionPlan(reviewedPhases));
@@ -2030,8 +2444,50 @@ export function App() {
     setExpandedFiles([]);
     setSummary(null);
     setFinalOutput("");
+    setLocalCommitResult(null);
     setMessage(t.messages.packageCleared);
     addLog("Paquete limpiado");
+  }
+
+  function resetActionPlanFields() {
+    setRfc("");
+    setActionProduct("");
+    setActionMethod("cicd");
+    setActionEnvironment("");
+    setActionInstance("");
+    setActionActivity("");
+    setArtifactText("");
+    setActionSourceDocument(null);
+    setManualInstructions("");
+    setManualPhases([]);
+    setManualPhaseIndex(0);
+    setManualReviewOpen(false);
+    setActionPlan("");
+    setPipelineActionPlan("");
+    setMessage(a.clear);
+    setLocalCommitResult(null);
+  }
+
+  function resetExecutionFields() {
+    setRfc("");
+    setPipelineExecutionPhase("TEST");
+    setTestTargetEnvironment("");
+    setProdTargetEnvironment("");
+    setTestPipelineName("");
+    setProdPipelineName("");
+    setTestPipelineRun("");
+    setProdPipelineRun("");
+    setTestPipelineRunUrl("");
+    setProdPipelineRunUrl("");
+    setExecutionMode("general");
+    setPipelineActionPlan("");
+    setPipelineStepIndex(0);
+    setPipelineStepComments({});
+    setLocalCommitResult(null);
+    setEvidenceItems((current) => current.filter((item) => item.step !== "pipeline"));
+    setEvidenceLog((current) => current.filter((entry) => entry.step !== "pipeline"));
+    setImagePreview(null);
+    setMessage(t.pipeline.clearExecution);
   }
 
   function toggleFileDetails(path: string) {
@@ -2098,7 +2554,11 @@ export function App() {
     setActiveStep("review");
   }
 
-  async function finalizeRfc() {
+  function currentDraftPayload() {
+    return { repoPath, baseBranch: releaseBranch, rfc, riceFolderPath, mode, files };
+  }
+
+  async function commitRfcLocal() {
     if (!desktopApi) {
       setMessage(t.messages.pushElectron);
       return;
@@ -2107,10 +2567,42 @@ export function App() {
       setMessage(t.messages.noFiles);
       return;
     }
-    const payload = { repoPath, baseBranch: releaseBranch, rfc, riceFolderPath, mode, files };
-    const result = await runTask(() => desktopApi.finalizeRfc(payload), t.messages.done);
+    const result = await runTask(() => desktopApi.commitRfcLocal(currentDraftPayload()), t.messages.done);
     setFinalOutput(result?.output ?? "");
-    addLog(`Commit y push ${result?.ok ? "completado" : "con observaciones"}`);
+    setLocalCommitResult(result?.ok ? result : null);
+    addLog(`RFC ${rfc.trim()}: preparacion local ${result?.ok ? "completada" : "con observaciones"}`, "review");
+  }
+
+  async function pushRfcBranch() {
+    if (!desktopApi) {
+      setMessage(t.messages.pushElectron);
+      return;
+    }
+    if (!canPushBranch) {
+      setMessage("Primero prepara los cambios.");
+      return;
+    }
+    const result = await runTask(() => desktopApi.pushRfcBranch(currentDraftPayload()), t.messages.done);
+    setFinalOutput(result?.output ?? "");
+    if (result?.ok) setLocalCommitResult(null);
+    addLog(`RFC ${rfc.trim()}: push ${result?.ok ? "completado" : "con observaciones"}`, "review");
+  }
+
+  async function undoRfcLocalCommit() {
+    if (!desktopApi) {
+      setMessage(t.messages.pushElectron);
+      return;
+    }
+    if (!canPushBranch) {
+      setMessage("No hay cambios preparados pendientes de push.");
+      return;
+    }
+    const confirmed = window.confirm("Se descartaran los cambios locales preparados en la rama RFC. La rama no se eliminara.");
+    if (!confirmed) return;
+    const result = await runTask(() => desktopApi.undoRfcLocalCommit(currentDraftPayload()), t.messages.done);
+    setFinalOutput(result?.output ?? "");
+    if (result?.ok) setLocalCommitResult(null);
+    addLog(`RFC ${rfc.trim()}: cambios locales ${result?.ok ? "descartados" : "no pudieron descartarse"}`, "review");
   }
 
   function generateActionPlan() {
@@ -2175,9 +2667,42 @@ export function App() {
     await navigator.clipboard?.writeText(pipelineRfcMessage);
   }
 
+  async function copyProdContinuationMessage() {
+    await navigator.clipboard?.writeText(prodContinuationMessage);
+    setMessage(t.pipeline.copy);
+  }
+
+  async function loadExecutionActionPlanFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setPipelineActionPlan(text);
+    setPipelineStepIndex(0);
+    setMessage(t.pipeline.stepsLoaded);
+    event.target.value = "";
+  }
+
+  function useGeneratedActionPlanForExecution() {
+    if (!actionPlan.trim()) return;
+    setPipelineActionPlan(actionPlan);
+    setPipelineStepIndex(0);
+    setMessage(t.pipeline.stepsLoaded);
+  }
+
+  function refreshExecutionSteps() {
+    setPipelineStepIndex(0);
+    setMessage(t.pipeline.stepsLoaded);
+  }
+
   useEffect(() => {
     if (desktopApi) checkPrerequisites(false).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (pipelineStepIndex >= currentPipelineSteps.length) {
+      setPipelineStepIndex(Math.max(0, currentPipelineSteps.length - 1));
+    }
+  }, [currentPipelineSteps.length, pipelineStepIndex]);
 
   useEffect(() => {
     let activeElement: HTMLElement | null = null;
@@ -2267,7 +2792,12 @@ export function App() {
   useEffect(() => {
     setSummary(null);
     setFinalOutput("");
+    setLocalCommitResult(null);
   }, [repoPath, rfc, riceFolderPath, mode, files]);
+
+  useEffect(() => {
+    localStorage.setItem("lang", lang);
+  }, [lang]);
 
   useEffect(() => {
     localStorage.setItem("documentLang", documentLang);
@@ -2397,14 +2927,14 @@ export function App() {
             </div>
           </button>
 
-          <div className="step-group-label">Fase 1</div>
+          <div className="step-group-label">CI/CD Tool</div>
           {(["package", "review"] as const).map((stepId, index) => (
             <button
               key={stepId}
               className={`step ${activeStep === stepId ? "active" : ""}`}
               onClick={() => setActiveStep(stepId)}
             >
-              <span>{index + 1}</span>
+              <span>{index === 0 ? "RFC" : "OK"}</span>
               <div>
                 <strong>{t.steps[stepId][0]}</strong>
                 <small>{t.steps[stepId][1]}</small>
@@ -2412,26 +2942,15 @@ export function App() {
             </button>
           ))}
 
+          <div className="step-group-label">Ejecucion RFC</div>
           <button
             className={`step upcoming ${activeStep === "pipeline" ? "active" : ""}`}
             onClick={() => setActiveStep("pipeline")}
           >
-            <span>3</span>
+            <span>RUN</span>
             <div>
               <strong>{t.steps.pipeline[0]}</strong>
               <small>{t.steps.pipeline[1]}</small>
-            </div>
-          </button>
-
-          <div className="step-group-label">Fase 2</div>
-          <button
-            className={`step upcoming ${activeStep === "prodPipeline" ? "active" : ""}`}
-            onClick={() => setActiveStep("prodPipeline")}
-          >
-            <span>4</span>
-            <div>
-              <strong>{t.steps.prodPipeline[0]}</strong>
-              <small>{t.steps.prodPipeline[1]}</small>
             </div>
           </button>
         </nav>
@@ -2498,10 +3017,6 @@ export function App() {
             <div>
               <span>{t.caseFile.artifacts}</span>
               <strong>{artifactCount || t.caseFile.pending}</strong>
-            </div>
-            <div>
-              <span>{t.caseFile.run}</span>
-              <strong>{caseRun.trim() || t.caseFile.pending}</strong>
             </div>
           </section>
         )}
@@ -2625,6 +3140,10 @@ export function App() {
                 <h2>{a.title}</h2>
                 <p>{a.body}</p>
               </div>
+              <button className="secondary" onClick={resetActionPlanFields} title={a.clear}>
+                <Trash2 size={16} />
+                {a.clear}
+              </button>
             </div>
 
             <div className="action-plan-grid">
@@ -2671,7 +3190,10 @@ export function App() {
                   <option value="" disabled>
                     {a.selectEnvironment}
                   </option>
+                  <option value="DEVELOPMENT">DEVELOPMENT</option>
                   <option value="TEST">TEST</option>
+                  <option value="REGRESSION">REGRESSION</option>
+                  <option value="PRE-PROD">PRE-PROD</option>
                   <option value="PROD">PROD</option>
                   <option value="DEV">DEV</option>
                 </select>
@@ -2693,7 +3215,7 @@ export function App() {
                       type="button"
                       className="secondary"
                       disabled={!manualPhases.length}
-                      onClick={() => setManualReviewOpen(true)}
+                      onClick={reviewManualPhases}
                       title={a.reviewManual}
                     >
                       {a.reviewManual}
@@ -2994,31 +3516,86 @@ export function App() {
                 <GitPullRequest size={16} />
                 {t.review.openVbs}
               </button>
-              <button disabled={!canCommit} onClick={finalizeRfc}>
+              <button disabled={!canCommit} onClick={commitRfcLocal}>
                 <Play size={16} />
-                {t.review.commitPush}
+                {t.review.commitLocal}
+              </button>
+              <button className="secondary" disabled={!canPushBranch} onClick={undoRfcLocalCommit}>
+                <Trash2 size={16} />
+                {t.review.undoCommit}
+              </button>
+              <button disabled={!canPushBranch} onClick={pushRfcBranch}>
+                <UploadCloud size={16} />
+                {t.review.pushBranch}
               </button>
             </div>
           </section>
         )}
 
-        {(activeStep === "pipeline" || activeStep === "prodPipeline") && (
+        {activeStep === "pipeline" && (
           <section className="panel">
             <div className="panel-heading">
               <div>
                 <h2>{t.pipeline.title}</h2>
                 <p>{pipelineBody}</p>
               </div>
-              <button className="secondary" onClick={() => desktopApi?.openExternal(projectUrl)}>
-                <ExternalLink size={16} />
-                {t.review.openVbs}
-              </button>
+              <div className="inline-actions compact-actions">
+                <button className="secondary" onClick={resetExecutionFields} title={t.pipeline.clearExecution}>
+                  <Trash2 size={16} />
+                  {t.pipeline.clearExecution}
+                </button>
+                <button className="secondary" onClick={() => desktopApi?.openExternal(projectUrl)}>
+                  <ExternalLink size={16} />
+                  {t.review.openVbs}
+                </button>
+              </div>
             </div>
 
-            <div className="pipeline-grid pipeline-top-grid">
+            <div className="pipeline-grid pipeline-top-grid general-execution-grid">
+              <label className="execution-mode-field">
+                {t.pipeline.mode}
+                <div className="segmented">
+                  <button
+                    type="button"
+                    className={executionMode === "general" ? "active" : ""}
+                    onClick={() => {
+                      setExecutionMode("general");
+                      setPipelineStepIndex(0);
+                      setPipelineStepComments({});
+                    }}
+                  >
+                    {t.pipeline.modeGeneral}
+                  </button>
+                  <button
+                    type="button"
+                    className={executionMode === "cicd" ? "active" : ""}
+                    onClick={() => {
+                      setExecutionMode("cicd");
+                      setPipelineActionPlan("");
+                      setPipelineStepIndex(0);
+                      setPipelineStepComments({});
+                    }}
+                  >
+                    {t.pipeline.modeCicd}
+                  </button>
+                </div>
+              </label>
               <label>
                 {t.pipeline.rfc}
                 <input placeholder="4-B002VTZ" value={rfc} onChange={(event) => setRfc(event.target.value)} />
+              </label>
+              <label>
+                {t.pipeline.executionType}
+                <select
+                  value={pipelineExecutionPhase}
+                  onChange={(event) => {
+                    setPipelineExecutionPhase(event.target.value as PipelinePhase);
+                    setPipelineStepIndex(0);
+                  }}
+                >
+                  <option value="TEST">TEST</option>
+                  <option value="PROD">PROD</option>
+                </select>
               </label>
               <label>
                 {t.pipeline.environment}
@@ -3029,51 +3606,94 @@ export function App() {
                       ? setProdTargetEnvironment(event.target.value)
                       : setTestTargetEnvironment(event.target.value)
                   }
-                  placeholder={isProdPipelineStep ? "GBOIC3GLR2PR" : "GBOIC3GLR2TE"}
-                />
-              </label>
-              <label>
-                {t.pipeline.run}
-                <input
-                  value={pipelineRunValue}
-                  onChange={(event) =>
-                    isProdPipelineStep ? setProdPipelineRun(event.target.value) : setTestPipelineRun(event.target.value)
-                  }
-                  placeholder="Se captura cuando VBS lo genere"
                 />
               </label>
             </div>
 
-            <label className="artifact-input pipeline-name-field">
-              {t.pipeline.pipeline}
-              <input
-                value={pipelineNameValue}
-                onChange={(event) =>
-                  isProdPipelineStep ? setProdPipelineName(event.target.value) : setTestPipelineName(event.target.value)
-                }
-                placeholder={defaultPipelineName}
-              />
-            </label>
+            {executionMode === "cicd" && (
+              <>
+                <label className="artifact-input pipeline-name-field">
+                  {t.pipeline.pipeline}
+                  <input
+                    value={pipelineNameValue}
+                    onChange={(event) =>
+                      isProdPipelineStep ? setProdPipelineName(event.target.value) : setTestPipelineName(event.target.value)
+                    }
+                  />
+                </label>
 
-            <label className="artifact-input">
-              {t.pipeline.runUrl}
-              <input
-                value={pipelineRunUrlValue}
-                onChange={(event) =>
-                  isProdPipelineStep ? setProdPipelineRunUrl(event.target.value) : setTestPipelineRunUrl(event.target.value)
-                }
-                placeholder={pipelineRunValue.trim() ? pipelineDisplayUrl : `${projectUrl}/cibuild/pipelines/.../runs/...`}
-              />
-            </label>
+                <div className="pipeline-grid execution-cicd-grid">
+                  <label>
+                    {t.pipeline.run}
+                    <input
+                    value={pipelineRunValue}
+                    onChange={(event) =>
+                      isProdPipelineStep ? setProdPipelineRun(event.target.value) : setTestPipelineRun(event.target.value)
+                    }
+                    />
+                  </label>
+                  <label>
+                    {t.pipeline.runUrl}
+                    <input
+                    value={pipelineRunUrlValue}
+                    onChange={(event) =>
+                      isProdPipelineStep ? setProdPipelineRunUrl(event.target.value) : setTestPipelineRunUrl(event.target.value)
+                    }
+                    />
+                  </label>
+                </div>
+              </>
+            )}
 
+            {executionMode === "general" && (
+            <div className="pipeline-action-plan">
+              <div className="output-head">
+                <strong>{t.pipeline.actionPlan}</strong>
+                <div className="inline-actions compact-actions">
+                  <button className="secondary" onClick={() => executionPlanInputRef.current?.click()} title={t.pipeline.loadActionPlan}>
+                    <UploadCloud size={16} />
+                    {t.pipeline.loadActionPlan}
+                  </button>
+                  <button className="secondary" disabled={!actionPlan.trim()} onClick={useGeneratedActionPlanForExecution}>
+                    <FileText size={16} />
+                    {t.pipeline.useGeneratedPlan}
+                  </button>
+                  <button className="secondary" onClick={refreshExecutionSteps}>
+                    <RefreshCw size={16} />
+                    {t.pipeline.refreshSteps}
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="pipeline-plan-text"
+                value={pipelineActionPlan}
+                onChange={(event) => {
+                  setPipelineActionPlan(event.target.value);
+                  setPipelineStepIndex(0);
+                }}
+                placeholder={t.pipeline.planPlaceholder}
+                wrap="soft"
+              />
+              <input
+                ref={executionPlanInputRef}
+                type="file"
+                accept=".txt,.md,.log"
+                className="hidden-file-input"
+                onChange={loadExecutionActionPlanFile}
+              />
+            </div>
+            )}
+
+            {hasExecutionActionPlan && (
+              <>
             <div className="pipeline-layout guided-card">
               <div className="guided-rail" aria-label={t.pipeline.checklist}>
-                {t.pipeline.steps.map((step, index) => (
+                {currentPipelineSteps.map((step, index) => (
                   <button
-                    key={step}
+                    key={`${step.title}-${index}`}
                     className={`rail-step ${pipelineStepIndex === index ? "active" : ""}`}
                     onClick={() => setPipelineStepIndex(index)}
-                    title={step}
+                    title={step.title}
                   >
                     <span>{index + 1}</span>
                   </button>
@@ -3084,7 +3704,8 @@ export function App() {
                 <div className="guided-head">
                   <div>
                     <strong>{t.pipeline.checklist}</strong>
-                    <h3>{currentPipelineStep}</h3>
+                    <h3>{currentPipelineStep?.title}</h3>
+                    {currentPipelineStep?.detail && <p className="guided-step-detail">{currentPipelineStep.detail}</p>}
                   </div>
                   <div className="guided-actions">
                     <button className="icon-action" onClick={captureRegionEvidence} title={t.evidence.captureRegion}>
@@ -3104,65 +3725,55 @@ export function App() {
                   </div>
                 </div>
 
-                {isFinalPipelineStep ? (
-                  <div className="guided-final">
-                    <div className="output-head">
-                      <strong>{t.pipeline.finalMessage}</strong>
-                      <div>
-                        <button className="secondary" disabled={!pipelineDisplayUrl} onClick={() => desktopApi?.openExternal(pipelineDisplayUrl)}>
-                          <ExternalLink size={16} />
-                          {t.pipeline.openRun}
-                        </button>
-                        <button className="secondary" onClick={copyPipelineMessage}>
-                          <Copy size={16} />
-                          {t.pipeline.copy}
-                        </button>
-                      </div>
-                    </div>
-                    <textarea className="action-plan-text pipeline-message" value={pipelineRfcMessage} readOnly wrap="soft" />
-                    <div className="actions inline-actions">
-                      <button className="secondary" onClick={() => exportEvidence("docx")}>
-                        <Download size={16} />
-                        {t.pipeline.downloadDocx}
-                      </button>
-                      <button className="secondary" onClick={() => exportEvidence("pdf")}>
-                        <Download size={16} />
-                        {t.pipeline.downloadPdf}
-                      </button>
-                    </div>
+                <div className="guided-body">
+                  <div className="guided-comment">
+                    <label className="step-comment-label">{t.pipeline.comment}</label>
+                    <textarea
+                      value={pipelineStepComments[pipelineStepKey] ?? ""}
+                      onChange={(event) => updatePipelineStepComment(event.target.value)}
+                      placeholder={t.pipeline.comment}
+                    />
                   </div>
-                ) : (
-                  <div className="guided-body">
-                    <div className="guided-comment">
-                      <label className="step-comment-label">{t.pipeline.comment}</label>
-                      <textarea
-                        value={pipelineStepComments[pipelineStepKey] ?? ""}
-                        onChange={(event) => updatePipelineStepComment(event.target.value)}
-                        placeholder={t.pipeline.comment}
-                      />
-                    </div>
-                    <div className="guided-preview">
-                      <strong>{t.pipeline.currentEvidence}</strong>
-                      {currentStepEvidence.length ? (
-                        currentStepEvidence.slice(0, 1).map((item) => (
-                          <article className="step-evidence-card preview-card" key={item.id}>
-                            <button className="image-preview-button" onClick={() => setImagePreview(item)}>
-                              <img src={item.dataUrl} alt={item.name} />
-                            </button>
-                            <div>
-                              <strong>{item.name}</strong>
-                      <span>{new Date(item.createdAt).toLocaleString()}</span>
-                      {item.note && <span>{item.note}</span>}
-                    </div>
-                            <button className="icon-button evidence-remove" onClick={() => removeEvidence(item.id)}>
-                              <Trash2 size={15} />
-                            </button>
-                          </article>
-                        ))
-                      ) : (
-                        <div className="empty-inline evidence-placeholder">{t.evidence.empty}</div>
-                      )}
-                    </div>
+                  <div className="guided-preview">
+                    <strong>{t.pipeline.currentEvidence}</strong>
+                    {currentStepEvidence.length ? (
+                      currentStepEvidence.slice(0, 1).map((item) => (
+                        <article className="step-evidence-card preview-card" key={item.id}>
+                          <button className="image-preview-button" onClick={() => setImagePreview(item)}>
+                            <img src={item.dataUrl} alt={item.name} />
+                          </button>
+                          <div>
+                            <strong>{item.name}</strong>
+                            <span>{new Date(item.createdAt).toLocaleString()}</span>
+                            {item.note && <span>{item.note}</span>}
+                          </div>
+                          <button className="icon-button evidence-remove" onClick={() => removeEvidence(item.id)}>
+                            <Trash2 size={15} />
+                          </button>
+                        </article>
+                      ))
+                    ) : (
+                      <div className="empty-inline evidence-placeholder">{t.evidence.empty}</div>
+                    )}
+                  </div>
+                </div>
+
+                {isFinalPipelineStep && (
+                  <div className="guided-final actions inline-actions">
+                    <button className="secondary" onClick={() => exportEvidence("docx")}>
+                      <Download size={16} />
+                      {t.pipeline.downloadDocx}
+                    </button>
+                    <button className="secondary" onClick={() => exportEvidence("pdf")}>
+                      <Download size={16} />
+                      {t.pipeline.downloadPdf}
+                    </button>
+                    {executionMode === "cicd" && (
+                      <button className="secondary" onClick={() => setProdMessageOpen(true)}>
+                        <MessageSquareText size={16} />
+                        {t.pipeline.prodMessage}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -3186,11 +3797,9 @@ export function App() {
                 <span>{t.pipeline.environment}</span>
                 <strong>{targetEnvironment}</strong>
               </div>
-              <div>
-                <span>{t.pipeline.pipeline}</span>
-                <strong>{pipelineDisplayName}</strong>
-              </div>
             </div>
+              </>
+            )}
           </section>
         )}
       </main>
@@ -3674,7 +4283,33 @@ export function App() {
         </div>
       )}
 
-      {message && !exportModalOpen && (
+      {prodMessageOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setProdMessageOpen(false)}>
+          <section className="workspace-modal prod-message-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2>{t.pipeline.prodMessageTitle}</h2>
+                <p>{t.pipeline.prodMessageBody}</p>
+              </div>
+              <button className="icon-close" onClick={() => setProdMessageOpen(false)} title={t.close} aria-label={t.close}>
+                <X size={18} />
+              </button>
+            </div>
+            <pre className="prod-message-text">{prodContinuationMessage}</pre>
+            <div className="actions export-actions">
+              <button onClick={copyProdContinuationMessage}>
+                <Copy size={16} />
+                {t.pipeline.copy}
+              </button>
+              <button className="secondary" onClick={() => setProdMessageOpen(false)}>
+                {t.close}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {message && !exportModalOpen && !prodMessageOpen && (
         <div className="notice-modal-backdrop" onMouseDown={() => setMessage(null)}>
           <section className="workspace-modal notice-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="notice-modal-icon">

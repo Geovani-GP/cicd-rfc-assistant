@@ -89,6 +89,9 @@ declare global {
       cloneRepository: (payload: { url: string; destination: string }) => Promise<RepositoryInfo>;
       prepareRfcDraft: (payload: unknown) => Promise<DraftSummary>;
       getDraftSummary: (payload: unknown) => Promise<DraftSummary>;
+      commitRfcLocal: (payload: unknown) => Promise<FinalizeResult>;
+      pushRfcBranch: (payload: unknown) => Promise<FinalizeResult>;
+      undoRfcLocalCommit: (payload: unknown) => Promise<FinalizeResult>;
       finalizeRfc: (payload: unknown) => Promise<FinalizeResult>;
       inspectArtifacts: (filePaths: string[]) => Promise<ArtifactInspection[]>;
       exportEvidenceDocx: (payload: unknown) => Promise<string | null>;

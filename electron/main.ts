@@ -462,10 +462,19 @@ function buildEvidenceHtml(payload: EvidenceExportPayload) {
   const labels = evidenceLabels(payload.documentLanguage);
   const steps = payload.steps.filter(hasEvidenceStepContent);
   const messageBlock = payload.message.trim() ? `<h2>${labels.message}</h2><pre>${xmlEscape(payload.message)}</pre>` : "";
+  const metaRows = [
+    [labels.phase, payload.phase],
+    ["Pipeline", payload.pipeline],
+    ["Run", payload.run],
+    ["URL", payload.runUrl]
+  ].filter(([, value]) => value.trim());
+  const metaBlock = metaRows.length
+    ? `<div class="meta">${metaRows.map(([label, value]) => `<strong>${xmlEscape(label)}</strong><span>${xmlEscape(value)}</span>`).join("")}</div>`
+    : "";
   const logBlock = payload.logs.length
     ? `<h2>${labels.log}</h2><div class="log">${payload.logs.map((log) => `[${log.at}] ${log.step}: ${log.text}`).join("\n")}</div>`
     : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#272321;margin:36px}h1{color:#c74634}h2{border-bottom:1px solid #ddd;padding-bottom:6px}.meta{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:18px 0}.step{page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:14px;margin:14px 0}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-radius:6px}img{max-width:100%;border:1px solid #ddd;border-radius:6px;margin-top:8px}.log{font-family:monospace;font-size:12px;white-space:pre-wrap}</style></head><body><h1>RFC ${xmlEscape(payload.rfc || "")}</h1><p>${labels.environment}: ${xmlEscape(payload.environment)}</p><p>${new Date().toLocaleDateString()}</p><h2>${labels.execution}</h2><div class="meta"><strong>${labels.phase}</strong><span>${xmlEscape(payload.phase)}</span><strong>Pipeline</strong><span>${xmlEscape(payload.pipeline)}</span><strong>Run</strong><span>${xmlEscape(payload.run)}</span><strong>URL</strong><span>${xmlEscape(payload.runUrl)}</span></div>${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<p><strong>${xmlEscape(image.name)}</strong> ${xmlEscape(image.createdAt)}</p><img src="${image.dataUrl}">`).join("")}</section>`).join("")}${logBlock}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#272321;margin:36px}h1{color:#c74634}h2{border-bottom:1px solid #ddd;padding-bottom:6px}.meta{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:18px 0}.step{page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:14px;margin:14px 0}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-radius:6px}img{max-width:100%;border:1px solid #ddd;border-radius:6px;margin-top:8px}.log{font-family:monospace;font-size:12px;white-space:pre-wrap}</style></head><body><h1>RFC ${xmlEscape(payload.rfc || "")}</h1><p>${labels.environment}: ${xmlEscape(payload.environment)}</p><p>${new Date().toLocaleDateString()}</p><h2>${labels.execution}</h2>${metaBlock}${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<p><strong>${xmlEscape(image.name)}</strong> ${xmlEscape(image.createdAt)}</p><img src="${image.dataUrl}">`).join("")}</section>`).join("")}${logBlock}</body></html>`;
 }
 
 function buildEvidenceDocx(payload: EvidenceExportPayload) {
@@ -566,7 +575,10 @@ function extractDocxText(buffer: Buffer) {
   const entries = listZipEntries(buffer);
   const documentEntry = entries.find((entry) => entry.name === "word/document.xml");
   if (!documentEntry) return "";
-  const xml = readZipEntry(buffer, documentEntry).toString("utf8");
+  const xml = readZipEntry(buffer, documentEntry)
+    .toString("utf8")
+    .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, "")
+    .replace(/<w:fldSimple\b[^>]*>[\s\S]*?<\/w:fldSimple>/g, "");
   return xml
     .replace(/<\/w:p>/g, "\n")
     .replace(/<w:tab\/>/g, "\t")
@@ -712,11 +724,11 @@ async function extractPdfTextWithPdfKit(filePath: string) {
 }
 
 async function extractPdfTextFromFile(filePath: string) {
-  const internalText = cleanExtractedPdfText(extractPdfText(await readFile(filePath)));
-  if (internalText) return internalText;
   const pdfKitText = await extractPdfTextWithPdfKit(filePath);
   if (pdfKitText) return pdfKitText;
-  return extractPdfTextWithSpotlight(filePath);
+  const spotlightText = await extractPdfTextWithSpotlight(filePath);
+  if (spotlightText) return spotlightText;
+  return cleanExtractedPdfText(extractPdfText(await readFile(filePath)));
 }
 
 function parseProperties(text: string) {
@@ -1093,9 +1105,9 @@ ipcMain.handle("prepare-rfc-draft", async (_event, payload: DraftPayload) => {
   return buildDraft(payload);
 });
 
-ipcMain.handle("finalize-rfc", async (_event, payload: DraftPayload) => {
+async function commitRfcLocal(payload: DraftPayload) {
   const branch = safeRfc(payload.rfc);
-  const lines = [`[${new Date().toISOString()}] Finalizando RFC ${branch}`];
+  const lines = [`[${new Date().toISOString()}] Preparando cambios locales RFC ${branch}`];
   async function fail(output: string) {
     const backToRelease = await git(["checkout", releaseBranch], payload.repoPath);
     lines.push(`failure checkout ${releaseBranch}: ${backToRelease.ok ? "OK" : backToRelease.stderr}`);
@@ -1125,13 +1137,37 @@ ipcMain.handle("finalize-rfc", async (_event, payload: DraftPayload) => {
     return fail(branchResult.stderr);
   }
   await applyDraft(payload);
+  const status = await git(["status", "--short"], payload.repoPath);
+  lines.push(`status: ${status.ok ? status.stdout || "sin cambios" : status.stderr}`);
+  const logPath = await writeLog(branch, lines);
+  return {
+    ok: true,
+    branch,
+    logPath,
+    output: `Cambios preparados en la rama ${branch}.\n\nNo se ejecuto git add, commit ni push.\nRevisa los artefactos y archivos modificados. Cuando todo este correcto, ejecuta Push.`
+  };
+}
+
+async function pushRfcBranch(payload: DraftPayload) {
+  const branch = safeRfc(payload.rfc);
+  const lines = [`[${new Date().toISOString()}] Publicando RFC ${branch}`];
+  const checkoutBranch = await git(["checkout", branch], payload.repoPath);
+  lines.push(`checkout ${branch}: ${checkoutBranch.ok ? "OK" : checkoutBranch.stderr}`);
+  if (!checkoutBranch.ok) {
+    const logPath = await writeLog(branch, lines);
+    return { ok: false, branch, logPath, output: checkoutBranch.stderr };
+  }
   const add = await git(["add", "."], payload.repoPath);
   lines.push(`git add: ${add.ok ? "OK" : add.stderr}`);
-  if (!add.ok) return fail(add.stderr);
+  if (!add.ok) {
+    const logPath = await writeLog(branch, lines);
+    return { ok: false, branch, logPath, output: add.stderr };
+  }
   const commit = await git(["commit", "-m", branch], payload.repoPath);
   lines.push(`git commit: ${commit.ok ? commit.stdout : commit.stderr}`);
   if (!commit.ok) {
-    return fail(commit.stderr);
+    const logPath = await writeLog(branch, lines);
+    return { ok: false, branch, logPath, output: commit.stderr };
   }
   const push = await git(["push", "--set-upstream", "origin", branch], payload.repoPath);
   lines.push(`git push: ${push.ok ? "OK" : push.stderr}`);
@@ -1152,6 +1188,42 @@ ipcMain.handle("finalize-rfc", async (_event, payload: DraftPayload) => {
       ? `${push.stdout}\n\nRepositorio regresado a ${releaseBranch}.`
       : `${push.stderr}\n\n${checkoutReleaseEnd.ok ? `Repositorio regresado a ${releaseBranch}.` : checkoutReleaseEnd.stderr}`
   };
+}
+
+async function undoRfcLocalCommit(payload: DraftPayload) {
+  const branch = safeRfc(payload.rfc);
+  const lines = [`[${new Date().toISOString()}] Descartando cambios locales RFC ${branch}`];
+  const checkoutBranch = await git(["checkout", branch], payload.repoPath);
+  lines.push(`checkout ${branch}: ${checkoutBranch.ok ? "OK" : checkoutBranch.stderr}`);
+  if (!checkoutBranch.ok) {
+    const logPath = await writeLog(branch, lines);
+    return { ok: false, branch, logPath, output: checkoutBranch.stderr };
+  }
+  const reset = await git(["reset", "--hard", releaseBranch], payload.repoPath);
+  lines.push(`reset --hard ${releaseBranch}: ${reset.ok ? "OK" : reset.stderr}`);
+  const clean = await git(["clean", "-fd"], payload.repoPath);
+  lines.push(`clean -fd: ${clean.ok ? "OK" : clean.stderr}`);
+  const logPath = await writeLog(branch, lines);
+  return {
+    ok: reset.ok && clean.ok,
+    branch,
+    logPath,
+    output: reset.ok && clean.ok
+      ? `Cambios locales descartados en la rama ${branch}.\nLa rama no fue eliminada.`
+      : `${reset.stderr}\n${clean.stderr}`.trim()
+  };
+}
+
+ipcMain.handle("commit-rfc-local", async (_event, payload: DraftPayload) => commitRfcLocal(payload));
+
+ipcMain.handle("push-rfc-branch", async (_event, payload: DraftPayload) => pushRfcBranch(payload));
+
+ipcMain.handle("undo-rfc-local-commit", async (_event, payload: DraftPayload) => undoRfcLocalCommit(payload));
+
+ipcMain.handle("finalize-rfc", async (_event, payload: DraftPayload) => {
+  const commit = await commitRfcLocal(payload);
+  if (!commit.ok) return commit;
+  return pushRfcBranch(payload);
 });
 
 ipcMain.handle("inspect-artifacts", async (_event, filePaths: string[]) => {

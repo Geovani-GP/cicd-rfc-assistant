@@ -774,7 +774,9 @@ label small {
 }
 
 .step-group-label {
-  margin: 8px 0 -2px;
+  margin: 18px 0 -2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  padding-top: 14px;
   color: #b8b0ab;
   font-size: 11px;
   font-weight: 850;
@@ -789,12 +791,12 @@ label small {
 .step span {
   display: grid;
   place-items: center;
-  width: 28px;
+  width: 36px;
   height: 28px;
   border-radius: 999px;
   background: #5a514c;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2118,6 +2120,24 @@ h2 {
   margin-top: 18px;
 }
 
+.prod-message-modal {
+  width: min(760px, calc(100vw - 56px));
+}
+
+.prod-message-text {
+  margin-top: 16px;
+  border: 1px solid var(--oracle-line);
+  border-radius: 8px;
+  padding: 14px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  color: var(--oracle-ink);
+  background: #fdfdfc;
+  font: 13px/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .clone-box {
   margin-top: 12px;
   border-top: 1px solid var(--oracle-line);
@@ -2296,11 +2316,52 @@ h2 {
 }
 
 .pipeline-top-grid {
-  grid-template-columns: minmax(180px, 0.75fr) minmax(220px, 1fr) minmax(170px, 0.7fr);
+  grid-template-columns: minmax(160px, 0.7fr) minmax(150px, 0.55fr) minmax(220px, 1fr) minmax(170px, 0.7fr);
+}
+
+.general-execution-grid {
+  grid-template-columns: minmax(150px, 0.5fr) minmax(160px, 0.55fr) minmax(130px, 0.4fr) minmax(220px, 1fr);
+}
+
+.execution-mode-field {
+  display: grid;
+  gap: 8px;
+  max-width: none;
+  margin: 0;
+}
+
+.execution-mode-field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.execution-cicd-grid {
+  grid-template-columns: minmax(160px, 0.5fr) minmax(320px, 1.5fr);
+  margin-top: 16px;
 }
 
 .pipeline-name-field {
   display: block;
+}
+
+.pipeline-action-plan {
+  margin-top: 16px;
+  border: 1px solid var(--oracle-line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fdfdfc;
+}
+
+.pipeline-plan-text {
+  min-height: 150px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.compact-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .artifact-input {
@@ -2428,6 +2489,15 @@ textarea:focus {
   margin: 0;
   font-size: 18px;
   line-height: 1.3;
+}
+
+.guided-step-detail {
+  max-width: 920px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .guided-actions {
@@ -2673,7 +2743,7 @@ textarea:focus {
 
 .pipeline-summary {
   margin-top: 16px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .artifact-inspector {
