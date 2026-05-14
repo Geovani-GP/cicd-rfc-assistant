@@ -39,6 +39,57 @@
   }
 }
 
+@keyframes background-drift {
+  0% {
+    background-position: -8% 44%, 108% 18%, 50% 50%;
+  }
+  50% {
+    background-position: 108% 56%, -8% 86%, 50% 50%;
+  }
+  100% {
+    background-position: -8% 44%, 108% 18%, 50% 50%;
+  }
+}
+
+@keyframes background-horizontal {
+  0% {
+    background-position: 0% 50%, 100% 50%, 50% 50%;
+  }
+  50% {
+    background-position: 100% 50%, 0% 50%, 50% 50%;
+  }
+  100% {
+    background-position: 0% 50%, 100% 50%, 50% 50%;
+  }
+}
+
+@keyframes background-vertical {
+  0% {
+    background-position: 50% 0%, 50% 100%, 50% 50%;
+  }
+  50% {
+    background-position: 50% 100%, 50% 0%, 50% 50%;
+  }
+  100% {
+    background-position: 50% 0%, 50% 100%, 50% 50%;
+  }
+}
+
+@keyframes background-zoom {
+  0% {
+    background-size: 140% 140%, 145% 145%, 135% 135%, auto;
+    background-position: 50% 50%, 50% 50%, 50% 50%, 50% 50%;
+  }
+  50% {
+    background-size: 168% 168%, 174% 174%, 160% 160%, auto;
+    background-position: 45% 48%, 55% 52%, 50% 50%, 50% 50%;
+  }
+  100% {
+    background-size: 140% 140%, 145% 145%, 135% 135%, auto;
+    background-position: 50% 50%, 50% 50%, 50% 50%, 50% 50%;
+  }
+}
+
 html {
   background: transparent;
 }
@@ -125,10 +176,362 @@ label small {
 }
 
 .app-shell {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 280px 1fr;
   min-height: 100vh;
   background: #f4f6f8;
+  background-size: auto;
+  transition: background 220ms ease;
+  overflow: hidden;
+}
+
+.app-shell.bg-style-mesh {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(199, 70, 52, 0.32), transparent 30%),
+    radial-gradient(circle at 86% 14%, rgba(47, 111, 136, 0.3), transparent 32%),
+    radial-gradient(circle at 58% 84%, rgba(255, 183, 77, 0.22), transparent 30%),
+    linear-gradient(135deg, #fff8f5 0%, #eef5f7 48%, #f8f1ff 100%);
+  background-size: 145% 145%, 150% 150%, 135% 135%, auto;
+}
+
+.app-shell.bg-style-aurora {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(106, 92, 231, 0.36), transparent 32%),
+    radial-gradient(circle at 78% 28%, rgba(37, 166, 154, 0.32), transparent 30%),
+    radial-gradient(circle at 44% 88%, rgba(255, 112, 159, 0.24), transparent 32%),
+    linear-gradient(135deg, #f7f6ff 0%, #edf8f5 45%, #fff1f6 100%);
+  background-size: 150% 150%, 145% 145%, 140% 140%, auto;
+}
+
+.app-shell.bg-style-grid {
+  background:
+    linear-gradient(rgba(49, 45, 42, 0.095) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(49, 45, 42, 0.095) 1px, transparent 1px),
+    radial-gradient(circle at 84% 18%, rgba(199, 70, 52, 0.14), transparent 30%),
+    linear-gradient(135deg, #f4f6f8 0%, #fff4ee 100%);
+  background-size: 28px 28px, 28px 28px, 130% 130%, auto;
+}
+
+.app-shell.bg-animated.bg-style-mesh,
+.app-shell.bg-animated.bg-style-aurora {
+  animation: background-drift var(--bg-animation-duration, 18s) ease-in-out infinite;
+}
+
+.app-shell.bg-animated.bg-motion-horizontal:is(.bg-style-mesh, .bg-style-aurora) {
+  animation-name: background-horizontal;
+}
+
+.app-shell.bg-animated.bg-motion-vertical:is(.bg-style-mesh, .bg-style-aurora) {
+  animation-name: background-vertical;
+}
+
+.app-shell.bg-animated.bg-motion-zoom:is(.bg-style-mesh, .bg-style-aurora) {
+  animation-name: background-zoom;
+}
+
+.app-shell.bg-animated.bg-style-grid {
+  animation: grid-drift var(--bg-animation-duration, 18s) linear infinite;
+}
+
+.app-shell.bg-animated.bg-motion-horizontal.bg-style-grid {
+  animation-name: grid-horizontal;
+}
+
+.app-shell.bg-animated.bg-motion-vertical.bg-style-grid {
+  animation-name: grid-vertical;
+}
+
+.app-shell.bg-animated.bg-motion-zoom.bg-style-grid {
+  animation-name: grid-zoom;
+  animation-timing-function: ease-in-out;
+}
+
+.app-shell.bg-style-image::before,
+.app-shell.bg-style-image::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+}
+
+.app-shell.bg-style-image {
+  background-image: none;
+  background-color: #101822;
+}
+
+.app-shell.bg-style-image::before {
+  inset: -14%;
+  z-index: 0;
+  background-image: var(--custom-background-image);
+  background-position: 50% 50%;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: blur(var(--background-image-blur, 10px));
+  transform: scale(1.04);
+  transform-origin: center;
+  will-change: transform;
+}
+
+.app-shell.bg-style-image::after {
+  z-index: 0;
+  background: rgba(244, 246, 248, 0.72);
+}
+
+.app-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl).bg-style-mesh {
+  background:
+    radial-gradient(circle at 14% 16%, rgba(255, 177, 93, 0.18), transparent 28%),
+    radial-gradient(circle at 84% 18%, rgba(89, 156, 219, 0.2), transparent 30%),
+    linear-gradient(135deg, #121820 0%, #202331 48%, #111827 100%);
+  background-size: 140% 140%, 150% 150%, auto;
+}
+
+.app-shell:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl).bg-style-aurora {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(143, 120, 255, 0.2), transparent 30%),
+    radial-gradient(circle at 78% 28%, rgba(69, 211, 190, 0.16), transparent 28%),
+    linear-gradient(135deg, #0d1320 0%, #172033 45%, #21172a 100%);
+  background-size: 150% 150%, 140% 140%, auto;
+}
+
+.app-shell:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl).bg-style-grid {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(135deg, #0e1622 0%, #151b2a 100%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+
+.app-shell:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl).bg-style-image::after {
+  background: rgba(10, 14, 22, 0.72);
+}
+
+.app-shell.theme-tone-dark.bg-style-mesh {
+  background:
+    radial-gradient(circle at 14% 16%, rgba(255, 177, 93, 0.18), transparent 28%),
+    radial-gradient(circle at 84% 18%, rgba(89, 156, 219, 0.2), transparent 30%),
+    linear-gradient(135deg, #121820 0%, #202331 48%, #111827 100%);
+  background-size: 140% 140%, 150% 150%, auto;
+}
+
+.app-shell.theme-tone-dark.bg-style-aurora {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(143, 120, 255, 0.2), transparent 30%),
+    radial-gradient(circle at 78% 28%, rgba(69, 211, 190, 0.16), transparent 28%),
+    linear-gradient(135deg, #0d1320 0%, #172033 45%, #21172a 100%);
+  background-size: 150% 150%, 140% 140%, auto;
+}
+
+.app-shell.theme-tone-dark.bg-style-grid {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(135deg, #0e1622 0%, #151b2a 100%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+
+.app-shell.theme-tone-dark.bg-style-image::after {
+  background: rgba(10, 14, 22, 0.72);
+}
+
+.app-shell.bg-animated.bg-style-image {
+  animation: none;
+}
+
+.app-shell.bg-animated.bg-style-image::before {
+  animation: image-drift var(--bg-animation-duration, 18s) ease-in-out infinite alternate;
+}
+
+.app-shell.bg-animated.bg-motion-horizontal.bg-style-image::before {
+  animation-name: image-horizontal;
+}
+
+.app-shell.bg-animated.bg-motion-vertical.bg-style-image::before {
+  animation-name: image-vertical;
+}
+
+.app-shell.bg-animated.bg-motion-zoom.bg-style-image::before {
+  animation-name: image-zoom;
+}
+
+@keyframes image-drift {
+  0% {
+    transform: translate3d(-1.2%, 0, 0) scale(1.04);
+  }
+  50% {
+    transform: translate3d(1.2%, -1%, 0) scale(1.11);
+  }
+  100% {
+    transform: translate3d(0, 1.2%, 0) scale(1.04);
+  }
+}
+
+@keyframes image-horizontal {
+  0% {
+    transform: translate3d(-2.4%, 0, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(2.4%, 0, 0) scale(1.08);
+  }
+}
+
+@keyframes image-vertical {
+  0% {
+    transform: translate3d(0, -2.4%, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(0, 2.4%, 0) scale(1.08);
+  }
+}
+
+@keyframes image-zoom {
+  0% {
+    transform: scale(1.04);
+  }
+  50% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes grid-drift {
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 28px 28px, 28px 28px, 0 0;
+  }
+}
+
+@keyframes grid-horizontal {
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 56px 0, 56px 0, 0 0;
+  }
+}
+
+@keyframes grid-vertical {
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 0 56px, 0 56px, 0 0;
+  }
+}
+
+@keyframes grid-zoom {
+  0% {
+    background-size: 28px 28px, 28px 28px, 130% 130%, auto;
+  }
+  50% {
+    background-size: 34px 34px, 34px 34px, 156% 156%, auto;
+  }
+  100% {
+    background-size: 28px 28px, 28px 28px, 130% 130%, auto;
+  }
+}
+
+.app-shell.ui-text-small {
+  font-size: 13px;
+}
+
+.app-shell.ui-text-medium {
+  font-size: 14px;
+}
+
+.app-shell.ui-text-large {
+  font-size: 15px;
+}
+
+.app-shell.ui-text-small :is(button, input, select, textarea) {
+  font-size: 12px;
+}
+
+.app-shell.ui-text-medium :is(button, input, select, textarea) {
+  font-size: 13px;
+}
+
+.app-shell.ui-text-large :is(button, input, select, textarea) {
+  font-size: 14px;
+}
+
+.app-shell.ui-text-small label,
+.app-shell.ui-text-small .status-pill,
+.app-shell.ui-text-small .panel-heading p,
+.app-shell.ui-text-small .section-kicker,
+.app-shell.ui-text-small .theme-card strong,
+.app-shell.ui-text-small .option-tile {
+  font-size: 12px;
+}
+
+.app-shell.ui-text-medium label,
+.app-shell.ui-text-medium .status-pill,
+.app-shell.ui-text-medium .panel-heading p,
+.app-shell.ui-text-medium .section-kicker,
+.app-shell.ui-text-medium .theme-card strong,
+.app-shell.ui-text-medium .option-tile {
+  font-size: 13px;
+}
+
+.app-shell.ui-text-large label,
+.app-shell.ui-text-large .status-pill,
+.app-shell.ui-text-large .panel-heading p,
+.app-shell.ui-text-large .section-kicker,
+.app-shell.ui-text-large .theme-card strong,
+.app-shell.ui-text-large .option-tile {
+  font-size: 14px;
+}
+
+.app-shell.ui-text-small label small,
+.app-shell.ui-text-small .repo-select-label span,
+.app-shell.ui-text-small .eyebrow {
+  font-size: 11px;
+}
+
+.app-shell.ui-text-medium label small,
+.app-shell.ui-text-medium .repo-select-label span,
+.app-shell.ui-text-medium .eyebrow {
+  font-size: 12px;
+}
+
+.app-shell.ui-text-large label small,
+.app-shell.ui-text-large .repo-select-label span,
+.app-shell.ui-text-large .eyebrow {
+  font-size: 13px;
+}
+
+.app-shell.ui-text-small h1 {
+  font-size: 28px;
+}
+
+.app-shell.ui-text-medium h1 {
+  font-size: 30px;
+}
+
+.app-shell.ui-text-large h1 {
+  font-size: 32px;
+}
+
+.app-shell.ui-text-small h2 {
+  font-size: 18px;
+}
+
+.app-shell.ui-text-medium h2 {
+  font-size: 20px;
+}
+
+.app-shell.ui-text-large h2 {
+  font-size: 22px;
 }
 
 .theme-oracle {
@@ -399,6 +802,112 @@ label small {
   background: linear-gradient(135deg, #fff8ed 0%, #f6e6d8 45%, #e7eef7 100%);
 }
 
+.theme-sage {
+  --oracle-red: #3f7d5c;
+  --oracle-red-dark: #2f6147;
+  --oracle-charcoal: #21362d;
+  --oracle-ink: #1f3028;
+  --oracle-line: #c9d8ce;
+  --oracle-panel: rgba(252, 255, 250, 0.92);
+  --oracle-soft: rgba(225, 239, 228, 0.78);
+  background: linear-gradient(135deg, #f7fbf2 0%, #e8f2e6 48%, #dcece9 100%);
+}
+
+.theme-rose {
+  --oracle-red: #b64f72;
+  --oracle-red-dark: #8f3657;
+  --oracle-charcoal: #3a2530;
+  --oracle-ink: #32242a;
+  --oracle-line: #ead1da;
+  --oracle-panel: rgba(255, 250, 252, 0.92);
+  --oracle-soft: rgba(252, 229, 237, 0.78);
+  background: linear-gradient(135deg, #fff7fb 0%, #f8e3eb 48%, #edf1ff 100%);
+}
+
+.theme-graphite {
+  --oracle-red: #f59e0b;
+  --oracle-red-dark: #d97706;
+  --oracle-charcoal: #f3f4f6;
+  --oracle-ink: #f3f4f6;
+  --oracle-line: rgba(243, 244, 246, 0.16);
+  --oracle-panel: #1f2937;
+  --oracle-soft: rgba(255, 255, 255, 0.08);
+  color: #f3f4f6;
+  background: linear-gradient(135deg, #101418 0%, #1f2937 50%, #111827 100%);
+}
+
+.theme-ocean {
+  --oracle-red: #22d3ee;
+  --oracle-red-dark: #0891b2;
+  --oracle-charcoal: #ecfeff;
+  --oracle-ink: #ecfeff;
+  --oracle-line: rgba(236, 254, 255, 0.18);
+  --oracle-panel: #0f2f3a;
+  --oracle-soft: rgba(34, 211, 238, 0.12);
+  color: #ecfeff;
+  background: linear-gradient(135deg, #061b24 0%, #0f2f3a 48%, #164e63 100%);
+}
+
+.theme-nordDark {
+  --oracle-red: #88c0d0;
+  --oracle-red-dark: #5e81ac;
+  --oracle-charcoal: #eceff4;
+  --oracle-ink: #eceff4;
+  --oracle-line: rgba(236, 239, 244, 0.18);
+  --oracle-panel: #2e3440;
+  --oracle-soft: rgba(136, 192, 208, 0.14);
+  color: #eceff4;
+  background: linear-gradient(135deg, #1f242f 0%, #2e3440 50%, #3b4252 100%);
+}
+
+.theme-solarizedDark {
+  --oracle-red: #2aa198;
+  --oracle-red-dark: #268bd2;
+  --oracle-charcoal: #eee8d5;
+  --oracle-ink: #eee8d5;
+  --oracle-line: rgba(238, 232, 213, 0.18);
+  --oracle-panel: #073642;
+  --oracle-soft: rgba(42, 161, 152, 0.12);
+  color: #eee8d5;
+  background: linear-gradient(135deg, #002b36 0%, #073642 52%, #0b3f4a 100%);
+}
+
+.theme-halloween {
+  --oracle-red: #ff8a00;
+  --oracle-red-dark: #d35400;
+  --oracle-charcoal: #fff7ed;
+  --oracle-ink: #fff7ed;
+  --oracle-line: rgba(255, 247, 237, 0.16);
+  --oracle-panel: #2b1234;
+  --oracle-soft: rgba(255, 138, 0, 0.12);
+  color: #fff7ed;
+  background: linear-gradient(135deg, #120b16 0%, #2b1234 50%, #3a1d09 100%);
+}
+
+.theme-cyberpunk {
+  --oracle-red: #ff2bd6;
+  --oracle-red-dark: #00e5ff;
+  --oracle-charcoal: #f6f1ff;
+  --oracle-ink: #f6f1ff;
+  --oracle-line: rgba(246, 241, 255, 0.18);
+  --oracle-panel: #25104b;
+  --oracle-soft: rgba(0, 229, 255, 0.12);
+  color: #f6f1ff;
+  background: linear-gradient(135deg, #120022 0%, #25104b 48%, #001f3f 100%);
+}
+
+.theme-nightowl {
+  --oracle-red: #82aaff;
+  --oracle-red-dark: #7fdbca;
+  --oracle-charcoal: #d6deeb;
+  --oracle-ink: #d6deeb;
+  --oracle-line: rgba(214, 222, 235, 0.18);
+  --oracle-panel: #011627;
+  --oracle-soft: rgba(130, 170, 255, 0.12);
+  color: #d6deeb;
+  background: linear-gradient(135deg, #011627 0%, #0b2942 52%, #152b4a 100%);
+}
+
 .theme-custom {
   --oracle-charcoal: #312d2a;
   --oracle-ink: #1f1b19;
@@ -414,8 +923,36 @@ label small {
     );
 }
 
+.theme-custom.custom-tone-dark {
+  --oracle-charcoal: #f3f4f6;
+  --oracle-ink: #f3f4f6;
+  --oracle-panel: rgba(13, 19, 29, var(--custom-panel-alpha, 0.9));
+  --oracle-soft: rgba(255, 255, 255, 0.08);
+  --oracle-line: rgba(255, 255, 255, 0.16);
+  color: #f3f4f6;
+}
+
 .theme-custom .sidebar {
-  background: linear-gradient(180deg, var(--custom-sidebar, #34256f), color-mix(in srgb, var(--custom-sidebar, #34256f) 75%, #071629));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sidebar-bg, var(--custom-sidebar, #34256f)) var(--sidebar-alpha, 94%), transparent),
+      color-mix(in srgb, var(--sidebar-bg, var(--custom-sidebar, #34256f)) 78%, #090807)
+    );
+  -webkit-backdrop-filter: blur(var(--sidebar-blur, 0px)) saturate(1.08);
+  backdrop-filter: blur(var(--sidebar-blur, 0px)) saturate(1.08);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+.theme-custom.custom-tone-dark .content,
+.theme-custom.custom-tone-dark .workspace-modal,
+.theme-custom.custom-tone-dark .guided-card,
+.theme-custom.custom-tone-dark .summary,
+.theme-custom.custom-tone-dark .settings-section,
+.theme-custom.custom-tone-dark .action-plan-output,
+.theme-custom.custom-tone-dark .artifact-inspector,
+.theme-custom.custom-tone-dark .about-panel {
+  color: #f5f7fa;
 }
 
 .theme-custom .panel,
@@ -425,6 +962,94 @@ label small {
 .theme-custom .settings-section {
   border-color: rgba(255, 255, 255, 0.48);
   box-shadow: 0 18px 55px rgba(58, 68, 135, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.66);
+}
+
+.theme-custom.custom-tone-dark .panel,
+.theme-custom.custom-tone-dark .workspace-modal,
+.theme-custom.custom-tone-dark .guided-card,
+.theme-custom.custom-tone-dark .summary,
+.theme-custom.custom-tone-dark .settings-section,
+.theme-custom.custom-tone-dark .action-plan-output,
+.theme-custom.custom-tone-dark .artifact-inspector,
+.theme-custom.custom-tone-dark .about-panel {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(13, 19, 29, var(--custom-panel-alpha, 0.9));
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.theme-custom.custom-tone-dark input,
+.theme-custom.custom-tone-dark textarea,
+.theme-custom.custom-tone-dark select,
+.theme-custom.custom-tone-dark .secondary,
+.theme-custom.custom-tone-dark .menu-button,
+.theme-custom.custom-tone-dark .status-button,
+.theme-custom.custom-tone-dark .environment-card,
+.theme-custom.custom-tone-dark .history-row,
+.theme-custom.custom-tone-dark .empty-inline,
+.theme-custom.custom-tone-dark .option-tile,
+.theme-custom.custom-tone-dark .theme-card,
+.theme-custom.custom-tone-dark .workspace-card,
+.theme-custom.custom-tone-dark .repo-card,
+.theme-custom.custom-tone-dark .repo-pill,
+.theme-custom.custom-tone-dark .file-row,
+.theme-custom.custom-tone-dark .review-row,
+.theme-custom.custom-tone-dark .file-drop,
+.theme-custom.custom-tone-dark .mini-check {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f3f4f6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.theme-custom.custom-tone-dark input::placeholder,
+.theme-custom.custom-tone-dark textarea::placeholder {
+  color: rgba(245, 247, 250, 0.52);
+}
+
+.theme-custom.custom-tone-dark label,
+.theme-custom.custom-tone-dark .panel h2,
+.theme-custom.custom-tone-dark .panel h3,
+.theme-custom.custom-tone-dark .workspace-modal h2,
+.theme-custom.custom-tone-dark .guided-head h3,
+.theme-custom.custom-tone-dark .guided-preview strong,
+.theme-custom.custom-tone-dark .summary strong,
+.theme-custom.custom-tone-dark .repo-card strong,
+.theme-custom.custom-tone-dark .repo-pill strong,
+.theme-custom.custom-tone-dark .mini-check strong,
+.theme-custom.custom-tone-dark .about-panel h3,
+.theme-custom.custom-tone-dark .about-panel strong,
+.theme-custom.custom-tone-dark .about-panel dl div {
+  color: #f5f7fa;
+}
+
+.theme-custom.custom-tone-dark label small,
+.theme-custom.custom-tone-dark .panel-heading p,
+.theme-custom.custom-tone-dark .modal-head p,
+.theme-custom.custom-tone-dark .workspace-head p,
+.theme-custom.custom-tone-dark .summary span,
+.theme-custom.custom-tone-dark .file-drop span,
+.theme-custom.custom-tone-dark .repo-card span,
+.theme-custom.custom-tone-dark .repo-card small,
+.theme-custom.custom-tone-dark .repo-pill small,
+.theme-custom.custom-tone-dark .mini-check span,
+.theme-custom.custom-tone-dark .about-panel p {
+  color: rgba(245, 247, 250, 0.72);
+}
+
+.theme-custom.custom-tone-dark .theme-card:hover,
+.theme-custom.custom-tone-dark .theme-card.selected,
+.theme-custom.custom-tone-dark .option-tile:hover,
+.theme-custom.custom-tone-dark .option-tile.selected,
+.theme-custom.custom-tone-dark .repo-pill:hover,
+.theme-custom.custom-tone-dark .repo-pill.selected,
+.theme-custom.custom-tone-dark .repo-card:hover,
+.theme-custom.custom-tone-dark .repo-card.selected {
+  border-color: var(--oracle-red);
+  color: #ffffff;
+  background: color-mix(in srgb, var(--oracle-red) 28%, rgba(255, 255, 255, 0.1));
+}
+
+.theme-custom.custom-tone-dark .theme-card strong {
+  color: #ffffff;
 }
 
 .theme-glass .panel,
@@ -560,6 +1185,53 @@ label small {
   background: #28262a;
 }
 
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .content,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .workspace-modal,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .guided-card,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .settings-section,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .action-plan-output,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .artifact-inspector {
+  color: #f3f4f6;
+}
+
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) input,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) textarea,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) select,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .secondary,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .menu-button,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .status-button,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .environment-card,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .history-row,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .empty-inline,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .option-tile,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .theme-card {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f3f4f6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) label,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .panel-heading p,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .step-comment-label,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .guided-head h3,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .guided-preview strong,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary strong {
+  color: #f3f4f6;
+}
+
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) label small,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary span,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .file-drop span,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card span,
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card small {
+  color: #c7cbd1;
+}
+
+:is(.theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .sidebar {
+  background: rgba(12, 18, 24, 0.94);
+}
+
 .theme-midnight .guided-card,
 .theme-dracula .guided-card,
 .theme-cobalt .guided-card,
@@ -662,6 +1334,10 @@ label small {
   padding: 24px;
   background: var(--oracle-charcoal);
   color: #ffffff;
+}
+
+.sidebar :is(.brand, .step, .step-group-label) {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
 }
 
 .brand {
@@ -1408,6 +2084,7 @@ h2 {
 .settings-section-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 14px;
 }
 
@@ -1422,6 +2099,53 @@ h2 {
 
 .wide-settings-section {
   grid-column: 1 / -1;
+}
+
+.pending-work-section {
+  margin-top: 14px;
+}
+
+.pending-work-list {
+  display: grid;
+  gap: 10px;
+}
+
+.pending-work-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--oracle-line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.pending-work-row-detailed {
+  align-items: start;
+}
+
+.pending-work-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pending-work-row strong {
+  color: var(--oracle-red-dark);
+}
+
+.pending-work-row span,
+.pending-work-row small {
+  overflow: hidden;
+  color: #5d5550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-work-row small {
+  color: #8f2f23;
+  font-weight: 750;
 }
 
 .wide-settings-section .workspace-folder {
@@ -1563,6 +2287,12 @@ h2 {
   gap: 10px;
 }
 
+.text-size-grid,
+.background-style-grid,
+.motion-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
 .option-tile {
   justify-content: flex-start;
   color: var(--oracle-charcoal);
@@ -1574,6 +2304,30 @@ h2 {
 .option-tile.selected {
   color: #ffffff;
   background: var(--oracle-red);
+}
+
+.toggle-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  margin-top: 12px;
+}
+
+.toggle-row input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: var(--oracle-red);
+}
+
+.background-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.nested-kicker {
+  margin-top: 12px;
 }
 
 .theme-grid {
@@ -1612,6 +2366,17 @@ h2 {
   background: #fff6f3;
 }
 
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .theme-card:hover,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .theme-card.selected {
+  border-color: var(--oracle-red);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .theme-card strong {
+  color: #ffffff;
+}
+
 .theme-card span {
   width: 34px;
   height: 34px;
@@ -1623,6 +2388,49 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.theme-card-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.theme-tone-indicator {
+  justify-self: flex-start;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(49, 45, 42, 0.08);
+  line-height: 1;
+}
+
+.theme-tone-dot {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(49, 45, 42, 0.16);
+  background: #ffffff;
+  box-shadow: 0 1px 5px rgba(49, 45, 42, 0.18);
+}
+
+.theme-tone-dot.dark {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: #111827;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.32);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-custom.custom-tone-dark) .theme-tone-indicator {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl, .theme-custom.custom-tone-dark) .theme-tone-dot.light {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: #ffffff;
 }
 
 .theme-swatch-oracle span {
@@ -1665,82 +2473,118 @@ h2 {
   background: linear-gradient(135deg, #fff3dd, #efb08f, #9bb8d8);
 }
 
+.theme-swatch-sage span {
+  background: linear-gradient(135deg, #f7fbf2, #9bbf9f, #3f7d5c);
+}
+
+.theme-swatch-rose span {
+  background: linear-gradient(135deg, #fff7fb, #efb7cc, #b64f72);
+}
+
+.theme-swatch-graphite span {
+  background: linear-gradient(135deg, #101418, #374151, #f59e0b);
+}
+
+.theme-swatch-ocean span {
+  background: linear-gradient(135deg, #061b24, #164e63, #22d3ee);
+}
+
+.theme-swatch-nordDark span {
+  background: linear-gradient(135deg, #1f242f, #3b4252, #88c0d0);
+}
+
+.theme-swatch-solarizedDark span {
+  background: linear-gradient(135deg, #002b36, #073642, #2aa198);
+}
+
+.theme-swatch-halloween span {
+  background: linear-gradient(135deg, #120b16, #2b1234, #ff8a00);
+}
+
+.theme-swatch-cyberpunk span {
+  background: linear-gradient(135deg, #120022, #ff2bd6, #00e5ff);
+}
+
+.theme-swatch-nightowl span {
+  background: linear-gradient(135deg, #011627, #0b2942, #82aaff);
+}
+
 .theme-swatch-custom span {
   background: var(--custom-gradient, linear-gradient(135deg, #d9c4ff, #8fe8ff, #ff8fe7));
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .workspace-modal,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .environment-card,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .workspace-card,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .mini-check,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-pill,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .file-row,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .review-row,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .file-drop,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .summary,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .guided-card,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .action-plan-output,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .artifact-inspector,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .about-panel {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .workspace-modal,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .environment-card,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .workspace-card,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .mini-check,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-pill,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .file-row,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .review-row,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .file-drop,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .guided-card,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .action-plan-output,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .artifact-inspector,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .about-panel {
   color: #f5f7fa;
   background: rgba(33, 38, 47, 0.92);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .workspace-modal h2,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .panel h2,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .panel h3,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) label,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .mini-check strong,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-pill strong,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card strong,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .summary strong,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .about-panel h3,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .about-panel strong,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .about-panel dl div {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .workspace-modal h2,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .panel h2,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .panel h3,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) label,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .mini-check strong,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-pill strong,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card strong,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary strong,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .about-panel h3,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .about-panel strong,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .about-panel dl div {
   color: #f5f7fa;
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .modal-head p,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .workspace-head p,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) label small,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .mini-check span,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-pill small,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card span,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card small,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .file-row small,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .review-row small,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .summary span,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .file-drop span,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .about-panel p {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .modal-head p,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .workspace-head p,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) label small,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .mini-check span,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-pill small,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card span,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card small,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .file-row small,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .review-row small,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .summary span,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .file-drop span,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .about-panel p {
   color: rgba(245, 247, 250, 0.72);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) input,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) textarea,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) select {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) input,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) textarea,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) select {
   color: #f5f7fa;
   background: rgba(255, 255, 255, 0.1);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) input::placeholder,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) textarea::placeholder {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) input::placeholder,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) textarea::placeholder {
   color: rgba(245, 247, 250, 0.52);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .mini-check.ok {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .mini-check.ok {
   color: #7ee2a8;
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .mini-check.warn {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .mini-check.warn {
   color: #ffb4a8;
   background: rgba(255, 121, 98, 0.14);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-pill:hover,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-pill.selected,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card:hover,
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .repo-card.selected {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-pill:hover,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-pill.selected,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card:hover,
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .repo-card.selected {
   color: #ffffff;
   background: color-mix(in srgb, var(--oracle-red) 32%, rgba(255, 255, 255, 0.1));
 }
@@ -1772,13 +2616,13 @@ h2 {
   background: var(--oracle-soft);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .icon-close {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .icon-close {
   color: #f5f7fa;
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
 }
 
-:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord) .icon-close:hover {
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .icon-close:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.18);
 }

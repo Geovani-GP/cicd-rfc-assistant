@@ -10,6 +10,7 @@ import { inflateRawSync, inflateSync } from "node:zlib";
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const maxActionDocumentTextLength = 120000;
 
 type RepositoryInfo = {
   name: string;
@@ -588,7 +589,7 @@ function extractDocxText(buffer: Buffer) {
     .map((line) => xmlUnescape(line).replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n")
-    .slice(0, 12000);
+    .slice(0, maxActionDocumentTextLength);
 }
 
 function decodePdfLiteral(value: string) {
@@ -674,7 +675,7 @@ function extractPdfText(buffer: Buffer) {
   return Array.from(new Set(chunks))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
-    .slice(0, 12000);
+    .slice(0, maxActionDocumentTextLength);
 }
 
 function cleanExtractedPdfText(text: string) {
@@ -687,7 +688,7 @@ function cleanExtractedPdfText(text: string) {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return cleaned.slice(0, 12000);
+  return cleaned.slice(0, maxActionDocumentTextLength);
 }
 
 async function extractPdfTextWithSpotlight(filePath: string) {

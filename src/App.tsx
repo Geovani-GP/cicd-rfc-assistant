@@ -61,6 +61,7 @@ const defaultCustomTheme = {
   blur: 18,
   gradient: "linear-gradient(135deg, #d9c4ff 0%, #8fe8ff 52%, #ff8fe7 100%)"
 };
+const defaultSidebarColor = "#312d2a";
 const defaultProfile = {
   name: "Usuario General",
   email: "",
@@ -81,6 +82,8 @@ const avatarStyles = [
 const avatarOptions = ["general-dev", "cloud-dev", "release-lead", "pipeline-runner", "code-review", "night-build", "git-flow", "oic-owner"];
 const historyPageSize = 10;
 const executionDraftStorageKey = "rfcExecutionDraft";
+const pendingWorkStorageKey = "pendingWorkSnapshots";
+const maxActionDocumentTextLength = 120000;
 
 function createClientId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -90,11 +93,40 @@ function avatarUrl(seed: string, style = defaultProfile.avatarStyle) {
   return `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(seed)}&radius=50`;
 }
 
+function readUiTextSize(): UiTextSize {
+  const value = localStorage.getItem("uiTextSize");
+  return value === "small" || value === "large" ? value : "medium";
+}
+
+function readUiBackgroundStyle(): UiBackgroundStyle {
+  const value = localStorage.getItem("uiBackgroundStyle");
+  return value === "mesh" || value === "aurora" || value === "grid" || value === "image" ? value : "default";
+}
+
+function readUiAnimationSpeed(): UiAnimationSpeed {
+  const value = localStorage.getItem("uiAnimationSpeed");
+  return value === "slow" || value === "fast" ? value : "medium";
+}
+
+function readUiAnimationMotion(): UiAnimationMotion {
+  const value = localStorage.getItem("uiAnimationMotion");
+  return value === "horizontal" || value === "vertical" || value === "zoom" ? value : "drift";
+}
+
 function readExecutionDraft(): ExecutionDraft | null {
   try {
     return JSON.parse(localStorage.getItem(executionDraftStorageKey) || "null");
   } catch {
     return null;
+  }
+}
+
+function readPendingWorkSnapshots(): PendingWorkSnapshot[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(pendingWorkStorageKey) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
@@ -150,6 +182,53 @@ type ExecutionHistoryItem = {
   path: string;
   exportedAt: string;
 };
+type PendingWorkSnapshot = {
+  id: string;
+  rfc: string;
+  repository: string;
+  environment: string;
+  artifacts: string;
+  product: string;
+  method: string;
+  stepName: string;
+  currentStep: StepId;
+  actionPlanReady: boolean;
+  executionStepsReady: boolean;
+  evidenceCount: number;
+  pendingLabels: string[];
+  updatedAt: string;
+  draft?: {
+    repoPath: string;
+    rfc: string;
+    actionProduct: string;
+    actionMethod: "cicd" | "manual";
+    actionEnvironment: string;
+    actionInstance: string;
+    actionActivity: string;
+    artifactText: string;
+    actionPlan: string;
+    manualInstructions: string;
+    manualPhases: ManualActionPhase[];
+    riceFolderPath: string;
+    mode: "ADHOC" | "FULL";
+    files: SelectedFile[];
+    testTargetEnvironment: string;
+    prodTargetEnvironment: string;
+    testPipelineName: string;
+    prodPipelineName: string;
+    testPipelineRun: string;
+    prodPipelineRun: string;
+    testPipelineRunUrl: string;
+    prodPipelineRunUrl: string;
+    executionMode: ExecutionMode;
+    pipelineExecutionPhase: PipelinePhase;
+    pipelineActionPlan: string;
+    executionSteps: PipelineExecutionStep[];
+    executionStepsConfirmed: boolean;
+    pipelineStepIndex: number;
+    pipelineStepComments: Record<string, string>;
+  };
+};
 type ManualActionPhase = {
   id: "prerequisites" | "backup" | "installation" | "schedule" | "validation" | "returnPoint" | "evidence";
   title: string;
@@ -203,7 +282,12 @@ type InstantTooltip = {
   x: number;
   y: number;
 };
-type SettingsTab = "language" | "environment" | "history" | "themes" | "user" | "about";
+type SettingsTab = "language" | "environment" | "history" | "pending" | "themes" | "user" | "about";
+type UiTextSize = "small" | "medium" | "large";
+type UiBackgroundStyle = "default" | "mesh" | "aurora" | "grid" | "image";
+type UiAnimationSpeed = "slow" | "medium" | "fast";
+type UiAnimationMotion = "drift" | "horizontal" | "vertical" | "zoom";
+type ThemeTone = "light" | "dark";
 type ThemeId =
   | "oracle"
   | "pastel"
@@ -215,12 +299,140 @@ type ThemeId =
   | "nord"
   | "solarized"
   | "sunset"
+  | "sage"
+  | "rose"
+  | "graphite"
+  | "ocean"
+  | "nordDark"
+  | "solarizedDark"
+  | "halloween"
+  | "cyberpunk"
+  | "nightowl"
   | "custom";
 
 const languageNames: Record<Lang, string> = {
   es: "Espanol",
   en: "English",
   pt: "Portugues"
+};
+
+const uiTextSizeNames: Record<Lang, Record<UiTextSize, string>> = {
+  es: {
+    small: "Chico",
+    medium: "Mediano",
+    large: "Grande"
+  },
+  en: {
+    small: "Small",
+    medium: "Medium",
+    large: "Large"
+  },
+  pt: {
+    small: "Pequeno",
+    medium: "Medio",
+    large: "Grande"
+  }
+};
+
+const uiBackgroundStyleNames: Record<Lang, Record<UiBackgroundStyle, string>> = {
+  es: {
+    default: "Normal",
+    mesh: "Malla suave",
+    aurora: "Aurora",
+    grid: "Grid",
+    image: "Imagen"
+  },
+  en: {
+    default: "Default",
+    mesh: "Soft mesh",
+    aurora: "Aurora",
+    grid: "Grid",
+    image: "Image"
+  },
+  pt: {
+    default: "Normal",
+    mesh: "Malha suave",
+    aurora: "Aurora",
+    grid: "Grid",
+    image: "Imagem"
+  }
+};
+
+const uiAnimationSpeedNames: Record<Lang, Record<UiAnimationSpeed, string>> = {
+  es: {
+    slow: "Lenta",
+    medium: "Media",
+    fast: "Rapida"
+  },
+  en: {
+    slow: "Slow",
+    medium: "Medium",
+    fast: "Fast"
+  },
+  pt: {
+    slow: "Lenta",
+    medium: "Media",
+    fast: "Rapida"
+  }
+};
+
+const uiAnimationMotionNames: Record<Lang, Record<UiAnimationMotion, string>> = {
+  es: {
+    drift: "Suave",
+    horizontal: "Horizontal",
+    vertical: "Vertical",
+    zoom: "Ampliar"
+  },
+  en: {
+    drift: "Smooth",
+    horizontal: "Horizontal",
+    vertical: "Vertical",
+    zoom: "Zoom"
+  },
+  pt: {
+    drift: "Suave",
+    horizontal: "Horizontal",
+    vertical: "Vertical",
+    zoom: "Ampliar"
+  }
+};
+
+const themeToneNames: Record<Lang, Record<ThemeTone, string>> = {
+  es: {
+    light: "Claro",
+    dark: "Oscuro"
+  },
+  en: {
+    light: "Light",
+    dark: "Dark"
+  },
+  pt: {
+    light: "Claro",
+    dark: "Escuro"
+  }
+};
+
+const themeTone: Record<ThemeId, ThemeTone> = {
+  oracle: "light",
+  pastel: "light",
+  frosted: "dark",
+  glass: "light",
+  midnight: "dark",
+  dracula: "dark",
+  cobalt: "dark",
+  nord: "dark",
+  solarized: "light",
+  sunset: "light",
+  sage: "light",
+  rose: "light",
+  graphite: "dark",
+  ocean: "dark",
+  nordDark: "dark",
+  solarizedDark: "dark",
+  halloween: "dark",
+  cyberpunk: "dark",
+  nightowl: "dark",
+  custom: "light"
 };
 
 const themeNames: Record<Lang, Record<ThemeId, string>> = {
@@ -235,6 +447,15 @@ const themeNames: Record<Lang, Record<ThemeId, string>> = {
     nord: "Nord",
     solarized: "Solarized",
     sunset: "Sunset",
+    sage: "Sage",
+    rose: "Rose",
+    graphite: "Graphite",
+    ocean: "Ocean",
+    nordDark: "Nord Dark",
+    solarizedDark: "Solarized Dark",
+    halloween: "Halloween",
+    cyberpunk: "Cyberpunk",
+    nightowl: "Night Owl",
     custom: "Personalizado"
   },
   en: {
@@ -248,6 +469,15 @@ const themeNames: Record<Lang, Record<ThemeId, string>> = {
     nord: "Nord",
     solarized: "Solarized",
     sunset: "Sunset",
+    sage: "Sage",
+    rose: "Rose",
+    graphite: "Graphite",
+    ocean: "Ocean",
+    nordDark: "Nord Dark",
+    solarizedDark: "Solarized Dark",
+    halloween: "Halloween",
+    cyberpunk: "Cyberpunk",
+    nightowl: "Night Owl",
     custom: "Custom"
   },
   pt: {
@@ -261,6 +491,15 @@ const themeNames: Record<Lang, Record<ThemeId, string>> = {
     nord: "Nord",
     solarized: "Solarized",
     sunset: "Sunset",
+    sage: "Sage",
+    rose: "Rose",
+    graphite: "Graphite",
+    ocean: "Ocean",
+    nordDark: "Nord Dark",
+    solarizedDark: "Solarized Dark",
+    halloween: "Halloween",
+    cyberpunk: "Cyberpunk",
+    nightowl: "Night Owl",
     custom: "Personalizado"
   }
 };
@@ -285,6 +524,13 @@ const copy = {
     noHistoryResults: "No hay resultados para esa busqueda.",
     historySearch: "Buscar por RFC",
     historyPage: "Pagina",
+    pendingWork: "Pendientes",
+    pendingSearch: "Buscar pendiente",
+    noPendingWork: "No hay pendientes activos.",
+    continuePendingWork: "Continuar",
+    deletePendingWork: "Eliminar pendiente",
+    pendingDeleteConfirm: "Eliminar el pendiente actual? Esto limpiara los datos en curso, pero no borrara documentos exportados.",
+    pendingDetails: "Detalle",
     historyRemoveConfirm: "Eliminar {{rfc}} del historial?",
     historyDiskConfirm: "Tambien quieres eliminar el documento del disco duro?",
     deleteHistoryItem: "Eliminar",
@@ -307,12 +553,23 @@ const copy = {
     userDataDeleted: "Datos locales eliminados. La app quedo lista para configurarse de nuevo.",
     themes: "Temas",
     appTheme: "Tema de la app",
+    textSize: "Tamano de texto",
+    backgroundStyle: "Fondo",
+    animatedBackground: "Animacion de fondo",
+    animationSpeed: "Velocidad",
+    animationMotion: "Movimiento",
+    backgroundImage: "Imagen de fondo",
+    chooseBackgroundImage: "Elegir imagen",
+    clearBackgroundImage: "Quitar imagen",
+    backgroundBlur: "Blur de imagen",
     customGradient: "Gradiente personalizado",
     resetCustomTheme: "Restablecer personalizado",
     backgroundA: "Fondo 1",
     backgroundB: "Fondo 2",
     backgroundC: "Fondo 3",
     sidebarColor: "Sidebar",
+    sidebarTransparency: "Transparencia sidebar",
+    sidebarBlur: "Blur sidebar",
     accentColor: "Color principal",
     transparency: "Transparencia",
     blur: "Blur",
@@ -512,6 +769,13 @@ const copy = {
     noHistoryResults: "No results for that search.",
     historySearch: "Search by RFC",
     historyPage: "Page",
+    pendingWork: "Pending items",
+    pendingSearch: "Search pending item",
+    noPendingWork: "No active pending items.",
+    continuePendingWork: "Continue",
+    deletePendingWork: "Delete pending item",
+    pendingDeleteConfirm: "Delete the current pending item? This will clear in-progress data, but exported documents will not be deleted.",
+    pendingDetails: "Details",
     historyRemoveConfirm: "Remove {{rfc}} from history?",
     historyDiskConfirm: "Do you also want to delete the document from disk?",
     deleteHistoryItem: "Delete",
@@ -534,12 +798,23 @@ const copy = {
     userDataDeleted: "Local data deleted. The app is ready to be configured again.",
     themes: "Themes",
     appTheme: "App theme",
+    textSize: "Text size",
+    backgroundStyle: "Background",
+    animatedBackground: "Background animation",
+    animationSpeed: "Speed",
+    animationMotion: "Motion",
+    backgroundImage: "Background image",
+    chooseBackgroundImage: "Choose image",
+    clearBackgroundImage: "Clear image",
+    backgroundBlur: "Image blur",
     customGradient: "Custom gradient",
     resetCustomTheme: "Reset custom theme",
     backgroundA: "Background 1",
     backgroundB: "Background 2",
     backgroundC: "Background 3",
     sidebarColor: "Sidebar",
+    sidebarTransparency: "Sidebar transparency",
+    sidebarBlur: "Sidebar blur",
     accentColor: "Accent color",
     transparency: "Transparency",
     blur: "Blur",
@@ -739,6 +1014,13 @@ const copy = {
     noHistoryResults: "Nao ha resultados para essa busca.",
     historySearch: "Buscar por RFC",
     historyPage: "Pagina",
+    pendingWork: "Pendentes",
+    pendingSearch: "Buscar pendente",
+    noPendingWork: "Nao ha pendentes ativos.",
+    continuePendingWork: "Continuar",
+    deletePendingWork: "Excluir pendente",
+    pendingDeleteConfirm: "Excluir o pendente atual? Isso limpa os dados em andamento, mas nao apaga documentos exportados.",
+    pendingDetails: "Detalhe",
     historyRemoveConfirm: "Excluir {{rfc}} do historico?",
     historyDiskConfirm: "Tambem deseja excluir o documento do disco?",
     deleteHistoryItem: "Excluir",
@@ -761,12 +1043,23 @@ const copy = {
     userDataDeleted: "Dados locais apagados. O app esta pronto para ser configurado novamente.",
     themes: "Temas",
     appTheme: "Tema do app",
+    textSize: "Tamanho do texto",
+    backgroundStyle: "Fundo",
+    animatedBackground: "Animacao de fundo",
+    animationSpeed: "Velocidade",
+    animationMotion: "Movimento",
+    backgroundImage: "Imagem de fundo",
+    chooseBackgroundImage: "Escolher imagem",
+    clearBackgroundImage: "Remover imagem",
+    backgroundBlur: "Blur da imagem",
     customGradient: "Gradiente personalizado",
     resetCustomTheme: "Restaurar personalizado",
     backgroundA: "Fundo 1",
     backgroundB: "Fundo 2",
     backgroundC: "Fundo 3",
     sidebarColor: "Sidebar",
+    sidebarTransparency: "Transparencia sidebar",
+    sidebarBlur: "Blur sidebar",
     accentColor: "Cor principal",
     transparency: "Transparencia",
     blur: "Blur",
@@ -1018,6 +1311,7 @@ const actionCopy = {
     artifactsHint: "Un artefacto por linea. Ejemplo: GB_AR_HCR_LKP.csv, package.par o integration.iar",
     sourceDocument: "Documento IM090 / instrucciones",
     loadDocument: "Cargar documento",
+    processingDocument: "Procesando archivo...",
     noDocument: "Sin documento cargado",
     manualInstructions: "Instrucciones de instalacion",
     manualInstructionsHint: "Carga un IM090 .docx/.pdf o pega aqui las instrucciones manuales de instalacion.",
@@ -1028,7 +1322,6 @@ const actionCopy = {
     generate: "Generar plan",
     clear: "Limpiar Action Plan",
     copy: "Copiar",
-    continue: "Continuar a paquete",
     preview: "Action Plan generado",
     methodCicd: "CI/CD Tool"
   },
@@ -1049,6 +1342,7 @@ const actionCopy = {
     artifactsHint: "One artifact per line. Example: GB_AR_HCR_LKP.csv, package.par, or integration.iar",
     sourceDocument: "IM090 / instructions document",
     loadDocument: "Load document",
+    processingDocument: "Processing file...",
     noDocument: "No document loaded",
     manualInstructions: "Installation instructions",
     manualInstructionsHint: "Load an IM090 .docx/.pdf or paste the manual installation instructions here.",
@@ -1059,7 +1353,6 @@ const actionCopy = {
     generate: "Generate plan",
     clear: "Clear Action Plan",
     copy: "Copy",
-    continue: "Continue to package",
     preview: "Generated Action Plan",
     methodCicd: "CI/CD Tool"
   },
@@ -1080,6 +1373,7 @@ const actionCopy = {
     artifactsHint: "Um artefato por linha. Exemplo: GB_AR_HCR_LKP.csv, package.par ou integration.iar",
     sourceDocument: "Documento IM090 / instrucoes",
     loadDocument: "Carregar documento",
+    processingDocument: "Processando arquivo...",
     noDocument: "Sem documento carregado",
     manualInstructions: "Instrucoes de instalacao",
     manualInstructionsHint: "Carregue um IM090 .docx/.pdf ou cole aqui as instrucoes manuais de instalacao.",
@@ -1090,7 +1384,6 @@ const actionCopy = {
     generate: "Gerar plano",
     clear: "Limpar Action Plan",
     copy: "Copiar",
-    continue: "Continuar para pacote",
     preview: "Action Plan gerado",
     methodCicd: "CI/CD Tool"
   }
@@ -1180,7 +1473,7 @@ async function extractDocxTextFromBrowserFile(file: File) {
     .map((line) => unescapeXmlText(line).replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n")
-    .slice(0, 12000);
+    .slice(0, maxActionDocumentTextLength);
 }
 
 function decodePdfLiteralText(value: string) {
@@ -1268,7 +1561,7 @@ async function extractPdfTextFromBrowserFile(file: File) {
   return Array.from(new Set(chunks))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
-    .slice(0, 12000);
+    .slice(0, maxActionDocumentTextLength);
 }
 
 async function buildBrowserActionDocument(file: File): Promise<ActionSourceDocument> {
@@ -1305,7 +1598,10 @@ function cleanIm090Text(text: string) {
       if (/^IM\.090 Installation Instructions$/i.test(line)) return false;
       if (/^Installation Instructions for Grupo Bimbo \d+ of \d+$/i.test(line)) return false;
       if (/^Document Control\s+/i.test(line)) return false;
+      if (/^Confidential - Oracle Restricted/i.test(line)) return false;
       if (/^Open and Closed Issues\. \d+ of \d+$/i.test(line)) return false;
+      if (/^\d+$/.test(line)) return false;
+      if (/^\d+[\w.-]*\.(?:docx|pdf)$/i.test(line)) return false;
       if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
       if (/^[A-Za-z]+ \d{1,2}, \d{4}$/i.test(line)) return false;
       return true;
@@ -1337,9 +1633,10 @@ function findHeadingLine(lines: string[], pattern: RegExp, from = 0) {
 }
 
 function findNextMajorHeading(lines: string[], from: number) {
+  const majorHeading =
+    /^(?:\d+(?:\.\d+)*\s+)?(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\b/i;
   const index = lines.findIndex((line, lineIndex) => lineIndex > from && (
-    (/^2\.\d+\s+\S/i.test(line) && !line.includes("...")) ||
-    /^(Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\b/i.test(line)
+    majorHeading.test(line) && !line.includes("...")
   ));
   return index >= 0 ? index : lines.length;
 }
@@ -1397,11 +1694,51 @@ function looseSectionByHeadings(text: string, starts: string[], ends: string[]) 
   return normalizeManualSection(text.slice(start, end).split("\n"));
 }
 
-function extractArtifactNames(text: string) {
+function cleanArtifactCandidate(value: string) {
+  return value
+    .replace(/^["“”]+|["“”.,;:]+$/g, "")
+    .replace(/\s+(integration|artifact|component|lookup|package|project)$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isLikelyArtifactName(value: string) {
+  const clean = cleanArtifactCandidate(value);
+  if (!clean || /^https?:\/\//i.test(clean)) return false;
+  if (/\.(?:iar|par|xml|csv)\b/i.test(clean)) return true;
+  if (/^[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}$/i.test(clean)) return true;
+  if (clean.length < 10) return false;
+  if (/^(stop schedule|start schedule|confirm|release|test|prod|development|regression|pre-prod|home|schedule)$/i.test(clean)) {
+    return false;
+  }
+  const words = clean.split(/\s+/);
+  const hasTechnicalWord = words.some((word) => /^[A-Z0-9]{2,}$/.test(word) || /[A-Z][a-z]+[A-Z]/.test(word));
+  return words.length >= 3 && hasTechnicalWord;
+}
+
+function extractArtifactNames(text: string, options: { includeComponentNames?: boolean } = {}) {
   const normalMatches = text.match(/[A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
   const compactText = text.replace(/\s+/g, "");
   const compactMatches = compactText.match(/(?:[A-Z0-9]+[_.-])+[A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
-  return Array.from(new Set([...normalMatches, ...compactMatches].map((item) => item.replace(/\s+/g, ""))));
+  const fileArtifacts = [...normalMatches, ...compactMatches]
+    .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
+    .filter(Boolean);
+  if (!options.includeComponentNames || fileArtifacts.length) {
+    return Array.from(new Map(fileArtifacts.map((artifact) => [artifact.toLowerCase(), artifact])).values());
+  }
+  const technicalMatches = text.match(/\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b/g) ?? [];
+  const quotedMatches = quotedValues(text).filter(isLikelyArtifactName);
+  const contextualMatches = Array.from(
+    text.matchAll(/\b(?:integration|artifact|component|lookup|package|project)\b[^A-Z0-9\n]{0,24}["“]?([A-Z0-9][A-Z0-9_ .-]{5,90})["”]?/gi)
+  )
+    .map((match) => match[1])
+    .filter(isLikelyArtifactName);
+  const artifacts = [...fileArtifacts, ...technicalMatches, ...quotedMatches, ...contextualMatches]
+    .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, " "))
+    .filter(Boolean);
+  const byKey = new Map<string, string>();
+  for (const artifact of artifacts) byKey.set(artifact.toLowerCase(), artifact);
+  return Array.from(byKey.values());
 }
 
 function asBullets(items: string[]) {
@@ -1441,6 +1778,21 @@ function environmentBlocks(section: string) {
   return { heading, blocks };
 }
 
+function availableEnvironmentsFromDocument(text: string) {
+  const section = environmentSectionFromDocument(text);
+  const { blocks } = environmentBlocks(section);
+  const names = blocks
+    .map((block) => environmentNameFromLine(block[0] ?? ""))
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return Array.from(new Map(names.map((name) => [normalizeEnvironmentName(name), name])).values());
+}
+
+function availableEnvironmentMessage(environment: string, available: string[]) {
+  const suffix = available.length ? ` Ambientes disponibles: ${available.join(", ")}.` : "";
+  return `El ambiente ${environment} no se encontro en el IM090.${suffix}`;
+}
+
 function findEnvironmentBlock(section: string, environment: string) {
   const aliases = environmentAliases(environment);
   const { heading, blocks } = environmentBlocks(section);
@@ -1476,88 +1828,553 @@ function selectedEnvironmentMissingFromDocument(text: string, environment: strin
   return environmentIsMissingInDocument(environmentSectionFromDocument(text), environment);
 }
 
-function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
-  const operational = operationalIm090Text(text);
-  const lines = actionPlanLinesFromIm090(text);
-  const startAt = 0;
-  const artifacts = extractArtifactNames(operational);
-  const artifactSection = sectionByAnyHeading(lines, [/^2\.\d+\s+Installation artifacts\b/i, /^Installation artifacts\b/i], startAt);
-  const preInstall = sectionByAnyHeading(lines, [/^2\.\d+\s+Pre installation steps\b/i, /^Pre installation steps\b/i], startAt);
-  const installation = sectionByAnyHeading(lines, [/^2\.\d+\s+Installation Steps\b/i, /^Installation Steps\b/i], startAt);
-  const schedule = sectionByAnyHeading(lines, [/^2\.\d+\s+Schedule activation\b/i, /^Schedule activation\b/i], startAt);
-  const validation = sectionByAnyHeading(lines, [/^2\.\d+\s+Verification Checklist\b/i, /^Verification Checklist\b/i], startAt);
-  const returnPoint = sectionByAnyHeading(lines, [/^2\.\d+\s+Return Point\b/i, /^Return Point\b/i], startAt);
-  const environmentContentRaw = environmentSectionFromDocument(text);
-  const environmentContent = filterEnvironmentSection(environmentContentRaw, selectedEnvironment);
-  const artifactContent = artifactSection || looseSectionByHeadings(operational, ["Installation artifacts"], [
-    "Pre installation steps",
-    "Installation Steps"
-  ]);
-  const preInstallContent = preInstall || looseSectionByHeadings(operational, ["Pre installation steps"], ["Installation Steps"]);
-  const installationContent = installation || looseSectionByHeadings(operational, ["Installation Steps"], [
-    "Schedule activation",
-    "Verification Checklist",
-    "Return Point"
-  ]);
-  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation"], [
-    "Verification Checklist",
-    "Return Point"
-  ]);
-  const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
-  const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
+function normalizeManualBullets(content: string) {
+  return content
+    .split("\n")
+    .map((line) => {
+      if (/^\s*o\s*$/i.test(line)) return "";
+      return line.replace(/^([ \t]*)[•]\s+/, "$1- ").replace(/^([ \t]*)o\s+/, "$1- ");
+    })
+    .join("\n");
+}
+
+function envLabelsFromLine(line: string) {
+  const match = line.match(/^\s*[-•o]?\s*((?:Dev|Development|Regression|Test|Prod|Production|Pre[- ]?Prod|TE|PR)(?:\s*,\s*(?:Dev|Development|Regression|Test|Prod|Production|Pre[- ]?Prod|TE|PR))*)\s*:/i);
+  if (!match) return [];
+  return match[1].split(/\s*,\s*/).map(normalizeEnvironmentName).filter(Boolean);
+}
+
+function filterEnvironmentSpecificLines(content: string, selectedEnvironment: string) {
+  const aliases = environmentAliases(selectedEnvironment);
+  if (!aliases.length) return content;
+  return content
+    .split("\n")
+    .filter((line) => {
+      const labels = envLabelsFromLine(line);
+      return !labels.length || labels.some((label) => aliases.includes(label));
+    })
+    .join("\n");
+}
+
+function prepareManualPhaseContent(content: string, selectedEnvironment: string) {
+  return normalizeManualSection(filterEnvironmentSpecificLines(normalizeManualBullets(content), selectedEnvironment).split("\n"));
+}
+
+function hasNumberedInstructionSteps(text: string) {
+  return /^\s*\d+\s*[.)-]\s+\S/m.test(text);
+}
+
+function hasSqlInstructions(text: string) {
+  return /\b(?:CREATE|ALTER|DROP|TRUNCATE|DELETE|UPDATE|PURGE|GRANT|REVOKE)\s+\w+\b/i.test(text) || /^\s*SQL>/im.test(text);
+}
+
+function databaseObjectNames(text: string) {
+  const matches = Array.from(
+    text.matchAll(/\b(?:CREATE|ALTER|DROP|TRUNCATE)\s+(?:PROFILE|USER|TABLE|VIEW|INDEX|SEQUENCE|ROLE|SYNONYM)\s+([A-Z0-9_$#.-]+)/gi)
+  ).map((match) => match[1]);
+  return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
+}
+
+function classifyDatabaseOperation(text: string) {
+  const normalized = text.toUpperCase();
+  const isPassword = /\bALTER\s+USER\b[\s\S]*\bIDENTIFIED\s+BY\b|\bPASSWORD\b/.test(normalized);
+  const isPurge = /\b(?:DELETE\s+FROM|TRUNCATE\s+TABLE|DROP\s+TABLE|PURGE)\b/.test(normalized);
+  const isDml = /\b(?:UPDATE|DELETE\s+FROM|INSERT\s+INTO|MERGE\s+INTO)\b/.test(normalized);
+  const isCreate = /\bCREATE\s+(?:PROFILE|USER|TABLE|VIEW|INDEX|SEQUENCE|ROLE|SYNONYM)\b/.test(normalized);
+  const restoreMentioned = /\b(?:RESTORE\s+POINT|FLASHBACK|EXPDP|BACKUP|SNAPSHOT|ROLLBACK)\b/.test(normalized);
+
+  if (isPassword) return { kind: "password", restoreMentioned };
+  if (isPurge) return { kind: "purge", restoreMentioned };
+  if (isDml) return { kind: "dml", restoreMentioned };
+  if (isCreate) return { kind: "create", restoreMentioned };
+  return { kind: "general", restoreMentioned };
+}
+
+function databaseBackupGuidance(kind: string, restoreMentioned: boolean) {
+  if (kind === "password") {
+    return [
+      "Do not capture or store previous/new passwords in the Action Plan or evidence.",
+      "Capture current user status from DBA_USERS before the change.",
+      "Confirm the approved credential reset/rotation procedure and secure communication channel."
+    ];
+  }
+  if (kind === "purge" || kind === "dml") {
+    return [
+      "Confirm restore point, export, snapshot, table backup, or approved DBA backup before execution.",
+      "Capture backup/restore evidence before running the SQL.",
+      "Capture pre-change row counts or validation queries for affected data.",
+      restoreMentioned ? "Restore/backup instruction was detected in the source text." : "Do not proceed until backup or restore point evidence is available."
+    ];
+  }
+  if (kind === "create") {
+    return [
+      "Capture current database object/profile configuration before applying changes.",
+      "If the object does not exist, document that no backup applies.",
+      "Prepare rollback statement only if it is approved for this RFC."
+    ];
+  }
+  return [
+    "Capture current database configuration before applying changes.",
+    "Confirm backup, restore point, or rollback procedure with the DBA team when the change can affect data or access."
+  ];
+}
+
+function databaseValidationGuidance(kind: string, objects: string[]) {
+  const objectValidations = objects.length
+    ? objects.map((objectName) => `- Validate ${objectName} exists and matches the requested configuration.`)
+    : ["- Validate the requested database objects exist and match the requested configuration."];
+  if (kind === "password") {
+    return [
+      "Validate the user account status, lock/expiry state, and required connectivity without exposing credentials.",
+      "- Query DBA_USERS or the approved account validation view.",
+      "- Confirm the application/customer can authenticate through the approved secure channel."
+    ].join("\n");
+  }
+  if (kind === "purge" || kind === "dml") {
+    return [
+      "Run post-change validation queries and compare against the pre-change evidence.",
+      "- Capture affected row counts.",
+      "- Validate business/application impact with the request owner."
+    ].join("\n");
+  }
+  return ["Run validation queries and capture the result.", ...objectValidations].join("\n");
+}
+
+function databaseReturnPointGuidance(kind: string, restoreMentioned: boolean) {
+  if (kind === "password") {
+    return "If authentication fails, follow the approved credential reset/rollback procedure. Do not expose credentials in logs or evidence.";
+  }
+  if (kind === "purge" || kind === "dml") {
+    return restoreMentioned
+      ? "Use the documented restore point/backup procedure if validation fails. Stop execution and escalate to DBA before retrying."
+      : "If validation fails, stop the change and use the approved backup/restore plan. Do not continue without DBA approval.";
+  }
+  if (kind === "create") {
+    return "If execution fails, stop the change, capture the error, and consult the DBA/technical team. Run rollback/drop statements only if approved.";
+  }
+  return "If execution fails, stop the change, capture the error, and consult the DBA/technical team before retrying.";
+}
+
+function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const sql = prepareManualPhaseContent(text, selectedEnvironment);
+  const objects = databaseObjectNames(text);
+  const operation = classifyDatabaseOperation(text);
+  const backupGuidance = databaseBackupGuidance(operation.kind, operation.restoreMentioned);
+  const validationGuidance = databaseValidationGuidance(operation.kind, objects);
 
   return [
     {
       id: "prerequisites",
       title: "Prerequisites",
       content: [
+        "Confirm target database environment, server, access, and approved maintenance window.",
+        "Confirm the execution user has privileges to run the requested SQL.",
+        objects.length ? `Database object(s):\n${asBullets(objects)}` : ""
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup",
+      content: backupGuidance.join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "1. Login into the target database server as the approved database/oracle user.",
+        "2. Open SQL*Plus or the approved SQL execution tool.",
+        "3. Execute the SQL below:",
+        sql,
+        "4. Capture the execution output."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this database change unless the RFC explicitly requests job/scheduler activation."
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: validationGuidance
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: databaseReturnPointGuidance(operation.kind, operation.restoreMentioned)
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach SQL execution output.",
+        "Attach validation query result.",
+        "Share final result with the customer."
+      ].join("\n")
+    }
+  ];
+}
+
+function hasMftInstructions(text: string) {
+  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts)\b/i.test(text);
+}
+
+function cleanMftCandidate(value: string) {
+  return cleanArtifactCandidate(value)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/^\d+\.\s*/, "")
+    .trim();
+}
+
+function isLikelyMftTargetName(value: string) {
+  return /^[A-Z0-9][A-Z0-9_]{5,}$/i.test(value);
+}
+
+function isLikelyMftTransferRuleName(value: string) {
+  return /^[A-Z0-9_]{8,}$/.test(value) && /_/.test(value);
+}
+
+function cleanMftActionName(value: string) {
+  return cleanMftCandidate(value).replace(/^\d+\.\s*/, "").trim();
+}
+
+function mftConfigurationItems(text: string) {
+  const items: string[] = [];
+  const transferMatches = [
+    ...text.matchAll(/\btransfer rule(?: named| name)?[:\s"]+([A-Z0-9_ -]{6,})/gi),
+    ...text.matchAll(/\btransfer name:\s*([A-Z0-9_ -]{6,})/gi),
+    ...text.matchAll(/\bPROCESS\s+(?:TO\s+\w+\s+THE\s+)?TRANSFER RULE\s*\(([A-Z0-9_ -]{6,})\)/gi)
+  ];
+  for (const match of transferMatches) {
+    const value = cleanMftCandidate(match[1]);
+    if (isLikelyMftTransferRuleName(value)) items.push(`Transfer Rule: ${value}`);
+  }
+
+  for (const match of text.matchAll(/\bdestination\s+["“]?([^"\n”]+)["”]?/gi)) {
+    const value = cleanMftCandidate(match[1]);
+    if (isLikelyMftTargetName(value)) items.push(`Target: ${value}`);
+  }
+
+  for (const match of text.matchAll(/\b(?:Preprocessing Actions?|Selected Actions?)\b[\s\S]{0,120}?["“]?([A-Z0-9][A-Z0-9_ .-]*(?:Decryption|Encryption|Compression|Validation|Action))[\"”]?/gi)) {
+    const value = cleanMftActionName(match[1]);
+    if (/^(?:PGP\s+)?(?:Decryption|Encryption|Compression|Validation|Action)\b/i.test(value) || /\b(?:Decryption|Encryption|Compression|Validation)\b/i.test(value)) {
+      items.push(`Processing Action: ${value}`);
+    }
+  }
+
+  for (const value of quotedValues(text)) {
+    const cleanValue = cleanMftCandidate(value);
+    if (/PGP|Decryption|Encryption/i.test(cleanValue)) items.push(`Processing Action: ${cleanMftActionName(cleanValue)}`);
+    if (isLikelyMftTransferRuleName(cleanValue)) items.push(`Transfer Rule: ${cleanValue}`);
+  }
+
+  return Array.from(new Map(items.map((item) => [item.toLowerCase().replace(/^processing action:\s*\d+\.\s*/i, "processing action: "), item.replace(/^Processing Action:\s*\d+\.\s*/i, "Processing Action: ")])).values());
+}
+
+function mftTransferRules(text: string) {
+  return mftConfigurationItems(text)
+    .filter((item) => item.startsWith("Transfer Rule: "))
+    .map((item) => item.replace(/^Transfer Rule:\s*/, ""));
+}
+
+function mftTargets(text: string) {
+  return mftConfigurationItems(text)
+    .filter((item) => item.startsWith("Target: "))
+    .map((item) => item.replace(/^Target:\s*/, ""));
+}
+
+function mftActions(text: string) {
+  return mftConfigurationItems(text)
+    .filter((item) => item.startsWith("Processing Action: "))
+    .map((item) => item.replace(/^Processing Action:\s*/, ""));
+}
+
+function mftConsoleUrl(text: string) {
+  return text.match(/https?:\/\/\S*?mftconsole\b/i)?.[0].replace(/[).,;]+$/g, "") ?? "";
+}
+
+function buildMftImplementationSteps(text: string) {
+  const items = mftConfigurationItems(text);
+  const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
+  const targets = mftTargets(text);
+  const actions = mftActions(text);
+  const action = actions[0] ?? "<Processing action>";
+  const url = mftConsoleUrl(text) || "<MFT console URL>";
+  const targetSteps = targets.length
+    ? targets.map((target, index) => {
+      const stepNumber = 4 + index;
+      return `${stepNumber}. Remove ${action} preprocessing action from target:\n   - ${target}\n\n   Steps:\n   ${stepNumber}.1. In Transfer Definition, locate target:\n         ${target}\n   ${stepNumber}.2. Open Preprocessing Actions.\n   ${stepNumber}.3. Select:\n         1. ${action}\n   ${stepNumber}.4. In Selected Actions, delete:\n         ${action}\n   ${stepNumber}.5. Click OK to confirm the change.`;
+    }).join("\n\n")
+    : `4. Remove or update the affected preprocessing action.\n\n   Steps:\n   4.1. In Transfer Definition, locate the affected target.\n   4.2. Open Preprocessing Actions.\n   4.3. Select the affected processing action.\n   4.4. Apply the approved configuration change.\n   4.5. Click OK to confirm the change.`;
+  const finalStep = targets.length ? 4 + targets.length : 5;
+
+  return [
+    "Implementation steps are based on customer-provided instructions and will be executed as documented.",
+    "",
+    "1. Access the MFT Console:",
+    url,
+    "",
+    "2. Undeploy the transfer rule:",
+    `   - ${transferRule}`,
+    "",
+    "   Steps:",
+    "   2.1. Navigate to Monitoring.",
+    "   2.2. Open Deployments from the left-hand menu.",
+    "   2.3. In Display, select Transfers Only.",
+    "   2.4. Locate transfer rule:",
+    `         ${transferRule}`,
+    "   2.5. Select the transfer rule.",
+    "   2.6. Click Undeployment.",
+    "   2.7. Confirm the undeployment request by clicking Yes.",
+    "   2.8. Wait for completion confirmation and click OK.",
+    "",
+    "3. Update transfer rule:",
+    `   - ${transferRule}`,
+    "",
+    "   Steps:",
+    "   3.1. Navigate to Design.",
+    "   3.2. Click Search Artifacts.",
+    "   3.3. In Search, select Transfers.",
+    "   3.4. Search for:",
+    `         ${transferRule}`,
+    "   3.5. Open the transfer rule from the search results.",
+    "",
+    targetSteps,
+    "",
+    `${finalStep}. Save and deploy the updated transfer rule.`,
+    "",
+    "   Steps:",
+    `   ${finalStep}.1. Click Save.`,
+    `   ${finalStep}.2. Click Deploy.`,
+    `   ${finalStep}.3. In the Deploy Transfer window, click Deploy to complete deployment.`
+  ].join("\n");
+}
+
+function buildMftConfigurationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
+  const targets = mftTargets(text);
+  const actions = mftActions(text);
+  const action = actions[0] ?? "<Processing action>";
+  const targetLines = targets.length ? asBullets(targets) : "- Confirm affected MFT targets.";
+  const actionLines = actions.length ? asBullets(actions) : "- Confirm affected processing actions.";
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "1. Validate access to the target MFT console before starting the change.",
+        `2. Validate the target transfer rule exists:\n- ${transferRule}`,
+        `3. Validate the affected targets and processing action exist in the transfer definition:\n${targetLines}\n${actionLines}`,
+        "4. Confirm the approved change window and validate the transfer rule can be undeployed and deployed during execution."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup",
+      content: [
+        "Before implementing the change, capture evidence of the current configuration.",
+        "",
+        "Capture:",
+        "- Current deployment status of the transfer rule",
+        "- Current transfer rule configuration",
+        "- Current source and target configuration details",
+        "- Current preprocessing actions for affected targets",
+        `- Current ${action} configuration prior to removal`,
+        "",
+        "If MFT export/versioning functionality is available, export or save the current transfer rule configuration before execution."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Implementation Steps",
+      content: buildMftImplementationSteps(text)
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: `Not applicable unless a separate activation schedule is required by the RFC.\n\nConfirm the transfer rule:\n- ${transferRule}\n\nis successfully deployed after the update.`
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate the transfer rule and configuration after deployment.",
+        "",
+        "1. Navigate to:\n   Monitoring > Deployments",
+        "2. Select:\n   Transfers Only",
+        `3. Confirm transfer rule:\n   ${transferRule}\n\n   is successfully deployed.`,
+        "4. Navigate to:\n   Design > Search Artifacts",
+        `5. Open transfer rule:\n   ${transferRule}`,
+        targets.map((target, index) => `${6 + index}. Validate target:\n   - ${target}\n\n   no longer contains the ${action} preprocessing action.`).join("\n\n"),
+        `${6 + targets.length}. Capture evidence of:\n   - Final deployment status\n   - Final transfer configuration\n   - Updated preprocessing actions`
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the update or deployment fails, stop execution and capture all error details before proceeding.",
+        "",
+        "Rollback Procedure:",
+        "",
+        `1. Undeploy the modified transfer rule:\n   - ${transferRule}`,
+        "2. Open the transfer rule from:\n   Design > Search Artifacts",
+        targets.length
+          ? `3. Restore the ${action} preprocessing action for:\n${targetLines}`
+          : "3. Restore the affected processing action/configuration using backup evidence.",
+        "4. Save the transfer rule.",
+        "5. Deploy the transfer rule.",
+        "6. Validate the original preprocessing configuration has been restored successfully.",
+        "7. Capture rollback evidence and deployment confirmation.",
+        "",
+        "If deployment or rollback issues persist:\n- Escalate to the MFT technical support team before retrying execution."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- MFT login/environment",
+        "- Initial deployment status",
+        "- Backup/current configuration before change",
+        "- Undeployment confirmation",
+        "- Configuration update evidence",
+        targets.length ? `- Removal of ${action} from:\n${targets.map((target) => `  - ${target}`).join("\n")}` : `- ${action} update evidence`,
+        "- Save confirmation",
+        "- Deploy confirmation",
+        "- Final deployment status",
+        "- Final preprocessing action validation",
+        "- Rollback execution evidence (if applicable)",
+        "",
+        "Share final execution results with the RFC requester/customer."
+      ].join("\n")
+    }
+  ];
+}
+
+function manualPlanMetadata(productName: string, environmentName: string, instanceName: string, instructions: string) {
+  if (productName !== "MFT" || !hasMftInstructions(instructions)) return "";
+  const transferRule = mftTransferRules(instructions)[0] ?? "<Transfer rule>";
+  const targets = mftTargets(instructions);
+  const actions = mftActions(instructions);
+  const action = actions[0] ?? "<Processing action>";
+  const url = mftConsoleUrl(instructions);
+  const isProd = /PROD|PR/i.test(environmentName);
+  return [
+    "Environment:",
+    `- MFT Instance: ${instanceName}`,
+    url ? `- URL: ${url}` : "",
+    "",
+    "Estimated Duration:",
+    "15-20 minutes",
+    "",
+    "Impact:",
+    "Temporary interruption of transfer processing for:",
+    `- ${transferRule}`,
+    "",
+    `during undeployment/deployment activities in the ${environmentName} environment.`,
+    "",
+    "Scope:",
+    `- ${environmentName} environment only`,
+    isProd ? "- Production impact must be confirmed with the RFC approver" : "- No production impact expected",
+    "",
+    "Expected Outcome:",
+    `${transferRule} deployed successfully with the requested configuration updates.`,
+    "",
+    targets.length ? `Affected Targets:\n${asBullets(targets)}` : "",
+    "",
+    "Configuration Change:",
+    `- Removal of the ${action} preprocessing action from the affected targets`
+  ].filter(Boolean).join("\n");
+}
+
+function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
+  const operational = operationalIm090Text(text);
+  const lines = actionPlanLinesFromIm090(text);
+  const startAt = 0;
+  const artifactSection = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation artifacts\b/i, /^Installation artifacts\b/i], startAt);
+  const artifactContent = artifactSection || looseSectionByHeadings(operational, ["Installation artifacts"], [
+    "Pre installation steps",
+    "Installation Steps"
+  ]);
+  const artifacts = extractArtifactNames(artifactContent).length
+    ? extractArtifactNames(artifactContent)
+    : extractArtifactNames(artifactContent || operational, { includeComponentNames: true });
+  const preInstall = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Pre installation steps\b/i, /^Pre installation steps\b/i], startAt);
+  const installation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation Steps\b/i, /^Installation Steps\b/i], startAt);
+  const schedule = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Schedule activation\b/i, /^Schedule activation\b/i], startAt);
+  const validation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Verification Checklist\b/i, /^Verification Checklist\b/i], startAt);
+  const returnPoint = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Return Point\b/i, /^Return Point\b/i], startAt);
+  const environmentContentRaw = environmentSectionFromDocument(text);
+  const environmentContent = filterEnvironmentSection(environmentContentRaw, selectedEnvironment);
+  const preInstallContent = preInstall || looseSectionByHeadings(operational, ["Pre installation steps"], ["Installation Steps"]);
+  const installationContent = installation || looseSectionByHeadings(operational, ["Installation Steps"], [
+    "Schedule activation",
+    "Verification Checklist",
+    "Return Point"
+  ]);
+  const directInstructionContent = !installationContent && hasNumberedInstructionSteps(operational) ? operational : "";
+  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation"], [
+    "Verification Checklist",
+    "Return Point"
+  ]);
+  const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
+  const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
+  const prepareContent = (content: string) => prepareManualPhaseContent(content, selectedEnvironment);
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: prepareContent([
         "Validate target environment, access, and artifacts before starting the manual installation.",
         environmentContent,
         artifactContent,
         "Artifacts detected:",
         asBullets(artifacts),
         preInstallContent
-      ].filter(Boolean).join("\n\n")
+      ].filter(Boolean).join("\n\n"))
     },
     {
       id: "backup",
       title: "Backup",
-      content: [
+      content: prepareContent([
         "Before installing, validate whether each component already exists in the target environment.",
         "If it exists, export or download the current version as backup.",
         "Attach backup files or backup evidence to the RFC.",
         "If backup is not applicable, document the reason in the RFC evidence."
-      ].join("\n")
+      ].join("\n"))
     },
     {
       id: "installation",
       title: "Installation Steps",
-      content: installationContent || "Execute the manual installation steps described in the IM090."
+      content: prepareContent(directInstructionContent || installationContent || "Execute the manual installation steps described in the IM090.")
     },
     {
       id: "schedule",
       title: "Schedule Activation",
-      content: scheduleContent || "Validate whether schedule activation applies. If applicable, start schedules and capture evidence."
+      content: prepareContent(scheduleContent || "Validate whether schedule activation applies. If applicable, start schedules and capture evidence.")
     },
     {
       id: "validation",
       title: "Validation",
-      content: validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors."
+      content: prepareContent(validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors.")
     },
     {
       id: "returnPoint",
       title: "Return Point / Contingency",
-      content: returnPointContent || "If the installation or validation fails, review configuration and consult the technical team."
+      content: prepareContent(returnPointContent || "If the installation or validation fails, review configuration and consult the technical team.")
     },
     {
       id: "evidence",
       title: "Evidence",
-      content: [
+      content: prepareContent([
         "Capture evidence for each relevant installation step.",
         "Attach the IM090 PDF to the RFC.",
         "Attach backup evidence to the RFC.",
         "Attach final validation evidence and share the execution result."
-      ].join("\n")
+      ].join("\n"))
     }
   ];
 }
@@ -1617,7 +2434,7 @@ function splitActionPlanSections(text: string) {
 }
 
 function quotedValues(value: string) {
-  return Array.from(value.matchAll(/"([^"]+)"/g))
+  return Array.from(value.matchAll(/["“]([^"”]+)["”]/g))
     .map((match) => match[1].trim())
     .filter((item) => item && !/^https?:\/\//i.test(item));
 }
@@ -1633,31 +2450,83 @@ function replaceExecutionArtifact(value: string, currentArtifact: string | null,
   return value;
 }
 
+type RepeatTarget = {
+  label: string;
+  ip?: string;
+};
+
+function extractRepeatTargets(text: string): RepeatTarget[] {
+  const targets = text
+    .split("\n")
+    .map((line) => line.trim())
+    .map((line): RepeatTarget | null => {
+      const withIp = line.match(/^(.+?\((\d{1,3}(?:\.\d{1,3}){3})\).*)$/);
+      if (withIp) return { label: withIp[1].replace(/\s*-+>\s*.*$/, "").trim(), ip: withIp[2] };
+      const ipOnly = line.match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/);
+      if (ipOnly) return { label: line, ip: ipOnly[1] };
+      return null;
+    })
+    .filter((target): target is RepeatTarget => Boolean(target));
+  const byKey = new Map<string, RepeatTarget>();
+  for (const target of targets) byKey.set(target.ip ?? target.label.toLowerCase(), target);
+  return Array.from(byKey.values());
+}
+
+function firstIpFromSteps(steps: PipelineExecutionStep[]) {
+  for (const step of steps) {
+    const match = `${step.title}\n${step.detail}`.match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function replaceExecutionTarget(value: string, sourceIp: string | null, target: RepeatTarget) {
+  return sourceIp && target.ip ? value.split(sourceIp).join(target.ip) : value;
+}
+
+function addExecutionTargetDetail(value: string, sourceIp: string | null, target: RepeatTarget) {
+  return [replaceExecutionTarget(value, sourceIp, target), `Target node: ${target.label}`].filter(Boolean).join("\n");
+}
+
 function expandRepeatedExecutionSteps(steps: PipelineExecutionStep[]) {
   const output: PipelineExecutionStep[] = [];
 
   for (const step of steps) {
-    const repeat = step.title.match(/\brepeat\s+steps?\s+(\d+)(?:\s*[-–]\s*(\d+))?\b/i);
+    const repeat = step.title.match(/\brepeat\s+(?:the\s+)?steps?(?:\s+from)?\s+(\d+)(?:\s*[-–]\s*(\d+))?\b/i);
     const nextArtifact = quotedValues(`${step.title}\n${step.detail}`).at(-1);
-    if (!repeat || !nextArtifact) {
+    const repeatTargets = extractRepeatTargets(step.detail);
+    if (!repeat || (!nextArtifact && !repeatTargets.length)) {
       output.push(step);
       continue;
     }
 
     const start = Number(repeat[1]);
     const end = Number(repeat[2] ?? repeat[1]);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start || end > output.length) {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start || start > output.length) {
       output.push(step);
       continue;
     }
 
-    const sourceSteps = output.slice(start - 1, end);
-    const currentArtifact = sourceSteps.flatMap((sourceStep) => quotedValues(`${sourceStep.title}\n${sourceStep.detail}`))[0] ?? null;
-    for (const sourceStep of sourceSteps) {
-      output.push({
-        title: replaceExecutionArtifact(sourceStep.title, currentArtifact, nextArtifact),
-        detail: replaceExecutionArtifact(sourceStep.detail, currentArtifact, nextArtifact)
-      });
+    const sourceSteps = output.slice(start - 1, Math.min(end, output.length));
+    if (nextArtifact) {
+      const currentArtifact = sourceSteps.flatMap((sourceStep) => quotedValues(`${sourceStep.title}\n${sourceStep.detail}`))[0] ?? null;
+      for (const sourceStep of sourceSteps) {
+        output.push({
+          title: replaceExecutionArtifact(sourceStep.title, currentArtifact, nextArtifact),
+          detail: replaceExecutionArtifact(sourceStep.detail, currentArtifact, nextArtifact)
+        });
+      }
+      continue;
+    }
+
+    const sourceIp = firstIpFromSteps(sourceSteps);
+    for (const target of repeatTargets) {
+      for (const sourceStep of sourceSteps) {
+        output.push({
+          title: replaceExecutionTarget(sourceStep.title, sourceIp, target),
+          detail: addExecutionTargetDetail(sourceStep.detail, sourceIp, target)
+        });
+      }
     }
   }
 
@@ -1719,6 +2588,7 @@ function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly str
 export function App() {
   const actionDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const executionPlanInputRef = useRef<HTMLInputElement | null>(null);
+  const backgroundImageInputRef = useRef<HTMLInputElement | null>(null);
   const executionDraftRef = useRef<ExecutionDraft | null>(readExecutionDraft());
   const initialExecutionDraft = executionDraftRef.current;
   const [activeStep, setActiveStep] = useState<StepId>("actionPlan");
@@ -1735,6 +2605,10 @@ export function App() {
   const [profileAvatarStyle, setProfileAvatarStyle] = useState(() => localStorage.getItem("profileAvatarStyle") || defaultProfile.avatarStyle);
   const [profileAvatarSeed, setProfileAvatarSeed] = useState(() => localStorage.getItem("profileAvatarSeed") || defaultProfile.avatarSeed);
   const [themeId, setThemeId] = useState<ThemeId>(() => (localStorage.getItem("themeId") as ThemeId) || "oracle");
+  const [customThemeTone, setCustomThemeTone] = useState<ThemeTone>(() => {
+    const storedTone = localStorage.getItem("customThemeTone");
+    return storedTone === "dark" || storedTone === "light" ? storedTone : "light";
+  });
   const [customGradient, setCustomGradient] = useState(
     () => localStorage.getItem("customGradient") || defaultCustomTheme.gradient
   );
@@ -1742,11 +2616,21 @@ export function App() {
   const [customColorB, setCustomColorB] = useState(() => localStorage.getItem("customColorB") || defaultCustomTheme.colorB);
   const [customColorC, setCustomColorC] = useState(() => localStorage.getItem("customColorC") || defaultCustomTheme.colorC);
   const [customSidebar, setCustomSidebar] = useState(() => localStorage.getItem("customSidebar") || defaultCustomTheme.sidebar);
+  const [uiSidebarColor, setUiSidebarColor] = useState(() => localStorage.getItem("uiSidebarColor") || defaultSidebarColor);
+  const [sidebarTransparency, setSidebarTransparency] = useState(() => Number(localStorage.getItem("sidebarTransparency") || "0.94"));
+  const [sidebarBlur, setSidebarBlur] = useState(() => Number(localStorage.getItem("sidebarBlur") || "0"));
   const [customAccent, setCustomAccent] = useState(() => localStorage.getItem("customAccent") || defaultCustomTheme.accent);
   const [themeTransparency, setThemeTransparency] = useState(() =>
     Number(localStorage.getItem("themeTransparency") || String(defaultCustomTheme.transparency))
   );
   const [themeBlur, setThemeBlur] = useState(() => Number(localStorage.getItem("themeBlur") || String(defaultCustomTheme.blur)));
+  const [uiTextSize, setUiTextSize] = useState<UiTextSize>(readUiTextSize);
+  const [uiBackgroundStyle, setUiBackgroundStyle] = useState<UiBackgroundStyle>(readUiBackgroundStyle);
+  const [animatedBackground, setAnimatedBackground] = useState(() => localStorage.getItem("animatedBackground") === "true");
+  const [uiAnimationSpeed, setUiAnimationSpeed] = useState<UiAnimationSpeed>(readUiAnimationSpeed);
+  const [uiAnimationMotion, setUiAnimationMotion] = useState<UiAnimationMotion>(readUiAnimationMotion);
+  const [customBackgroundImage, setCustomBackgroundImage] = useState(() => localStorage.getItem("customBackgroundImage") || "");
+  const [backgroundImageBlur, setBackgroundImageBlur] = useState(() => Number(localStorage.getItem("backgroundImageBlur") || "10"));
   const [executionHistory, setExecutionHistory] = useState<ExecutionHistoryItem[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("executionHistory") || "[]");
@@ -1756,9 +2640,13 @@ export function App() {
   });
   const [historySearch, setHistorySearch] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
+  const [pendingWorkSnapshots, setPendingWorkSnapshots] = useState<PendingWorkSnapshot[]>(readPendingWorkSnapshots);
+  const [pendingSearch, setPendingSearch] = useState("");
+  const [pendingPage, setPendingPage] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [actionDocumentProcessing, setActionDocumentProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [prerequisites, setPrerequisites] = useState<Prerequisite[]>([]);
   const [basePath, setBasePath] = useState(() => localStorage.getItem("basePath") || defaultBasePath);
@@ -1770,6 +2658,7 @@ export function App() {
   const [actionProduct, setActionProduct] = useState("");
   const [actionMethod, setActionMethod] = useState<"cicd" | "manual">("cicd");
   const [actionEnvironment, setActionEnvironment] = useState("");
+  const [availableDocumentEnvironments, setAvailableDocumentEnvironments] = useState<string[]>([]);
   const [actionInstance, setActionInstance] = useState("");
   const [actionActivity, setActionActivity] = useState("");
   const [artifactText, setArtifactText] = useState("");
@@ -1824,35 +2713,100 @@ export function App() {
   const t = copy[lang];
   const e = envCopy[lang];
   const a = actionCopy[lang];
+  const activeThemeTone = themeId === "custom" ? customThemeTone : themeTone[themeId];
   const generatedCustomGradient = `linear-gradient(135deg, ${customColorA} 0%, ${customColorB} 52%, ${customColorC} 100%)`;
-  const activateCustomTheme = () => {
-    setThemeId("custom");
+  const resetThemePersonalization = () => {
+    setUiSidebarColor(defaultSidebarColor);
+    setSidebarTransparency(0.94);
+    setSidebarBlur(0);
+    setUiBackgroundStyle("default");
+    setAnimatedBackground(false);
+    setUiAnimationSpeed("medium");
+    setUiAnimationMotion("drift");
+    setCustomBackgroundImage("");
+    setBackgroundImageBlur(10);
   };
   const resetCustomTheme = () => {
     setThemeId("custom");
+    setCustomThemeTone("light");
     setCustomColorA(defaultCustomTheme.colorA);
     setCustomColorB(defaultCustomTheme.colorB);
     setCustomColorC(defaultCustomTheme.colorC);
     setCustomSidebar(defaultCustomTheme.sidebar);
+    setUiSidebarColor(defaultCustomTheme.sidebar);
+    setSidebarTransparency(0.94);
+    setSidebarBlur(0);
     setCustomAccent(defaultCustomTheme.accent);
     setThemeTransparency(defaultCustomTheme.transparency);
     setThemeBlur(defaultCustomTheme.blur);
+    setUiBackgroundStyle("default");
+    setAnimatedBackground(false);
+    setUiAnimationSpeed("medium");
+    setUiAnimationMotion("drift");
+    setCustomBackgroundImage("");
+    setBackgroundImageBlur(10);
     setCustomGradient(defaultCustomTheme.gradient);
   };
-  const customThemeStyle =
-    themeId === "custom"
-      ? ({
+  const applyCustomSeedFromTheme = (sourceTheme: ThemeId) => {
+    const seeds: Record<ThemeId, { a: string; b: string; c: string; sidebar: string; accent: string }> = {
+      oracle: { a: "#f6f7f9", b: "#f4f1ef", c: "#ffffff", sidebar: "#312d2a", accent: "#c74634" },
+      pastel: { a: "#d5c2ff", b: "#a6d7ff", c: "#f7b6fb", sidebar: "#384c9b", accent: "#238cff" },
+      frosted: { a: "#90989e", b: "#4c5661", c: "#151c26", sidebar: "#0b1018", accent: "#ffb15d" },
+      glass: { a: "#fff7f4", b: "#eef6ff", c: "#f8f1ff", sidebar: "#312d2a", accent: "#c74634" },
+      midnight: { a: "#15110f", b: "#28202d", c: "#102737", sidebar: "#14110f", accent: "#d95d4c" },
+      dracula: { a: "#1e1f29", b: "#282a36", c: "#3b2f4a", sidebar: "#282a36", accent: "#ff5555" },
+      cobalt: { a: "#071629", b: "#102a43", c: "#075985", sidebar: "#071629", accent: "#ffc857" },
+      nord: { a: "#242933", b: "#2e3440", c: "#3b4252", sidebar: "#2e3440", accent: "#88c0d0" },
+      solarized: { a: "#fdf6e3", b: "#eee8d5", c: "#d8e7df", sidebar: "#073642", accent: "#268bd2" },
+      sunset: { a: "#fff8ed", b: "#f6e6d8", c: "#e7eef7", sidebar: "#2b2420", accent: "#c74634" },
+      sage: { a: "#f7fbf2", b: "#e8f2e6", c: "#dcece9", sidebar: "#21362d", accent: "#3f7d5c" },
+      rose: { a: "#fff7fb", b: "#f8e3eb", c: "#edf1ff", sidebar: "#3a2530", accent: "#b64f72" },
+      graphite: { a: "#101418", b: "#1f2937", c: "#111827", sidebar: "#101418", accent: "#f59e0b" },
+      ocean: { a: "#061b24", b: "#0f2f3a", c: "#164e63", sidebar: "#061b24", accent: "#22d3ee" },
+      nordDark: { a: "#1f242f", b: "#2e3440", c: "#3b4252", sidebar: "#1b2029", accent: "#88c0d0" },
+      solarizedDark: { a: "#002b36", b: "#073642", c: "#0b3f4a", sidebar: "#00212a", accent: "#2aa198" },
+      halloween: { a: "#120b16", b: "#2b1234", c: "#3a1d09", sidebar: "#160d1c", accent: "#ff8a00" },
+      cyberpunk: { a: "#120022", b: "#25104b", c: "#001f3f", sidebar: "#10001f", accent: "#ff2bd6" },
+      nightowl: { a: "#011627", b: "#0b2942", c: "#152b4a", sidebar: "#01111f", accent: "#82aaff" },
+      custom: { a: customColorA, b: customColorB, c: customColorC, sidebar: uiSidebarColor, accent: customAccent }
+    };
+    const seed = seeds[sourceTheme];
+    setCustomThemeTone(themeTone[sourceTheme]);
+    setCustomColorA(seed.a);
+    setCustomColorB(seed.b);
+    setCustomColorC(seed.c);
+    setUiSidebarColor(seed.sidebar);
+    setCustomSidebar(seed.sidebar);
+    setCustomAccent(seed.accent);
+    setCustomGradient(`linear-gradient(135deg, ${seed.a} 0%, ${seed.b} 52%, ${seed.c} 100%)`);
+  };
+  const selectTheme = (theme: ThemeId) => {
+    if (theme === "custom" && themeId !== "custom") applyCustomSeedFromTheme(themeId);
+    if (theme !== "custom") resetThemePersonalization();
+    setThemeId(theme);
+  };
+  const backgroundAnimationDuration = uiAnimationSpeed === "slow" ? "28s" : uiAnimationSpeed === "fast" ? "8s" : "14s";
+  const appStyle = {
+    ...(themeId === "custom"
+      ? {
           "--custom-gradient": customGradient || generatedCustomGradient,
           "--custom-bg-a": customColorA,
           "--custom-bg-b": customColorB,
           "--custom-bg-c": customColorC,
-          "--custom-sidebar": customSidebar,
+          "--custom-sidebar": uiSidebarColor,
           "--oracle-red": customAccent,
           "--oracle-red-dark": customAccent,
           "--custom-panel-alpha": String(themeTransparency),
           "--custom-blur": `${themeBlur}px`
-        } as CSSProperties)
-      : undefined;
+        }
+      : {}),
+    "--custom-background-image": customBackgroundImage ? `url(${customBackgroundImage})` : "none",
+    "--background-image-blur": `${backgroundImageBlur}px`,
+    "--bg-animation-duration": backgroundAnimationDuration,
+    "--sidebar-bg": uiSidebarColor,
+    "--sidebar-alpha": `${Math.round(sidebarTransparency * 100)}%`,
+    "--sidebar-blur": `${sidebarBlur}px`
+  } as CSSProperties;
   const selectedRepo = useMemo(
     () => repos.find((repo) => repo.path === repoPath) ?? null,
     [repos, repoPath]
@@ -1899,12 +2853,98 @@ export function App() {
     (pipelineRunValue.trim()
       ? `${projectUrl}/cibuild/pipelines/${pipelineDisplayName}/runs/${pipelineRunValue.trim()}`
       : "");
-  const caseEnvironment = isProdPipelineStep
-    ? prodTargetEnvironment
-    : activeStep === "actionPlan"
-      ? actionInstance
-      : testTargetEnvironment;
   const artifactCount = files.length || artifactText.split(/\r?\n/).filter((line) => line.trim()).length;
+  const currentPendingWorkSnapshot = useMemo<PendingWorkSnapshot | null>(() => {
+    const currentRfc = rfc.trim();
+    if (!currentRfc) return null;
+    const environmentValue = isProdPipelineStep ? prodTargetEnvironment : testTargetEnvironment || actionInstance;
+    const stepName = executionMode === "cicd"
+      ? t.steps.pipeline[0]
+      : executionStepsConfirmed
+        ? t.pipeline.checklist
+        : t.steps.actionPlan[0];
+    const currentStep = executionMode === "cicd"
+      ? "pipeline"
+      : executionStepsConfirmed || pipelineActionPlan.trim()
+        ? "pipeline"
+        : "actionPlan";
+    const pendingLabels = [
+      selectedRepo ? "" : t.caseFile.repo,
+      environmentValue ? "" : t.caseFile.environment,
+      artifactCount ? "" : t.caseFile.artifacts,
+      actionPlan.trim() || pipelineActionPlan.trim() ? "" : t.steps.actionPlan[0],
+      evidenceItems.length ? "" : t.evidence.title
+    ].filter(Boolean);
+    return {
+      id: `rfc-${currentRfc}`,
+      rfc: currentRfc,
+      repository: selectedRepo?.name ?? t.caseFile.pending,
+      environment: environmentValue || t.caseFile.pending,
+      artifacts: artifactCount ? String(artifactCount) : t.caseFile.pending,
+      product: actionProduct || t.caseFile.pending,
+      method: actionMethod.toUpperCase(),
+      stepName,
+      currentStep,
+      actionPlanReady: Boolean(actionPlan.trim() || pipelineActionPlan.trim()),
+      executionStepsReady: executionMode === "cicd" || executionStepsConfirmed,
+      evidenceCount: evidenceItems.length,
+      pendingLabels,
+      updatedAt: new Date().toISOString(),
+      draft: {
+        repoPath,
+        rfc: currentRfc,
+        actionProduct,
+        actionMethod,
+        actionEnvironment,
+        actionInstance,
+        actionActivity,
+        artifactText,
+        actionPlan,
+        manualInstructions,
+        manualPhases,
+        riceFolderPath,
+        mode,
+        files,
+        testTargetEnvironment,
+        prodTargetEnvironment,
+        testPipelineName,
+        prodPipelineName,
+        testPipelineRun,
+        prodPipelineRun,
+        testPipelineRunUrl,
+        prodPipelineRunUrl,
+        executionMode,
+        pipelineExecutionPhase,
+        pipelineActionPlan,
+        executionSteps,
+        executionStepsConfirmed,
+        pipelineStepIndex,
+        pipelineStepComments
+      }
+    };
+  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  const pendingWorkItems = useMemo(() => pendingWorkSnapshots, [pendingWorkSnapshots]);
+  const filteredPendingWorkItems = useMemo(() => {
+    const query = pendingSearch.trim().toLowerCase();
+    if (!query) return pendingWorkItems;
+    return pendingWorkItems.filter((item) =>
+      [
+        item.rfc,
+        item.repository,
+        item.environment,
+        item.artifacts,
+        item.product,
+        item.method,
+        item.stepName,
+        item.pendingLabels.join(" ")
+      ].some((value) => value.toLowerCase().includes(query))
+    );
+  }, [pendingSearch, pendingWorkItems]);
+  const pendingTotalPages = Math.max(1, Math.ceil(filteredPendingWorkItems.length / historyPageSize));
+  const visiblePendingWorkItems = filteredPendingWorkItems.slice(
+    (pendingPage - 1) * historyPageSize,
+    pendingPage * historyPageSize
+  );
   function buildPipelineRfcMessage(language: Lang) {
     const pendingRun = language === "en" ? "<run pending>" : language === "pt" ? "<run pendente>" : "<run pendiente>";
     const prodClose =
@@ -2050,6 +3090,23 @@ export function App() {
     });
   }
 
+  async function handleBackgroundImageInput(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setMessage(t.messages.invalidFiles);
+      return;
+    }
+    try {
+      const dataUrl = await blobToDataUrl(file);
+      setCustomBackgroundImage(dataUrl);
+      setUiBackgroundStyle("image");
+    } catch {
+      setMessage(t.messages.unexpected);
+    }
+  }
+
   async function captureAppEvidence() {
     if (!ensureEvidenceFormReady()) return;
     if (!desktopApi) {
@@ -2186,6 +3243,103 @@ export function App() {
     }
   }
 
+  function clearCurrentWorkState() {
+    localStorage.removeItem(executionDraftStorageKey);
+    setRfc("");
+    setRepoPath("");
+    setActionProduct("");
+    setActionMethod("cicd");
+    setActionEnvironment("");
+    setAvailableDocumentEnvironments([]);
+    setActionInstance("");
+    setActionActivity("");
+    setArtifactText("");
+    setActionSourceDocument(null);
+    setManualInstructions("");
+    setManualPhases([]);
+    setManualPhaseIndex(0);
+    setManualReviewOpen(false);
+    setActionPlan("");
+    setRiceFolderPath("");
+    setMode("ADHOC");
+    setFiles([]);
+    setExpandedFiles([]);
+    setArtifactInspections([]);
+    setSummary(null);
+    setFinalOutput("");
+    setLocalCommitResult(null);
+    setTestTargetEnvironment("");
+    setProdTargetEnvironment("");
+    setTestPipelineName("");
+    setProdPipelineName("");
+    setTestPipelineRun("");
+    setProdPipelineRun("");
+    setTestPipelineRunUrl("");
+    setProdPipelineRunUrl("");
+    setExecutionMode("general");
+    setPipelineExecutionPhase("TEST");
+    setPipelineActionPlan("");
+    setExecutionSteps([]);
+    setExecutionStepsConfirmed(false);
+    setExecutionSessionId(createClientId("execution"));
+    setEvidenceItems([]);
+    setEvidenceLog([]);
+    setPipelineStepIndex(0);
+    setPipelineStepComments({});
+  }
+
+  function removePendingWork(itemId?: string) {
+    const confirmed = window.confirm(t.pendingDeleteConfirm);
+    if (!confirmed) return;
+    const currentId = itemId ?? currentPendingWorkSnapshot?.id ?? "";
+    setPendingWorkSnapshots((current) => {
+      const next = current.filter((item) => item.id !== currentId);
+      localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
+      return next;
+    });
+    if (!currentId || currentId === currentPendingWorkSnapshot?.id) clearCurrentWorkState();
+  }
+
+  function continuePendingWork(item: PendingWorkSnapshot) {
+    const draft = item.draft;
+    if (draft) {
+      setRepoPath(draft.repoPath);
+      setRfc(draft.rfc);
+      setActionProduct(draft.actionProduct);
+      setActionMethod(draft.actionMethod);
+      setActionEnvironment(draft.actionEnvironment);
+      setActionInstance(draft.actionInstance);
+      setActionActivity(draft.actionActivity);
+      setArtifactText(draft.artifactText);
+      setActionPlan(draft.actionPlan);
+      setManualInstructions(draft.manualInstructions);
+      setManualPhases(draft.manualPhases);
+      setManualPhaseIndex(0);
+      setRiceFolderPath(draft.riceFolderPath);
+      setMode(draft.mode);
+      setFiles(draft.files);
+      setTestTargetEnvironment(draft.testTargetEnvironment);
+      setProdTargetEnvironment(draft.prodTargetEnvironment);
+      setTestPipelineName(draft.testPipelineName);
+      setProdPipelineName(draft.prodPipelineName);
+      setTestPipelineRun(draft.testPipelineRun);
+      setProdPipelineRun(draft.prodPipelineRun);
+      setTestPipelineRunUrl(draft.testPipelineRunUrl);
+      setProdPipelineRunUrl(draft.prodPipelineRunUrl);
+      setExecutionMode(draft.executionMode);
+      setPipelineExecutionPhase(draft.pipelineExecutionPhase);
+      setPipelineActionPlan(draft.pipelineActionPlan);
+      setExecutionSteps(draft.executionSteps);
+      setExecutionStepsConfirmed(draft.executionStepsConfirmed);
+      setPipelineStepIndex(draft.pipelineStepIndex);
+      setPipelineStepComments(draft.pipelineStepComments);
+    } else {
+      setRfc(item.rfc);
+    }
+    setSettingsOpen(false);
+    setActiveStep(item.currentStep);
+  }
+
   function collectUserDataBackup() {
     return {
       localStorage: Object.fromEntries(Object.keys(localStorage).map((key) => [key, localStorage.getItem(key)])),
@@ -2200,10 +3354,19 @@ export function App() {
         customColorB,
         customColorC,
         customSidebar,
+        uiSidebarColor,
+        sidebarTransparency,
+        sidebarBlur,
         customAccent,
         themeTransparency,
         themeBlur,
+        uiBackgroundStyle,
+        animatedBackground,
+        uiAnimationSpeed,
+        customBackgroundImage,
+        backgroundImageBlur,
         executionHistory,
+        pendingWorkSnapshots,
         rfc,
         repoPath,
         actionProduct,
@@ -2273,6 +3436,7 @@ export function App() {
     setRfc("");
     setActionProduct("");
     setActionEnvironment("");
+    setAvailableDocumentEnvironments([]);
     setActionInstance("");
     setActionActivity("");
     setArtifactText("");
@@ -2301,14 +3465,23 @@ export function App() {
     setEvidenceItems([]);
     setEvidenceLog([]);
     setExecutionHistory([]);
+    setPendingWorkSnapshots([]);
     setThemeId("oracle");
     setCustomColorA(defaultCustomTheme.colorA);
     setCustomColorB(defaultCustomTheme.colorB);
     setCustomColorC(defaultCustomTheme.colorC);
     setCustomSidebar(defaultCustomTheme.sidebar);
+    setUiSidebarColor(defaultSidebarColor);
+    setSidebarTransparency(0.94);
+    setSidebarBlur(0);
     setCustomAccent(defaultCustomTheme.accent);
     setThemeTransparency(defaultCustomTheme.transparency);
     setThemeBlur(defaultCustomTheme.blur);
+    setUiBackgroundStyle("default");
+    setAnimatedBackground(false);
+    setUiAnimationSpeed("medium");
+    setCustomBackgroundImage("");
+    setBackgroundImageBlur(10);
     setCustomGradient(defaultCustomTheme.gradient);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
@@ -2380,6 +3553,13 @@ export function App() {
         },
         ...current
       ]);
+      if (currentPendingWorkSnapshot?.id) {
+        setPendingWorkSnapshots((current) => {
+          const next = current.filter((item) => item.id !== currentPendingWorkSnapshot.id);
+          localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
+          return next;
+        });
+      }
     }
   }
 
@@ -2503,21 +3683,54 @@ export function App() {
       actionDocumentInputRef.current?.click();
       return;
     }
-    const document = await runTask(() => desktopApi.selectActionDocument());
-    if (!document) return;
-    prepareManualDocumentReview(document);
+    setActionDocumentProcessing(true);
+    setMessage(a.processingDocument);
+    try {
+      const document = await runTask(() => desktopApi.selectActionDocument());
+      if (!document) return;
+      prepareManualDocumentReview(document);
+    } finally {
+      setActionDocumentProcessing(false);
+    }
   }
 
   async function handleActionDocumentInput(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    setActionDocumentProcessing(true);
+    setMessage(a.processingDocument);
     try {
       const document = await buildBrowserActionDocument(file);
       prepareManualDocumentReview(document);
     } catch (error) {
       setMessage((error as Error).message || "No pude leer el documento seleccionado.");
+    } finally {
+      setActionDocumentProcessing(false);
     }
+  }
+
+  function applyManualEnvironment(environment: string, text = manualInstructions) {
+    if (!text.trim()) return;
+    const available = availableEnvironmentsFromDocument(text);
+    setAvailableDocumentEnvironments(available);
+    const phases = buildManualPhasesForProduct(text, environment);
+    setManualPhases(phases);
+    setManualPhaseIndex(0);
+    if (selectedEnvironmentMissingFromDocument(text, environment)) {
+      setMessage(availableEnvironmentMessage(environment, available));
+    }
+  }
+
+  function handleActionEnvironmentChange(environment: string) {
+    setActionEnvironment(environment);
+    applyManualEnvironment(environment);
+  }
+
+  function buildManualPhasesForProduct(text: string, environment: string) {
+    if (actionProduct === "MFT" && hasMftInstructions(text)) return buildMftConfigurationPlan(text, environment);
+    if (actionProduct === "Base de datos" && hasSqlInstructions(text)) return buildDatabaseSqlPlan(text, environment);
+    return buildManualPhasesFromDocument(text, environment);
   }
 
   function prepareManualDocumentReview(document: ActionSourceDocument) {
@@ -2525,16 +3738,29 @@ export function App() {
     setActionSourceDocument(document);
     setManualInstructions(text);
     if (text) {
-      setManualPhases(buildManualPhasesFromDocument(text, actionEnvironment));
+      const available = availableEnvironmentsFromDocument(text);
+      setAvailableDocumentEnvironments(available);
+      const phases = buildManualPhasesForProduct(text, actionEnvironment);
+      setManualPhases(phases);
       setManualPhaseIndex(0);
-      const detectedArtifacts = extractArtifactNames(text);
+      const operational = operationalIm090Text(text);
+      const lines = actionPlanLinesFromIm090(text);
+      const artifactSection =
+        sectionByAnyHeading(lines, [/^2\.\d+\s+Installation artifacts\b/i, /^Installation artifacts\b/i]) ||
+        looseSectionByHeadings(operational, ["Installation artifacts"], ["Pre installation steps", "Installation Steps"]);
+      const detectedArtifacts = extractArtifactNames(artifactSection).length
+        ? extractArtifactNames(artifactSection)
+        : actionProduct === "MFT" && hasMftInstructions(text)
+          ? mftConfigurationItems(text)
+          : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
       if (detectedArtifacts.length && !artifactText.trim()) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
       if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
-        setMessage(`El ambiente ${actionEnvironment} no se encontro en el IM090. Se conserva el bloque completo de ambientes para revision.`);
+        setMessage(availableEnvironmentMessage(actionEnvironment, available));
       }
     } else {
       setManualPhases([]);
+      setAvailableDocumentEnvironments([]);
     }
     if (document.warning) setMessage(document.warning);
     addLog(`Documento cargado para Action Plan: ${document.name}`, "actionPlan");
@@ -2553,38 +3779,61 @@ export function App() {
       setMessage("Selecciona el ambiente antes de revisar las fases del IM090.");
       return;
     }
-    const phases = buildManualPhasesFromDocument(manualInstructions, actionEnvironment);
+    const phases = buildManualPhasesForProduct(manualInstructions, actionEnvironment);
+    const available = availableEnvironmentsFromDocument(manualInstructions);
+    setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
     if (selectedEnvironmentMissingFromDocument(manualInstructions, actionEnvironment)) {
-      setMessage(`El ambiente ${actionEnvironment} no se encontro en el IM090. Se conserva el bloque completo de ambientes para revision.`);
+      setMessage(availableEnvironmentMessage(actionEnvironment, available));
     }
   }
 
   function buildManualActionPlan(phases: ManualActionPhase[]) {
-    const artifacts = artifactText
+    const enteredArtifacts = artifactText
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
-    const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- Confirm artifacts listed in the IM090.";
+    const detectedArtifacts = enteredArtifacts.length
+      ? []
+      : actionProduct === "MFT" && hasMftInstructions(manualInstructions)
+        ? mftConfigurationItems(manualInstructions)
+        : extractArtifactNames(manualInstructions, { includeComponentNames: true });
+    const artifacts = enteredArtifacts.length ? enteredArtifacts : detectedArtifacts;
+    const isMftPlan = actionProduct === "MFT" && hasMftInstructions(manualInstructions);
+    const itemLabel = isMftPlan ? "Configuration Item(s)" : "Artifact(s) / component(s)";
+    const fallbackItem = actionProduct === "MFT" ? "- Confirm MFT configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
+    const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const productName = actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = actionEnvironment.trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
-    const activityName = actionActivity.trim() || "Manual installation";
-    const sourceDocumentName = actionSourceDocument?.name ?? "<IM090 / instructions document>";
+    const activityName = actionActivity.trim() || (isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
+    const rfcNumber = rfc.trim();
+    const sourceDocumentName = actionSourceDocument?.name ?? (
+      manualInstructions.trim()
+        ? isMftPlan
+          ? `Customer-provided implementation instructions${rfcNumber ? ` for RFC ${rfcNumber}` : ""}`
+          : "Pasted installation instructions"
+        : "<IM090 / instructions document>"
+    );
+    const metadata = manualPlanMetadata(productName, environmentName, instanceName, manualInstructions);
     const phaseBlocks = phases.map((phase, index) => {
       const letter = String.fromCharCode(65 + index);
       return `${letter}) ${phase.title}\n\n${phase.content.trim() || "<Add execution details>"}`;
-    }).join("\n\n");
+    }).join(isMftPlan ? "\n\n-----------------------------------------------------------------\n\n" : "\n\n");
 
-    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\nSource document: ${sourceDocumentName}\nArtifact(s) / component(s):\n${artifactLines}\n\n${phaseBlocks}\n\n===============================================================`;
+    if (isMftPlan) {
+      return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
+    }
+
+    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
   }
 
   function acceptManualReview() {
     const reviewedPhases = manualPhases.length
       ? manualPhases
-      : buildManualPhasesFromDocument(manualInstructions, actionEnvironment);
+      : buildManualPhasesForProduct(manualInstructions, actionEnvironment);
     setManualPhases(reviewedPhases);
     setManualInstructions(reviewedPhases.map((phase) => `${phase.title}\n${phase.content}`).join("\n\n"));
     setActionPlan(buildManualActionPlan(reviewedPhases));
@@ -2810,10 +4059,17 @@ export function App() {
   }
 
   function generateActionPlan() {
-    const artifacts = artifactText
+    const enteredArtifacts = artifactText
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
+    const detectedManualArtifacts =
+      actionMethod === "manual" && !enteredArtifacts.length
+        ? actionProduct === "MFT" && hasMftInstructions(manualInstructions)
+          ? mftConfigurationItems(manualInstructions)
+          : extractArtifactNames(manualInstructions, { includeComponentNames: true })
+        : [];
+    const artifacts = enteredArtifacts.length ? enteredArtifacts : detectedManualArtifacts;
     const repoName = selectedRepo?.name ?? "<Repository>";
     const branchName = rfc.trim() || "<RFC>";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <artifact>";
@@ -2828,13 +4084,21 @@ export function App() {
     const manualInstructionText = manualInstructions.trim() || "<Installation instructions>";
 
     if (actionMethod === "manual") {
+      if (!actionSourceDocument && manualInstructions.trim()) {
+        const phases = buildManualPhasesForProduct(manualInstructions, actionEnvironment);
+        setManualPhases(phases);
+        setActionPlan(buildManualActionPlan(phases));
+        addLog("Action Plan manual generado desde texto pegado", "actionPlan");
+        return;
+      }
       if (manualPhases.length) {
         setActionPlan(buildManualActionPlan(manualPhases));
         addLog("Action Plan manual generado", "actionPlan");
         return;
       }
-      const sourceDocumentName = actionSourceDocument?.name ?? "<IM090 / instructions document>";
-      const manualPlan = `==========================================================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nMethod: Manual\nProduct: ${productName}\nSource document: ${sourceDocumentName}\nArtifact(s) / component(s):\n${artifactLines}\n\n1- Review installation instructions:\n1.1- Open the source document and validate the scope for RFC ${branchName}.\n1.2- Confirm the target environment and instance:\n- Environment: ${environmentName}\n- Instance: ${instanceName}\n1.3- Confirm the artifact(s) or component(s) listed for this change:\n${artifactLines}\n\n2- Execute manual installation:\n${manualInstructionText}\n\n3- Post-deployment validation (${environmentName} - ${instanceName}):\n3.1- Validate the deployed artifact/component(s):\n${componentLines}\n3.2- Confirm the latest values/configuration are reflected.\n\n4- Share the evidence.\n\n==========================================================`;
+      const sourceDocumentName = actionSourceDocument?.name ?? (manualInstructions.trim() ? "Pasted installation instructions" : "<IM090 / instructions document>");
+      const itemLabel = actionProduct === "MFT" ? "Component(s) / configuration item(s)" : "Artifact(s) / component(s)";
+      const manualPlan = `==========================================================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nMethod: Manual\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}\n\n1- Review installation instructions:\n1.1- Open the source document and validate the scope for RFC ${branchName}.\n1.2- Confirm the target environment and instance:\n- Environment: ${environmentName}\n- Instance: ${instanceName}\n1.3- Confirm the ${itemLabel.toLowerCase()} listed for this change:\n${artifactLines}\n\n2- Execute manual installation:\n${manualInstructionText}\n\n3- Post-deployment validation (${environmentName} - ${instanceName}):\n3.1- Validate the deployed artifact/component(s):\n${componentLines}\n3.2- Confirm the latest values/configuration are reflected.\n\n4- Share the evidence.\n\n==========================================================`;
 
       setActionPlan(manualPlan);
       addLog("Action Plan manual generado", "actionPlan");
@@ -3047,6 +4311,16 @@ export function App() {
   }, [executionHistory]);
 
   useEffect(() => {
+    if (!currentPendingWorkSnapshot) return;
+    setPendingWorkSnapshots((current) => {
+      const withoutCurrent = current.filter((item) => item.id !== currentPendingWorkSnapshot.id);
+      const next = [currentPendingWorkSnapshot, ...withoutCurrent].slice(0, 50);
+      localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [currentPendingWorkSnapshot]);
+
+  useEffect(() => {
     const draft: ExecutionDraft = {
       sessionId: executionSessionId,
       rfc,
@@ -3100,12 +4374,24 @@ export function App() {
   }, [historySearch]);
 
   useEffect(() => {
+    setPendingPage(1);
+  }, [pendingSearch]);
+
+  useEffect(() => {
     if (historyPage > historyTotalPages) setHistoryPage(historyTotalPages);
   }, [historyPage, historyTotalPages]);
 
   useEffect(() => {
+    if (pendingPage > pendingTotalPages) setPendingPage(pendingTotalPages);
+  }, [pendingPage, pendingTotalPages]);
+
+  useEffect(() => {
     localStorage.setItem("themeId", themeId);
   }, [themeId]);
+
+  useEffect(() => {
+    localStorage.setItem("customThemeTone", customThemeTone);
+  }, [customThemeTone]);
 
   useEffect(() => {
     localStorage.setItem("customGradient", customGradient);
@@ -3128,6 +4414,18 @@ export function App() {
   }, [customSidebar]);
 
   useEffect(() => {
+    localStorage.setItem("uiSidebarColor", uiSidebarColor);
+  }, [uiSidebarColor]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarTransparency", String(sidebarTransparency));
+  }, [sidebarTransparency]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarBlur", String(sidebarBlur));
+  }, [sidebarBlur]);
+
+  useEffect(() => {
     localStorage.setItem("customAccent", customAccent);
   }, [customAccent]);
 
@@ -3138,6 +4436,34 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("themeBlur", String(themeBlur));
   }, [themeBlur]);
+
+  useEffect(() => {
+    localStorage.setItem("uiTextSize", uiTextSize);
+  }, [uiTextSize]);
+
+  useEffect(() => {
+    localStorage.setItem("uiBackgroundStyle", uiBackgroundStyle);
+  }, [uiBackgroundStyle]);
+
+  useEffect(() => {
+    localStorage.setItem("animatedBackground", String(animatedBackground));
+  }, [animatedBackground]);
+
+  useEffect(() => {
+    localStorage.setItem("uiAnimationSpeed", uiAnimationSpeed);
+  }, [uiAnimationSpeed]);
+
+  useEffect(() => {
+    localStorage.setItem("uiAnimationMotion", uiAnimationMotion);
+  }, [uiAnimationMotion]);
+
+  useEffect(() => {
+    localStorage.setItem("customBackgroundImage", customBackgroundImage);
+  }, [customBackgroundImage]);
+
+  useEffect(() => {
+    localStorage.setItem("backgroundImageBlur", String(backgroundImageBlur));
+  }, [backgroundImageBlur]);
 
   useEffect(() => {
     localStorage.setItem("profileName", profileName);
@@ -3178,7 +4504,10 @@ export function App() {
   }, [actionEnvironment, actionInstance]);
 
   return (
-    <div className={`app-shell theme-${themeId}`} style={customThemeStyle}>
+    <div
+      className={`app-shell theme-${themeId} theme-tone-${activeThemeTone} custom-tone-${customThemeTone} ui-text-${uiTextSize} bg-style-${uiBackgroundStyle} bg-motion-${uiAnimationMotion} ${animatedBackground ? "bg-animated" : ""}`}
+      style={appStyle}
+    >
       <aside className="sidebar">
         <div
           className="brand"
@@ -3287,27 +4616,6 @@ export function App() {
             </div>
           </div>
         </header>
-
-        {rfc.trim() && activeStep === "review" && (
-          <section className="case-strip" aria-label={t.caseFile.title}>
-            <div className="case-title">
-              <span>{t.caseFile.title}</span>
-              <strong>{rfc.trim()}</strong>
-            </div>
-            <div>
-              <span>{t.caseFile.repo}</span>
-              <strong>{selectedRepo?.name ?? t.caseFile.pending}</strong>
-            </div>
-            <div>
-              <span>{t.caseFile.environment}</span>
-              <strong>{caseEnvironment || t.caseFile.pending}</strong>
-            </div>
-            <div>
-              <span>{t.caseFile.artifacts}</span>
-              <strong>{artifactCount || t.caseFile.pending}</strong>
-            </div>
-          </section>
-        )}
 
         {workspaceOpen && (
           <div className="modal-backdrop" onMouseDown={() => setWorkspaceOpen(false)}>
@@ -3452,6 +4760,8 @@ export function App() {
                     {a.selectProduct}
                   </option>
                   <option value="OIC">OIC</option>
+                  <option value="MFT">MFT</option>
+                  <option value="Base de datos">Base de datos</option>
                   <option value="ODI Studio">ODI Studio</option>
                   <option value="OSB">OSB</option>
                 </select>
@@ -3473,7 +4783,7 @@ export function App() {
               )}
               <label>
                 {a.environment}
-                <select value={actionEnvironment} onChange={(event) => setActionEnvironment(event.target.value)}>
+                <select value={actionEnvironment} onChange={(event) => handleActionEnvironmentChange(event.target.value)}>
                   <option value="" disabled>
                     {a.selectEnvironment}
                   </option>
@@ -3483,6 +4793,18 @@ export function App() {
                   <option value="PRE-PROD">PRE-PROD</option>
                   <option value="PROD">PROD</option>
                   <option value="DEV">DEV</option>
+                  {availableDocumentEnvironments
+                    .filter(
+                      (environment) =>
+                        !["DEVELOPMENT", "TEST", "REGRESSION", "PRE-PROD", "PROD", "DEV"].some(
+                          (option) => normalizeEnvironmentName(option) === normalizeEnvironmentName(environment)
+                        )
+                    )
+                    .map((environment) => (
+                      <option key={environment} value={environment}>
+                        {environment}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label>
@@ -3493,11 +4815,17 @@ export function App() {
                 <label className="action-document-field">
                   {a.sourceDocument}
                   <div className="action-document-picker">
-                    <button type="button" className="secondary" onClick={selectActionDocument} title={a.loadDocument}>
-                      <UploadCloud size={16} />
-                      {a.loadDocument}
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={actionDocumentProcessing}
+                      onClick={selectActionDocument}
+                      title={actionDocumentProcessing ? a.processingDocument : a.loadDocument}
+                    >
+                      {actionDocumentProcessing ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
+                      {actionDocumentProcessing ? a.processingDocument : a.loadDocument}
                     </button>
-                    <span>{actionSourceDocument?.name ?? a.noDocument}</span>
+                    <span>{actionDocumentProcessing ? a.processingDocument : actionSourceDocument?.name ?? a.noDocument}</span>
                     <button
                       type="button"
                       className="secondary"
@@ -3562,10 +4890,6 @@ export function App() {
                   <button className="secondary" disabled={!actionPlan} onClick={copyActionPlan} title={a.copy}>
                     <Copy size={16} />
                     {a.copy}
-                  </button>
-                  <button disabled={!actionPlan} onClick={() => setActiveStep("package")} title={a.continue}>
-                    <Plus size={16} />
-                    {a.continue}
                   </button>
                 </div>
               </div>
@@ -4260,9 +5584,11 @@ export function App() {
                 <p>
                   {settingsTab === "history" && outputFolder
                     ? `${t.outputFolder}: ${outputFolder}`
-                    : settingsTab === "environment"
-                      ? `${t.workspaceFolder}: ${basePath}`
-                      : t.app}
+                    : settingsTab === "pending"
+                      ? t.pendingWork
+                      : settingsTab === "environment"
+                        ? `${t.workspaceFolder}: ${basePath}`
+                        : t.app}
                 </p>
               </div>
               <button className="icon-close" onClick={() => setSettingsOpen(false)}>
@@ -4283,6 +5609,10 @@ export function App() {
                 <button className={settingsTab === "history" ? "active" : ""} onClick={() => setSettingsTab("history")}>
                   <History size={16} />
                   {t.history}
+                </button>
+                <button className={settingsTab === "pending" ? "active" : ""} onClick={() => setSettingsTab("pending")}>
+                  <AlertCircle size={16} />
+                  {t.pendingWork}
                 </button>
                 <button className={settingsTab === "themes" ? "active" : ""} onClick={() => setSettingsTab("themes")}>
                   <Palette size={16} />
@@ -4427,6 +5757,81 @@ export function App() {
                   </>
                 )}
 
+                {settingsTab === "pending" && (
+                  <>
+                    <div className="workspace-actions modal-actions">
+                      <label className="history-search">
+                        {t.pendingSearch}
+                        <input
+                          value={pendingSearch}
+                          onChange={(event) => setPendingSearch(event.target.value)}
+                          placeholder="4-B0034NK"
+                        />
+                      </label>
+                    </div>
+                    <div className="pending-work-list">
+                      {pendingWorkItems.length === 0 && <div className="empty-inline">{t.noPendingWork}</div>}
+                      {pendingWorkItems.length > 0 && filteredPendingWorkItems.length === 0 && (
+                        <div className="empty-inline">{t.noHistoryResults}</div>
+                      )}
+                      {visiblePendingWorkItems.map((item) => (
+                        <article className="pending-work-row pending-work-row-detailed" key={item.id}>
+                          <div>
+                            <strong>{item.rfc}</strong>
+                            <span>{t.caseFile.repo}: {item.repository}</span>
+                            <span>{t.caseFile.environment}: {item.environment}</span>
+                            <span>{t.caseFile.artifacts}: {item.artifacts}</span>
+                            <span>{a.product}: {item.product}</span>
+                            <span>{a.method}: {item.method}</span>
+                            <span>{t.pendingDetails}: {item.stepName}</span>
+                            <span>{t.evidence.title}: {item.evidenceCount}</span>
+                            <span>{t.pipeline.actionPlan}: {item.actionPlanReady ? t.ready : t.caseFile.pending}</span>
+                            <span>{t.pipeline.checklist}: {item.executionStepsReady ? t.ready : t.caseFile.pending}</span>
+                            {item.pendingLabels.length > 0 && (
+                              <small>{t.caseFile.pending}: {item.pendingLabels.join(", ")}</small>
+                            )}
+                          </div>
+                          <div className="history-actions">
+                            <button className="secondary" onClick={() => continuePendingWork(item)}>
+                              <Play size={16} />
+                              {t.continuePendingWork}
+                            </button>
+                            <button className="secondary danger-outline" onClick={() => removePendingWork(item.id)}>
+                              <Trash2 size={16} />
+                              {t.deletePendingWork}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    {filteredPendingWorkItems.length > historyPageSize && (
+                      <div className="history-pagination">
+                        <button
+                          className="icon-button"
+                          disabled={pendingPage === 1}
+                          onClick={() => setPendingPage((page) => Math.max(1, page - 1))}
+                          title={t.pipeline.previous}
+                          aria-label={t.pipeline.previous}
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span>
+                          {t.historyPage} {pendingPage} / {pendingTotalPages}
+                        </span>
+                        <button
+                          className="icon-button"
+                          disabled={pendingPage === pendingTotalPages}
+                          onClick={() => setPendingPage((page) => Math.min(pendingTotalPages, page + 1))}
+                          title={t.pipeline.next}
+                          aria-label={t.pipeline.next}
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 {settingsTab === "user" && (
                   <div className="settings-section-grid">
                     <section className="settings-section wide-settings-section profile-section">
@@ -4520,114 +5925,236 @@ export function App() {
                           <button
                             key={theme}
                             className={`theme-card theme-swatch-${theme} ${themeId === theme ? "selected" : ""}`}
-                            onClick={() => setThemeId(theme)}
+                            onClick={() => selectTheme(theme)}
                           >
                             <span />
-                            <strong>{themeNames[lang][theme]}</strong>
+                            <div className="theme-card-copy">
+                              <strong>{themeNames[lang][theme]}</strong>
+                              <small
+                                className="theme-tone-indicator"
+                                aria-label={themeToneNames[lang][theme === "custom" ? customThemeTone : themeTone[theme]]}
+                                title={themeToneNames[lang][theme === "custom" ? customThemeTone : themeTone[theme]]}
+                              >
+                                <i className={`theme-tone-dot ${theme === "custom" ? customThemeTone : themeTone[theme]}`} />
+                              </small>
+                            </div>
                           </button>
                         ))}
                       </div>
                     </section>
                     <section className="settings-section">
-                      <div className="section-title-row">
-                        <div className="section-kicker">{t.customGradient}</div>
-                        <button className="secondary compact" onClick={resetCustomTheme}>
-                          <RefreshCw size={15} />
-                          {t.resetCustomTheme}
-                        </button>
+                      <div className="section-kicker">{t.textSize}</div>
+                      <div className="option-grid text-size-grid">
+                        {(Object.keys(uiTextSizeNames[lang]) as UiTextSize[]).map((size) => (
+                          <button
+                            key={size}
+                            className={`option-tile ${uiTextSize === size ? "selected" : ""}`}
+                            onClick={() => setUiTextSize(size)}
+                          >
+                            {uiTextSizeNames[lang][size]}
+                          </button>
+                        ))}
                       </div>
-                      <div className="color-picker-grid">
-                        <label>
-                          {t.backgroundA}
-                          <input
-                            type="color"
-                            value={customColorA}
-                            onChange={(event) => {
-                              const next = event.target.value;
-                              activateCustomTheme();
-                              setCustomColorA(next);
-                              setCustomGradient(`linear-gradient(135deg, ${next} 0%, ${customColorB} 52%, ${customColorC} 100%)`);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {t.backgroundB}
-                          <input
-                            type="color"
-                            value={customColorB}
-                            onChange={(event) => {
-                              const next = event.target.value;
-                              activateCustomTheme();
-                              setCustomColorB(next);
-                              setCustomGradient(`linear-gradient(135deg, ${customColorA} 0%, ${next} 52%, ${customColorC} 100%)`);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {t.backgroundC}
-                          <input
-                            type="color"
-                            value={customColorC}
-                            onChange={(event) => {
-                              const next = event.target.value;
-                              activateCustomTheme();
-                              setCustomColorC(next);
-                              setCustomGradient(`linear-gradient(135deg, ${customColorA} 0%, ${customColorB} 52%, ${next} 100%)`);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {t.sidebarColor}
-                          <input
-                            type="color"
-                            value={customSidebar}
-                            onChange={(event) => {
-                              activateCustomTheme();
-                              setCustomSidebar(event.target.value);
-                            }}
-                          />
-                        </label>
-                        <label>
-                          {t.accentColor}
-                          <input
-                            type="color"
-                            value={customAccent}
-                            onChange={(event) => {
-                              activateCustomTheme();
-                              setCustomAccent(event.target.value);
-                            }}
-                          />
-                        </label>
-                      </div>
-                      <label>
-                        {t.transparency}
-                        <input
-                          type="range"
-                          min="0.62"
-                          max="1"
-                          step="0.02"
-                          value={themeTransparency}
-                          onChange={(event) => {
-                            activateCustomTheme();
-                            setThemeTransparency(Number(event.target.value));
-                          }}
-                        />
-                      </label>
-                      <label>
-                        {t.blur}
-                        <input
-                          type="range"
-                          min="0"
-                          max="28"
-                          step="1"
-                          value={themeBlur}
-                          onChange={(event) => {
-                            activateCustomTheme();
-                            setThemeBlur(Number(event.target.value));
-                          }}
-                        />
-                      </label>
                     </section>
+                    {themeId === "custom" && (
+                      <>
+                        <section className="settings-section">
+                          <div className="section-kicker">{t.backgroundStyle}</div>
+                          <div className="option-grid background-style-grid">
+                            {(Object.keys(uiBackgroundStyleNames[lang]) as UiBackgroundStyle[]).map((style) => (
+                              <button
+                                key={style}
+                                className={`option-tile ${uiBackgroundStyle === style ? "selected" : ""}`}
+                                onClick={() => setUiBackgroundStyle(style)}
+                              >
+                                {uiBackgroundStyleNames[lang][style]}
+                              </button>
+                            ))}
+                          </div>
+                          <label className="toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={animatedBackground}
+                              onChange={(event) => setAnimatedBackground(event.target.checked)}
+                            />
+                            {t.animatedBackground}
+                          </label>
+                          {animatedBackground && (
+                            <>
+                              <div className="section-kicker nested-kicker">{t.animationSpeed}</div>
+                              <div className="option-grid text-size-grid">
+                                {(Object.keys(uiAnimationSpeedNames[lang]) as UiAnimationSpeed[]).map((speed) => (
+                                  <button
+                                    key={speed}
+                                    className={`option-tile ${uiAnimationSpeed === speed ? "selected" : ""}`}
+                                    onClick={() => setUiAnimationSpeed(speed)}
+                                  >
+                                    {uiAnimationSpeedNames[lang][speed]}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="section-kicker nested-kicker">{t.animationMotion}</div>
+                              <div className="option-grid motion-grid">
+                                {(Object.keys(uiAnimationMotionNames[lang]) as UiAnimationMotion[]).map((motion) => (
+                                  <button
+                                    key={motion}
+                                    className={`option-tile ${uiAnimationMotion === motion ? "selected" : ""}`}
+                                    onClick={() => setUiAnimationMotion(motion)}
+                                  >
+                                    {uiAnimationMotionNames[lang][motion]}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                          <div className="background-image-actions">
+                            <button className="secondary" onClick={() => backgroundImageInputRef.current?.click()}>
+                              <ImagePlus size={16} />
+                              {t.chooseBackgroundImage}
+                            </button>
+                            <button
+                              className="secondary"
+                              disabled={!customBackgroundImage}
+                              onClick={() => {
+                                setCustomBackgroundImage("");
+                                if (uiBackgroundStyle === "image") setUiBackgroundStyle("default");
+                              }}
+                            >
+                              <Trash2 size={16} />
+                              {t.clearBackgroundImage}
+                            </button>
+                          </div>
+                          <input
+                            ref={backgroundImageInputRef}
+                            className="hidden-file-input"
+                            type="file"
+                            accept="image/*"
+                            onChange={handleBackgroundImageInput}
+                          />
+                          <label>
+                            {t.backgroundBlur}
+                            <input
+                              type="range"
+                              min="0"
+                              max="24"
+                              step="1"
+                              value={backgroundImageBlur}
+                              onChange={(event) => setBackgroundImageBlur(Number(event.target.value))}
+                            />
+                          </label>
+                        </section>
+                        <section className="settings-section">
+                          <div className="section-title-row">
+                            <div className="section-kicker">{t.customGradient}</div>
+                            <button className="secondary compact" onClick={resetCustomTheme}>
+                              <RefreshCw size={15} />
+                              {t.resetCustomTheme}
+                            </button>
+                          </div>
+                          <div className="color-picker-grid">
+                            <label>
+                              {t.backgroundA}
+                              <input
+                                type="color"
+                                value={customColorA}
+                                onChange={(event) => {
+                                  const next = event.target.value;
+                                  setCustomColorA(next);
+                                  setCustomGradient(`linear-gradient(135deg, ${next} 0%, ${customColorB} 52%, ${customColorC} 100%)`);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              {t.backgroundB}
+                              <input
+                                type="color"
+                                value={customColorB}
+                                onChange={(event) => {
+                                  const next = event.target.value;
+                                  setCustomColorB(next);
+                                  setCustomGradient(`linear-gradient(135deg, ${customColorA} 0%, ${next} 52%, ${customColorC} 100%)`);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              {t.backgroundC}
+                              <input
+                                type="color"
+                                value={customColorC}
+                                onChange={(event) => {
+                                  const next = event.target.value;
+                                  setCustomColorC(next);
+                                  setCustomGradient(`linear-gradient(135deg, ${customColorA} 0%, ${customColorB} 52%, ${next} 100%)`);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              {t.sidebarColor}
+                              <input
+                                type="color"
+                                value={uiSidebarColor}
+                                onChange={(event) => {
+                                  setUiSidebarColor(event.target.value);
+                                  setCustomSidebar(event.target.value);
+                                }}
+                              />
+                            </label>
+                            <label>
+                              {t.accentColor}
+                              <input
+                                type="color"
+                                value={customAccent}
+                                onChange={(event) => setCustomAccent(event.target.value)}
+                              />
+                            </label>
+                          </div>
+                          <label>
+                            {t.transparency}
+                            <input
+                              type="range"
+                              min="0.62"
+                              max="1"
+                              step="0.02"
+                              value={themeTransparency}
+                              onChange={(event) => setThemeTransparency(Number(event.target.value))}
+                            />
+                          </label>
+                          <label>
+                            {t.blur}
+                            <input
+                              type="range"
+                              min="0"
+                              max="28"
+                              step="1"
+                              value={themeBlur}
+                              onChange={(event) => setThemeBlur(Number(event.target.value))}
+                            />
+                          </label>
+                          <label>
+                            {t.sidebarTransparency}
+                            <input
+                              type="range"
+                              min="0.56"
+                              max="1"
+                              step="0.02"
+                              value={sidebarTransparency}
+                              onChange={(event) => setSidebarTransparency(Number(event.target.value))}
+                            />
+                          </label>
+                          <label>
+                            {t.sidebarBlur}
+                            <input
+                              type="range"
+                              min="0"
+                              max="28"
+                              step="1"
+                              value={sidebarBlur}
+                              onChange={(event) => setSidebarBlur(Number(event.target.value))}
+                            />
+                          </label>
+                        </section>
+                      </>
+                    )}
                   </div>
                 )}
 
