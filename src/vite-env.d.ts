@@ -98,6 +98,7 @@ declare global {
       exportEvidencePdf: (payload: unknown) => Promise<string | null>;
       backupUserData: (payload: unknown) => Promise<string>;
       clearUserFiles: () => Promise<boolean>;
+      deleteLocalFile: (path: string) => Promise<boolean>;
       openExternal: (url: string) => Promise<void>;
     };
   }

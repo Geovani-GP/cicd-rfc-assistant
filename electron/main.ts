@@ -982,6 +982,12 @@ ipcMain.handle("clear-user-files", async () => {
   return true;
 });
 
+ipcMain.handle("delete-local-file", async (_event, filePath: string) => {
+  if (!filePath || typeof filePath !== "string") return false;
+  await unlink(filePath);
+  return true;
+});
+
 ipcMain.handle("select-files", async (_event, extensions: string[]) => {
   const filters = [{ name: "OIC artifacts", extensions: extensions.length ? extensions : ["iar", "par", "csv", "xml"] }];
   const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters });

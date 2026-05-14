@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld("cicd", {
   exportEvidencePdf: (payload) => ipcRenderer.invoke("export-evidence-pdf", payload),
   backupUserData: (payload) => ipcRenderer.invoke("backup-user-data", payload),
   clearUserFiles: () => ipcRenderer.invoke("clear-user-files"),
+  deleteLocalFile: (path) => ipcRenderer.invoke("delete-local-file", path),
   openExternal: (url) => ipcRenderer.invoke("open-external", url)
 });

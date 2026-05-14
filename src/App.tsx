@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Camera,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
@@ -78,9 +79,23 @@ const avatarStyles = [
   { id: "thumbs", label: "Thumbs" }
 ];
 const avatarOptions = ["general-dev", "cloud-dev", "release-lead", "pipeline-runner", "code-review", "night-build", "git-flow", "oic-owner"];
+const historyPageSize = 10;
+const executionDraftStorageKey = "rfcExecutionDraft";
+
+function createClientId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function avatarUrl(seed: string, style = defaultProfile.avatarStyle) {
   return `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(seed)}&radius=50`;
+}
+
+function readExecutionDraft(): ExecutionDraft | null {
+  try {
+    return JSON.parse(localStorage.getItem(executionDraftStorageKey) || "null");
+  } catch {
+    return null;
+  }
 }
 
 type StepId = "actionPlan" | "package" | "review" | "pipeline";
@@ -89,6 +104,7 @@ type ExecutionMode = "general" | "cicd";
 type Lang = "es" | "en" | "pt";
 type EvidenceItem = EvidenceImage & {
   id: string;
+  sessionId?: string;
   step: StepId;
   rfc?: string;
   pipelineStep?: number;
@@ -99,10 +115,32 @@ type EvidenceItem = EvidenceImage & {
 };
 type EvidenceLog = {
   id: string;
+  sessionId?: string;
   at: string;
   step: StepId;
   rfc?: string;
   text: string;
+};
+type ExecutionDraft = {
+  sessionId?: string;
+  rfc?: string;
+  testTargetEnvironment?: string;
+  prodTargetEnvironment?: string;
+  testPipelineName?: string;
+  prodPipelineName?: string;
+  testPipelineRun?: string;
+  prodPipelineRun?: string;
+  testPipelineRunUrl?: string;
+  prodPipelineRunUrl?: string;
+  executionMode?: ExecutionMode;
+  pipelineExecutionPhase?: PipelinePhase;
+  pipelineActionPlan?: string;
+  executionSteps?: PipelineExecutionStep[];
+  executionStepsConfirmed?: boolean;
+  pipelineStepIndex?: number;
+  pipelineStepComments?: Record<string, string>;
+  evidenceItems?: EvidenceItem[];
+  evidenceLog?: EvidenceLog[];
 };
 type ExecutionHistoryItem = {
   id: string;
@@ -244,6 +282,12 @@ const copy = {
     chooseFolder: "Elegir carpeta",
     history: "Historial",
     noHistory: "Aun no hay documentos exportados.",
+    noHistoryResults: "No hay resultados para esa busqueda.",
+    historySearch: "Buscar por RFC",
+    historyPage: "Pagina",
+    historyRemoveConfirm: "Eliminar {{rfc}} del historial?",
+    historyDiskConfirm: "Tambien quieres eliminar el documento del disco duro?",
+    deleteHistoryItem: "Eliminar",
     openFile: "Abrir",
     userData: "Usuario",
     userDataTitle: "Datos de usuario",
@@ -319,6 +363,7 @@ const copy = {
       noFiles: "Agrega al menos un artefacto antes de continuar.",
       packageCleared: "Paquete limpiado. Agrega artefactos para continuar.",
       stepRequired: "Agrega comentario o evidencia antes de avanzar.",
+      evidenceSetupRequired: "Completa RFC, ejecucion, ambiente y pasos antes de capturar evidencia.",
       exportNeedRfc: "Captura el numero de RFC antes de exportar evidencia.",
       exportNeedRun: "Captura el numero de run antes de exportar evidencia.",
       exportNeedStep: "Falta comentario o evidencia en el paso",
@@ -396,8 +441,12 @@ const copy = {
       loadActionPlan: "Cargar Action Plan",
       useGeneratedPlan: "Usar Action Plan generado",
       refreshSteps: "Actualizar pasos",
+      reviewSteps: "Revisar pasos",
+      confirmSteps: "Confirmar pasos",
       clearExecution: "Limpiar ejecucion",
       stepsLoaded: "Pasos generados desde el Action Plan.",
+      stepsConfirmed: "Pasos confirmados para captura de evidencia.",
+      editStepsHint: "Revisa la secuencia generada antes de capturar evidencia.",
       planPlaceholder: "Pega aqui el Action Plan o usa el que generaste en la app.",
       cicdHint: "En modo CI/CD Tool registra pipeline, run y URL para unir evidencia de Git con capturas de ejecucion.",
       checklist: "Ejecucion guiada",
@@ -460,6 +509,12 @@ const copy = {
     chooseFolder: "Choose folder",
     history: "History",
     noHistory: "No exported documents yet.",
+    noHistoryResults: "No results for that search.",
+    historySearch: "Search by RFC",
+    historyPage: "Page",
+    historyRemoveConfirm: "Remove {{rfc}} from history?",
+    historyDiskConfirm: "Do you also want to delete the document from disk?",
+    deleteHistoryItem: "Delete",
     openFile: "Open",
     userData: "User",
     userDataTitle: "User data",
@@ -535,6 +590,7 @@ const copy = {
       noFiles: "Add at least one artifact before continuing.",
       packageCleared: "Package cleared. Add artifacts to continue.",
       stepRequired: "Add a comment or evidence before continuing.",
+      evidenceSetupRequired: "Complete RFC, execution, environment, and steps before capturing evidence.",
       exportNeedRfc: "Enter the RFC number before exporting evidence.",
       exportNeedRun: "Enter the run number before exporting evidence.",
       exportNeedStep: "Missing comment or evidence in step",
@@ -612,8 +668,12 @@ const copy = {
       loadActionPlan: "Load Action Plan",
       useGeneratedPlan: "Use generated Action Plan",
       refreshSteps: "Refresh steps",
+      reviewSteps: "Review steps",
+      confirmSteps: "Confirm steps",
       clearExecution: "Clear execution",
       stepsLoaded: "Steps generated from the Action Plan.",
+      stepsConfirmed: "Steps confirmed for evidence capture.",
+      editStepsHint: "Review the generated sequence before capturing evidence.",
       planPlaceholder: "Paste the Action Plan here or use the one generated in the app.",
       cicdHint: "In CI/CD Tool mode, record pipeline, run, and URL to combine Git evidence with execution screenshots.",
       checklist: "Guided execution",
@@ -676,6 +736,12 @@ const copy = {
     chooseFolder: "Escolher pasta",
     history: "Historico",
     noHistory: "Ainda nao ha documentos exportados.",
+    noHistoryResults: "Nao ha resultados para essa busca.",
+    historySearch: "Buscar por RFC",
+    historyPage: "Pagina",
+    historyRemoveConfirm: "Excluir {{rfc}} do historico?",
+    historyDiskConfirm: "Tambem deseja excluir o documento do disco?",
+    deleteHistoryItem: "Excluir",
     openFile: "Abrir",
     userData: "Usuario",
     userDataTitle: "Dados do usuario",
@@ -751,6 +817,7 @@ const copy = {
       noFiles: "Adicione pelo menos um artefato antes de continuar.",
       packageCleared: "Pacote limpo. Adicione artefatos para continuar.",
       stepRequired: "Adicione comentario ou evidencia antes de continuar.",
+      evidenceSetupRequired: "Complete RFC, execucao, ambiente e passos antes de capturar evidencia.",
       exportNeedRfc: "Capture o numero do RFC antes de exportar evidencia.",
       exportNeedRun: "Capture o numero do run antes de exportar evidencia.",
       exportNeedStep: "Falta comentario ou evidencia no passo",
@@ -828,8 +895,12 @@ const copy = {
       loadActionPlan: "Carregar Action Plan",
       useGeneratedPlan: "Usar Action Plan gerado",
       refreshSteps: "Atualizar passos",
+      reviewSteps: "Revisar passos",
+      confirmSteps: "Confirmar passos",
       clearExecution: "Limpar execucao",
       stepsLoaded: "Passos gerados a partir do Action Plan.",
+      stepsConfirmed: "Passos confirmados para captura de evidencia.",
+      editStepsHint: "Revise a sequencia gerada antes de capturar evidencia.",
       planPlaceholder: "Cole aqui o Action Plan ou use o que foi gerado no app.",
       cicdHint: "No modo CI/CD Tool, registre pipeline, run e URL para unir evidencia Git com capturas da execucao.",
       checklist: "Execucao guiada",
@@ -1535,7 +1606,7 @@ function splitActionPlanSections(text: string) {
 
   for (const line of lines) {
     const heading = line.match(/^(\d+|[A-Z])\s*[-.)]\s*(.+)$/);
-    if (heading && !line.includes("://")) {
+    if (heading) {
       current = { title: trimExecutionStepTitle(heading[2]), lines: [] };
       sections.push(current);
       continue;
@@ -1543,6 +1614,54 @@ function splitActionPlanSections(text: string) {
     if (current) current.lines.push(line);
   }
   return sections;
+}
+
+function quotedValues(value: string) {
+  return Array.from(value.matchAll(/"([^"]+)"/g))
+    .map((match) => match[1].trim())
+    .filter((item) => item && !/^https?:\/\//i.test(item));
+}
+
+function replaceExecutionArtifact(value: string, currentArtifact: string | null, nextArtifact: string) {
+  if (!nextArtifact.trim()) return value;
+  if (currentArtifact && value.includes(currentArtifact)) {
+    return value.split(currentArtifact).join(nextArtifact);
+  }
+  if (/search\s+for\b/i.test(value)) {
+    return value.replace(/"[^"]+"/, `"${nextArtifact}"`);
+  }
+  return value;
+}
+
+function expandRepeatedExecutionSteps(steps: PipelineExecutionStep[]) {
+  const output: PipelineExecutionStep[] = [];
+
+  for (const step of steps) {
+    const repeat = step.title.match(/\brepeat\s+steps?\s+(\d+)(?:\s*[-–]\s*(\d+))?\b/i);
+    const nextArtifact = quotedValues(`${step.title}\n${step.detail}`).at(-1);
+    if (!repeat || !nextArtifact) {
+      output.push(step);
+      continue;
+    }
+
+    const start = Number(repeat[1]);
+    const end = Number(repeat[2] ?? repeat[1]);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start || end > output.length) {
+      output.push(step);
+      continue;
+    }
+
+    const sourceSteps = output.slice(start - 1, end);
+    const currentArtifact = sourceSteps.flatMap((sourceStep) => quotedValues(`${sourceStep.title}\n${sourceStep.detail}`))[0] ?? null;
+    for (const sourceStep of sourceSteps) {
+      output.push({
+        title: replaceExecutionArtifact(sourceStep.title, currentArtifact, nextArtifact),
+        detail: replaceExecutionArtifact(sourceStep.detail, currentArtifact, nextArtifact)
+      });
+    }
+  }
+
+  return output;
 }
 
 function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly string[]): PipelineExecutionStep[] {
@@ -1554,7 +1673,7 @@ function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly str
     let current: PipelineExecutionStep | null = null;
     for (const line of section.lines) {
       const substep = line.match(/^(\d+\.\d+|[a-z])\s*[-.)]\s*(.+)$/i);
-      if (substep && !line.includes("://")) {
+      if (substep) {
         current = {
           title: trimExecutionStepTitle(substep[2]),
           detail: section.title
@@ -1582,7 +1701,7 @@ function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly str
     : fallbackSteps.map((title) => ({ title, detail: "" }));
 
   const seen = new Set<string>();
-  return source
+  const normalized = source
     .map((step) => ({
       title: trimExecutionStepTitle(step.title),
       detail: step.detail.trim()
@@ -1594,11 +1713,14 @@ function parseActionPlanExecutionSteps(text: string, fallbackSteps: readonly str
       seen.add(key);
       return true;
     });
+  return expandRepeatedExecutionSteps(normalized);
 }
 
 export function App() {
   const actionDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const executionPlanInputRef = useRef<HTMLInputElement | null>(null);
+  const executionDraftRef = useRef<ExecutionDraft | null>(readExecutionDraft());
+  const initialExecutionDraft = executionDraftRef.current;
   const [activeStep, setActiveStep] = useState<StepId>("actionPlan");
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem("lang") as Lang) || "es");
   const [documentLang, setDocumentLang] = useState<Lang>(() => (localStorage.getItem("documentLang") as Lang) || "en");
@@ -1632,6 +1754,8 @@ export function App() {
       return [];
     }
   });
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1642,7 +1766,7 @@ export function App() {
   const [cloneName, setCloneName] = useState("BIMBO-R2-REPOSITORY");
   const [repos, setRepos] = useState<RepositoryInfo[]>([]);
   const [repoPath, setRepoPath] = useState("");
-  const [rfc, setRfc] = useState("");
+  const [rfc, setRfc] = useState(initialExecutionDraft?.rfc ?? "");
   const [actionProduct, setActionProduct] = useState("");
   const [actionMethod, setActionMethod] = useState<"cicd" | "manual">("cicd");
   const [actionEnvironment, setActionEnvironment] = useState("");
@@ -1664,25 +1788,36 @@ export function App() {
   const [summary, setSummary] = useState<DraftSummary | null>(null);
   const [finalOutput, setFinalOutput] = useState("");
   const [localCommitResult, setLocalCommitResult] = useState<FinalizeResult | null>(null);
-  const [testTargetEnvironment, setTestTargetEnvironment] = useState("");
-  const [prodTargetEnvironment, setProdTargetEnvironment] = useState("");
-  const [testPipelineName, setTestPipelineName] = useState("");
-  const [prodPipelineName, setProdPipelineName] = useState("");
-  const [testPipelineRun, setTestPipelineRun] = useState("");
-  const [prodPipelineRun, setProdPipelineRun] = useState("");
-  const [testPipelineRunUrl, setTestPipelineRunUrl] = useState("");
-  const [prodPipelineRunUrl, setProdPipelineRunUrl] = useState("");
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>("general");
-  const [pipelineExecutionPhase, setPipelineExecutionPhase] = useState<PipelinePhase>("TEST");
-  const [pipelineActionPlan, setPipelineActionPlan] = useState("");
+  const [testTargetEnvironment, setTestTargetEnvironment] = useState(initialExecutionDraft?.testTargetEnvironment ?? "");
+  const [prodTargetEnvironment, setProdTargetEnvironment] = useState(initialExecutionDraft?.prodTargetEnvironment ?? "");
+  const [testPipelineName, setTestPipelineName] = useState(initialExecutionDraft?.testPipelineName ?? "");
+  const [prodPipelineName, setProdPipelineName] = useState(initialExecutionDraft?.prodPipelineName ?? "");
+  const [testPipelineRun, setTestPipelineRun] = useState(initialExecutionDraft?.testPipelineRun ?? "");
+  const [prodPipelineRun, setProdPipelineRun] = useState(initialExecutionDraft?.prodPipelineRun ?? "");
+  const [testPipelineRunUrl, setTestPipelineRunUrl] = useState(initialExecutionDraft?.testPipelineRunUrl ?? "");
+  const [prodPipelineRunUrl, setProdPipelineRunUrl] = useState(initialExecutionDraft?.prodPipelineRunUrl ?? "");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(initialExecutionDraft?.executionMode ?? "general");
+  const [pipelineExecutionPhase, setPipelineExecutionPhase] = useState<PipelinePhase>(
+    initialExecutionDraft?.pipelineExecutionPhase ?? "TEST"
+  );
+  const [pipelineActionPlan, setPipelineActionPlan] = useState(initialExecutionDraft?.pipelineActionPlan ?? "");
+  const [executionSteps, setExecutionSteps] = useState<PipelineExecutionStep[]>(initialExecutionDraft?.executionSteps ?? []);
+  const [executionStepsConfirmed, setExecutionStepsConfirmed] = useState(
+    Boolean(initialExecutionDraft?.executionStepsConfirmed)
+  );
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
-  const [evidenceLog, setEvidenceLog] = useState<EvidenceLog[]>([]);
+  const [executionSessionId, setExecutionSessionId] = useState(
+    initialExecutionDraft?.sessionId ?? createClientId("execution")
+  );
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>(initialExecutionDraft?.evidenceItems ?? []);
+  const [evidenceLog, setEvidenceLog] = useState<EvidenceLog[]>(initialExecutionDraft?.evidenceLog ?? []);
   const [lastExportPath, setLastExportPath] = useState("");
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [prodMessageOpen, setProdMessageOpen] = useState(false);
-  const [pipelineStepIndex, setPipelineStepIndex] = useState(0);
-  const [pipelineStepComments, setPipelineStepComments] = useState<Record<string, string>>({});
+  const [pipelineStepIndex, setPipelineStepIndex] = useState(initialExecutionDraft?.pipelineStepIndex ?? 0);
+  const [pipelineStepComments, setPipelineStepComments] = useState<Record<string, string>>(
+    initialExecutionDraft?.pipelineStepComments ?? {}
+  );
   const [imagePreview, setImagePreview] = useState<EvidenceItem | null>(null);
   const [instantTooltip, setInstantTooltip] = useState<InstantTooltip | null>(null);
 
@@ -1722,6 +1857,18 @@ export function App() {
     () => repos.find((repo) => repo.path === repoPath) ?? null,
     [repos, repoPath]
   );
+  const filteredExecutionHistory = useMemo(() => {
+    const query = historySearch.trim().toLowerCase();
+    if (!query) return executionHistory;
+    return executionHistory.filter((item) =>
+      [item.rfc, item.phase, item.kind, item.path].some((value) => value.toLowerCase().includes(query))
+    );
+  }, [executionHistory, historySearch]);
+  const historyTotalPages = Math.max(1, Math.ceil(filteredExecutionHistory.length / historyPageSize));
+  const visibleExecutionHistory = filteredExecutionHistory.slice(
+    (historyPage - 1) * historyPageSize,
+    historyPage * historyPageSize
+  );
   const readyForDraft = Boolean(repoPath && rfc.trim() && riceFolderPath.trim() && files.length);
   const canCommit = Boolean(summary && readyForDraft && summary.filesToCopy.length > 0);
   const canPushBranch = Boolean(localCommitResult?.ok && localCommitResult.branch === rfc.trim());
@@ -1730,12 +1877,16 @@ export function App() {
   const pipelineBody = isProdPipelineStep ? t.pipeline.bodyProd : t.pipeline.bodyTest;
   const executionActionPlan = executionMode === "cicd" ? "" : pipelineActionPlan.trim();
   const hasExecutionActionPlan = executionMode === "cicd" || Boolean(executionActionPlan.trim());
+  const parsedExecutionSteps = useMemo(
+    () => (executionActionPlan.trim() ? parseActionPlanExecutionSteps(executionActionPlan, t.pipeline.steps) : []),
+    [executionActionPlan, t.pipeline.steps]
+  );
   const currentPipelineSteps = useMemo(
     () => {
       if (executionMode === "cicd") return cicdExecutionSteps;
-      return executionActionPlan.trim() ? parseActionPlanExecutionSteps(executionActionPlan, t.pipeline.steps) : [];
+      return executionStepsConfirmed ? executionSteps : [];
     },
-    [executionActionPlan, executionMode, t.pipeline.steps]
+    [executionMode, executionSteps, executionStepsConfirmed]
   );
   const defaultPipelineName = `${(selectedRepo?.name ?? "BIMBO-R2-REPOSITORY").replace("BIMBO-", "").replace("-REPOSITORY", "")}-${pipelineInstanceFrom(actionInstance)}-OIC-DEPLOYMENT_PIPELINE`;
   const targetEnvironment = isProdPipelineStep ? prodTargetEnvironment : testTargetEnvironment;
@@ -1795,21 +1946,30 @@ export function App() {
     if (recordRfc) return recordRfc === currentRfc;
     return text.includes(currentRfc);
   };
+  const matchesCurrentExecution = (recordRfc?: string, text = "", sessionId?: string) => {
+    if (sessionId) return sessionId === executionSessionId;
+    if (recordRfc) return !currentRfc || recordRfc === currentRfc;
+    if (activeStep === "pipeline") return true;
+    return matchesCurrentRfc(recordRfc, text);
+  };
   const currentStepEvidence = evidenceItems.filter(
     (item) =>
       item.step === activeStep &&
-      matchesCurrentRfc(item.rfc) &&
+      matchesCurrentExecution(item.rfc, "", item.sessionId) &&
       item.pipelineStep === pipelineStepIndex &&
       (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
   );
   const currentStepComment = pipelineStepComments[pipelineStepKey]?.trim() ?? "";
   const currentStepComplete = Boolean(currentStepComment || currentStepEvidence.length);
+  const evidenceFormReady =
+    activeStep !== "pipeline" ||
+    Boolean(currentRfc && targetEnvironment.trim() && hasExecutionActionPlan && currentPipelineSteps.length && currentPipelineStep);
   const inspectionByPath = useMemo(
     () => new Map(artifactInspections.map((inspection) => [inspection.filePath, inspection])),
     [artifactInspections]
   );
   const activeStepLog = evidenceLog.filter(
-    (entry) => entry.step === activeStep && matchesCurrentRfc(entry.rfc, entry.text)
+    (entry) => entry.step === activeStep && matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId)
   );
 
   function fileBadge(kind: SelectedFile["kind"]) {
@@ -1834,10 +1994,17 @@ export function App() {
     return t.steps[step]?.[0] ?? t.pipeline.title;
   }
 
+  function ensureEvidenceFormReady() {
+    if (evidenceFormReady) return true;
+    setMessage(t.messages.evidenceSetupRequired);
+    return false;
+  }
+
   function addLog(text: string, step = activeStep) {
     setEvidenceLog((current) => [
       {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        id: createClientId("log"),
+        sessionId: executionSessionId,
         at: new Date().toISOString(),
         step,
         rfc: rfc.trim() || undefined,
@@ -1850,7 +2017,8 @@ export function App() {
   function addEvidence(image: EvidenceImage, source: EvidenceItem["source"], note = "") {
     const item: EvidenceItem = {
       ...image,
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: createClientId("evidence"),
+      sessionId: executionSessionId,
       step: activeStep,
       rfc: rfc.trim() || undefined,
       pipelineStep: isPipelineTrackingStep ? pipelineStepIndex : undefined,
@@ -1883,6 +2051,7 @@ export function App() {
   }
 
   async function captureAppEvidence() {
+    if (!ensureEvidenceFormReady()) return;
     if (!desktopApi) {
       setMessage(t.messages.webMode);
       return;
@@ -1892,6 +2061,7 @@ export function App() {
   }
 
   async function captureRegionEvidence() {
+    if (!ensureEvidenceFormReady()) return;
     if (!desktopApi) {
       setMessage(t.messages.webMode);
       return;
@@ -1901,6 +2071,7 @@ export function App() {
   }
 
   async function addEvidenceImages() {
+    if (!ensureEvidenceFormReady()) return;
     if (!desktopApi) {
       setMessage(t.messages.filesElectron);
       return;
@@ -1910,6 +2081,7 @@ export function App() {
   }
 
   async function pasteEvidenceImage() {
+    if (!ensureEvidenceFormReady()) return;
     try {
       const items = await navigator.clipboard?.read?.();
       for (const item of items ?? []) {
@@ -1942,8 +2114,8 @@ export function App() {
     const documentCopy = copy[documentLang];
     const documentSteps = executionMode === "cicd"
       ? cicdExecutionSteps
-      : executionActionPlan.trim()
-        ? parseActionPlanExecutionSteps(executionActionPlan, documentCopy.pipeline.steps)
+      : executionStepsConfirmed && executionSteps.length
+        ? executionSteps
         : documentCopy.pipeline.steps.map((title) => ({ title, detail: "" }));
     return {
       rfc,
@@ -1965,7 +2137,7 @@ export function App() {
           .filter(
             (item) =>
               item.step === activeStep &&
-              matchesCurrentRfc(item.rfc) &&
+              matchesCurrentExecution(item.rfc, "", item.sessionId) &&
               item.pipelineStep === index &&
               (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
           )
@@ -1974,7 +2146,7 @@ export function App() {
       logs: evidenceLog
         .filter(
           (entry) =>
-            matchesCurrentRfc(entry.rfc, entry.text) &&
+            matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId) &&
             (entry.step === activeStep || (executionMode === "cicd" && Boolean(currentRfc)))
         )
         .map((entry) => ({
@@ -1996,6 +2168,22 @@ export function App() {
 
   function openLocalPath(path: string) {
     desktopApi?.openExternal(`file://${encodeURI(path)}`);
+  }
+
+  async function removeHistoryItem(item: ExecutionHistoryItem) {
+    const removeFromHistory = window.confirm(t.historyRemoveConfirm.replace("{{rfc}}", item.rfc));
+    if (!removeFromHistory) return;
+    setExecutionHistory((current) => current.filter((entry) => entry.id !== item.id));
+    const removeFromDisk = window.confirm(t.historyDiskConfirm);
+    if (!removeFromDisk) return;
+    try {
+      await runTask(async () => {
+        if (desktopApi?.deleteLocalFile) return desktopApi.deleteLocalFile(item.path);
+        return false;
+      }, t.messages.done);
+    } catch {
+      setMessage(t.messages.unexpected);
+    }
   }
 
   function collectUserDataBackup() {
@@ -2034,6 +2222,9 @@ export function App() {
         executionMode,
         pipelineExecutionPhase,
         pipelineActionPlan,
+        executionSteps,
+        executionStepsConfirmed,
+        evidenceItems,
         evidenceLog,
         profileName,
         profileEmail,
@@ -2105,6 +2296,8 @@ export function App() {
     setExecutionMode("general");
     setPipelineExecutionPhase("TEST");
     setPipelineActionPlan("");
+    setExecutionSteps([]);
+    setExecutionStepsConfirmed(false);
     setEvidenceItems([]);
     setEvidenceLog([]);
     setExecutionHistory([]);
@@ -2136,7 +2329,11 @@ export function App() {
       return false;
     }
     if (!hasExecutionActionPlan || currentPipelineSteps.length === 0) {
-      setMessage(t.pipeline.planPlaceholder);
+      setMessage(executionMode === "general" ? t.pipeline.editStepsHint : t.pipeline.planPlaceholder);
+      return false;
+    }
+    if (!targetEnvironment.trim()) {
+      setMessage(t.messages.evidenceSetupRequired);
       return false;
     }
     const missingStepIndex = currentPipelineSteps.findIndex((_, index) => {
@@ -2144,6 +2341,7 @@ export function App() {
       const images = evidenceItems.filter(
         (item) =>
           item.step === activeStep &&
+          matchesCurrentExecution(item.rfc, "", item.sessionId) &&
           item.pipelineStep === index &&
           (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
       );
@@ -2464,11 +2662,15 @@ export function App() {
     setManualReviewOpen(false);
     setActionPlan("");
     setPipelineActionPlan("");
+    setExecutionSteps([]);
+    setExecutionStepsConfirmed(false);
     setMessage(a.clear);
     setLocalCommitResult(null);
   }
 
   function resetExecutionFields() {
+    localStorage.removeItem(executionDraftStorageKey);
+    setExecutionSessionId(createClientId("execution"));
     setRfc("");
     setPipelineExecutionPhase("TEST");
     setTestTargetEnvironment("");
@@ -2481,6 +2683,8 @@ export function App() {
     setProdPipelineRunUrl("");
     setExecutionMode("general");
     setPipelineActionPlan("");
+    setExecutionSteps([]);
+    setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
     setLocalCommitResult(null);
@@ -2677,6 +2881,8 @@ export function App() {
     if (!file) return;
     const text = await file.text();
     setPipelineActionPlan(text);
+    setExecutionSteps(parseActionPlanExecutionSteps(text, t.pipeline.steps));
+    setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
     setMessage(t.pipeline.stepsLoaded);
     event.target.value = "";
@@ -2685,13 +2891,38 @@ export function App() {
   function useGeneratedActionPlanForExecution() {
     if (!actionPlan.trim()) return;
     setPipelineActionPlan(actionPlan);
+    setExecutionSteps(parseActionPlanExecutionSteps(actionPlan, t.pipeline.steps));
+    setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
     setMessage(t.pipeline.stepsLoaded);
   }
 
   function refreshExecutionSteps() {
+    setExecutionSteps(parsedExecutionSteps);
+    setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
     setMessage(t.pipeline.stepsLoaded);
+  }
+
+  function updateExecutionStep(index: number, field: keyof PipelineExecutionStep, value: string) {
+    setExecutionSteps((current) => current.map((step, stepIndex) => (stepIndex === index ? { ...step, [field]: value } : step)));
+    setExecutionStepsConfirmed(false);
+  }
+
+  function removeExecutionStep(index: number) {
+    setExecutionSteps((current) => current.filter((_, stepIndex) => stepIndex !== index));
+    setPipelineStepIndex((current) => Math.max(0, Math.min(current, executionSteps.length - 2)));
+    setExecutionStepsConfirmed(false);
+  }
+
+  function confirmExecutionSteps() {
+    const cleanSteps = executionSteps
+      .map((step) => ({ title: step.title.trim(), detail: step.detail.trim() }))
+      .filter((step) => step.title);
+    setExecutionSteps(cleanSteps);
+    setExecutionStepsConfirmed(Boolean(cleanSteps.length));
+    setPipelineStepIndex(0);
+    setMessage(cleanSteps.length ? t.pipeline.stepsConfirmed : t.pipeline.planPlaceholder);
   }
 
   useEffect(() => {
@@ -2814,6 +3045,63 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("executionHistory", JSON.stringify(executionHistory.slice(0, 50)));
   }, [executionHistory]);
+
+  useEffect(() => {
+    const draft: ExecutionDraft = {
+      sessionId: executionSessionId,
+      rfc,
+      testTargetEnvironment,
+      prodTargetEnvironment,
+      testPipelineName,
+      prodPipelineName,
+      testPipelineRun,
+      prodPipelineRun,
+      testPipelineRunUrl,
+      prodPipelineRunUrl,
+      executionMode,
+      pipelineExecutionPhase,
+      pipelineActionPlan,
+      executionSteps,
+      executionStepsConfirmed,
+      pipelineStepIndex,
+      pipelineStepComments,
+      evidenceItems,
+      evidenceLog
+    };
+    try {
+      localStorage.setItem(executionDraftStorageKey, JSON.stringify(draft));
+    } catch {
+      // Evidence screenshots can exceed browser storage. Keep the live session intact.
+    }
+  }, [
+    executionSessionId,
+    rfc,
+    testTargetEnvironment,
+    prodTargetEnvironment,
+    testPipelineName,
+    prodPipelineName,
+    testPipelineRun,
+    prodPipelineRun,
+    testPipelineRunUrl,
+    prodPipelineRunUrl,
+    executionMode,
+    pipelineExecutionPhase,
+    pipelineActionPlan,
+    executionSteps,
+    executionStepsConfirmed,
+    pipelineStepIndex,
+    pipelineStepComments,
+    evidenceItems,
+    evidenceLog
+  ]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historySearch]);
+
+  useEffect(() => {
+    if (historyPage > historyTotalPages) setHistoryPage(historyTotalPages);
+  }, [historyPage, historyTotalPages]);
 
   useEffect(() => {
     localStorage.setItem("themeId", themeId);
@@ -3140,9 +3428,8 @@ export function App() {
                 <h2>{a.title}</h2>
                 <p>{a.body}</p>
               </div>
-              <button className="secondary" onClick={resetActionPlanFields} title={a.clear}>
+              <button className="icon-button" onClick={resetActionPlanFields} title={a.clear} aria-label={a.clear}>
                 <Trash2 size={16} />
-                {a.clear}
               </button>
             </div>
 
@@ -3434,9 +3721,14 @@ export function App() {
             </div>
 
             <div className="actions">
-              <button className="secondary" disabled={!files.length} onClick={clearPackage}>
+              <button
+                className="icon-button"
+                disabled={!files.length}
+                onClick={clearPackage}
+                title={t.pkg.clearPackage}
+                aria-label={t.pkg.clearPackage}
+              >
                 <Trash2 size={16} />
-                {t.pkg.clearPackage}
               </button>
               <button className="secondary" disabled={!readyForDraft} onClick={refreshSummary}>
                 <History size={16} />
@@ -3540,9 +3832,13 @@ export function App() {
                 <p>{pipelineBody}</p>
               </div>
               <div className="inline-actions compact-actions">
-                <button className="secondary" onClick={resetExecutionFields} title={t.pipeline.clearExecution}>
+                <button
+                  className="icon-button"
+                  onClick={resetExecutionFields}
+                  title={t.pipeline.clearExecution}
+                  aria-label={t.pipeline.clearExecution}
+                >
                   <Trash2 size={16} />
-                  {t.pipeline.clearExecution}
                 </button>
                 <button className="secondary" onClick={() => desktopApi?.openExternal(projectUrl)}>
                   <ExternalLink size={16} />
@@ -3562,6 +3858,7 @@ export function App() {
                       setExecutionMode("general");
                       setPipelineStepIndex(0);
                       setPipelineStepComments({});
+                      setExecutionStepsConfirmed(false);
                     }}
                   >
                     {t.pipeline.modeGeneral}
@@ -3572,6 +3869,8 @@ export function App() {
                     onClick={() => {
                       setExecutionMode("cicd");
                       setPipelineActionPlan("");
+                      setExecutionSteps([]);
+                      setExecutionStepsConfirmed(false);
                       setPipelineStepIndex(0);
                       setPipelineStepComments({});
                     }}
@@ -3668,7 +3967,10 @@ export function App() {
                 className="pipeline-plan-text"
                 value={pipelineActionPlan}
                 onChange={(event) => {
-                  setPipelineActionPlan(event.target.value);
+                  const value = event.target.value;
+                  setPipelineActionPlan(value);
+                  setExecutionSteps(parseActionPlanExecutionSteps(value, t.pipeline.steps));
+                  setExecutionStepsConfirmed(false);
                   setPipelineStepIndex(0);
                 }}
                 placeholder={t.pipeline.planPlaceholder}
@@ -3684,7 +3986,43 @@ export function App() {
             </div>
             )}
 
-            {hasExecutionActionPlan && (
+            {executionMode === "general" && hasExecutionActionPlan && executionSteps.length > 0 && (
+              <div className="pipeline-action-plan execution-steps-review">
+                <div className="output-head">
+                  <div>
+                    <strong>{t.pipeline.reviewSteps}</strong>
+                    <p>{t.pipeline.editStepsHint}</p>
+                  </div>
+                  <button className="secondary" onClick={confirmExecutionSteps}>
+                    <CheckCircle2 size={16} />
+                    {t.pipeline.confirmSteps}
+                  </button>
+                </div>
+                <div className="execution-step-editor">
+                  {executionSteps.map((step, index) => (
+                    <article className="execution-step-row" key={`${index}-${step.title}`}>
+                      <span>{index + 1}</span>
+                      <div>
+                        <input
+                          value={step.title}
+                          onChange={(event) => updateExecutionStep(index, "title", event.target.value)}
+                        />
+                        <textarea
+                          value={step.detail}
+                          onChange={(event) => updateExecutionStep(index, "detail", event.target.value)}
+                          placeholder={t.pipeline.comment}
+                        />
+                      </div>
+                      <button className="icon-button" onClick={() => removeExecutionStep(index)} title={t.deleteHistoryItem}>
+                        <Trash2 size={15} />
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {currentPipelineSteps.length > 0 && (
               <>
             <div className="pipeline-layout guided-card">
               <div className="guided-rail" aria-label={t.pipeline.checklist}>
@@ -3708,13 +4046,28 @@ export function App() {
                     {currentPipelineStep?.detail && <p className="guided-step-detail">{currentPipelineStep.detail}</p>}
                   </div>
                   <div className="guided-actions">
-                    <button className="icon-action" onClick={captureRegionEvidence} title={t.evidence.captureRegion}>
+                    <button
+                      className="icon-action"
+                      disabled={!evidenceFormReady}
+                      onClick={captureRegionEvidence}
+                      title={evidenceFormReady ? t.evidence.captureRegion : t.messages.evidenceSetupRequired}
+                    >
                       <Camera size={18} />
                     </button>
-                    <button className="icon-action" onClick={addEvidenceImages} title={t.evidence.addImage}>
+                    <button
+                      className="icon-action"
+                      disabled={!evidenceFormReady}
+                      onClick={addEvidenceImages}
+                      title={evidenceFormReady ? t.evidence.addImage : t.messages.evidenceSetupRequired}
+                    >
                       <ImagePlus size={18} />
                     </button>
-                    <button className="icon-action" onClick={pasteEvidenceImage} title={t.evidence.paste}>
+                    <button
+                      className="icon-action"
+                      disabled={!evidenceFormReady}
+                      onClick={pasteEvidenceImage}
+                      title={evidenceFormReady ? t.evidence.paste : t.messages.evidenceSetupRequired}
+                    >
                       <ClipboardPaste size={18} />
                     </button>
                     {pipelineStepIndex === 0 && (
@@ -3737,7 +4090,7 @@ export function App() {
                   <div className="guided-preview">
                     <strong>{t.pipeline.currentEvidence}</strong>
                     {currentStepEvidence.length ? (
-                      currentStepEvidence.slice(0, 1).map((item) => (
+                      currentStepEvidence.map((item) => (
                         <article className="step-evidence-card preview-card" key={item.id}>
                           <button className="image-preview-button" onClick={() => setImagePreview(item)}>
                             <img src={item.dataUrl} alt={item.name} />
@@ -4004,27 +4357,73 @@ export function App() {
                 {settingsTab === "history" && (
                   <>
                     <div className="workspace-actions modal-actions">
-                      <button className="secondary" onClick={chooseOutputFolder}>
+                      <label className="history-search">
+                        {t.historySearch}
+                        <input
+                          value={historySearch}
+                          onChange={(event) => setHistorySearch(event.target.value)}
+                          placeholder="4-B002VTZ"
+                        />
+                      </label>
+                      <button
+                        className="icon-button"
+                        onClick={chooseOutputFolder}
+                        title={outputFolder || t.chooseFolder}
+                        aria-label={outputFolder || t.chooseFolder}
+                      >
                         <Folder size={16} />
-                        {outputFolder || t.chooseFolder}
                       </button>
                     </div>
                     <div className="history-list">
                       {executionHistory.length === 0 && <div className="empty-inline">{t.noHistory}</div>}
-                      {executionHistory.map((item) => (
+                      {executionHistory.length > 0 && filteredExecutionHistory.length === 0 && (
+                        <div className="empty-inline">{t.noHistoryResults}</div>
+                      )}
+                      {visibleExecutionHistory.map((item) => (
                         <article className="history-row" key={item.id}>
                           <div>
                             <strong>{item.rfc} · {item.phase} · {item.kind.toUpperCase()}</strong>
                             <span>{new Date(item.exportedAt).toLocaleString()}</span>
                             <small>{item.path}</small>
                           </div>
-                          <button className="secondary" onClick={() => openLocalPath(item.path)}>
-                            <ExternalLink size={16} />
-                            {t.openFile}
-                          </button>
+                          <div className="history-actions">
+                            <button className="secondary" onClick={() => openLocalPath(item.path)}>
+                              <ExternalLink size={16} />
+                              {t.openFile}
+                            </button>
+                            <button className="secondary danger-outline" onClick={() => removeHistoryItem(item)}>
+                              <Trash2 size={16} />
+                              {t.deleteHistoryItem}
+                            </button>
+                          </div>
                         </article>
                       ))}
                     </div>
+                    {filteredExecutionHistory.length > historyPageSize && (
+                      <div className="history-pagination">
+                        <button
+                          className="icon-button"
+                          disabled={historyPage === 1}
+                          onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                          title={t.pipeline.previous}
+                          aria-label={t.pipeline.previous}
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span>
+                          {t.historyPage} {historyPage} / {historyTotalPages}
+                        </span>
+                        <button
+                          className="icon-button"
+                          disabled={historyPage === historyTotalPages}
+                          onClick={() => setHistoryPage((page) => Math.min(historyTotalPages, page + 1))}
+                          title={t.pipeline.next}
+                          aria-label={t.pipeline.next}
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
 
