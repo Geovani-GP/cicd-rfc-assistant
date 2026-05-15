@@ -1509,6 +1509,8 @@ label small {
 .top-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -2293,6 +2295,51 @@ h2 {
 .background-style-grid,
 .motion-grid {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.text-size-grid {
+  grid-template-columns: repeat(3, minmax(72px, 96px));
+  justify-content: start;
+  align-items: end;
+}
+
+.text-size-option {
+  display: grid;
+  place-items: center;
+  width: 78px;
+  min-height: 58px;
+  padding: 0;
+  border: 1px solid var(--oracle-line);
+  border-radius: 8px;
+  color: var(--oracle-charcoal);
+  background: #ffffff;
+  line-height: 1;
+}
+
+.text-size-letter {
+  display: block;
+  line-height: 1;
+}
+
+.text-size-letter.small {
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.text-size-letter.medium {
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.text-size-letter.large {
+  font-size: 42px;
+  font-weight: 850;
+}
+
+.text-size-option:hover,
+.text-size-option.selected {
+  color: #ffffff;
+  background: var(--oracle-red);
 }
 
 .option-tile {

@@ -576,6 +576,12 @@ const copy = {
     deletePendingWork: "Eliminar pendiente",
     pendingDeleteConfirm: "Eliminar el pendiente actual? Esto limpiara los datos en curso, pero no borrara documentos exportados.",
     pendingDetails: "Detalle",
+    savePendingWork: "Guardar pendiente",
+    newWork: "Nuevo",
+    savePendingFirstConfirm: "Hay trabajo en curso. Quieres guardarlo como pendiente antes de iniciar uno nuevo?",
+    newWithoutSavingConfirm: "Iniciar nuevo trabajo sin guardar el actual?",
+    pendingSaved: "Pendiente guardado.",
+    noPendingToSave: "Captura datos del RFC antes de guardar un pendiente.",
     historyRemoveConfirm: "Eliminar {{rfc}} del historial?",
     historyDiskConfirm: "Tambien quieres eliminar el documento del disco duro?",
     deleteHistoryItem: "Eliminar",
@@ -824,6 +830,12 @@ const copy = {
     deletePendingWork: "Delete pending item",
     pendingDeleteConfirm: "Delete the current pending item? This will clear in-progress data, but exported documents will not be deleted.",
     pendingDetails: "Details",
+    savePendingWork: "Save pending",
+    newWork: "New",
+    savePendingFirstConfirm: "There is work in progress. Save it as pending before starting a new one?",
+    newWithoutSavingConfirm: "Start a new work item without saving the current one?",
+    pendingSaved: "Pending item saved.",
+    noPendingToSave: "Capture RFC data before saving a pending item.",
     historyRemoveConfirm: "Remove {{rfc}} from history?",
     historyDiskConfirm: "Do you also want to delete the document from disk?",
     deleteHistoryItem: "Delete",
@@ -1072,6 +1084,12 @@ const copy = {
     deletePendingWork: "Excluir pendente",
     pendingDeleteConfirm: "Excluir o pendente atual? Isso limpa os dados em andamento, mas nao apaga documentos exportados.",
     pendingDetails: "Detalhe",
+    savePendingWork: "Salvar pendente",
+    newWork: "Novo",
+    savePendingFirstConfirm: "Ha trabalho em andamento. Deseja salvar como pendente antes de iniciar um novo?",
+    newWithoutSavingConfirm: "Iniciar um novo trabalho sem salvar o atual?",
+    pendingSaved: "Pendente salvo.",
+    noPendingToSave: "Capture dados do RFC antes de salvar um pendente.",
     historyRemoveConfirm: "Excluir {{rfc}} do historico?",
     historyDiskConfirm: "Tambem deseja excluir o documento do disco?",
     deleteHistoryItem: "Excluir",
@@ -2175,7 +2193,36 @@ export function App() {
   const currentPendingWorkSnapshot = useMemo<PendingWorkSnapshot | null>(() => {
     const currentRfc = rfc.trim();
     if (!currentRfc) return null;
-    const environmentValue = isProdPipelineStep ? prodTargetEnvironment : testTargetEnvironment || actionInstance;
+    const hasMeaningfulWork = Boolean(
+      repoPath ||
+      actionProduct ||
+      actionEnvironment ||
+      actionInstance ||
+      actionActivity.trim() ||
+      artifactText.trim() ||
+      actionPlan.trim() ||
+      manualInstructions.trim() ||
+      manualSourceText.trim() ||
+      manualPhases.length ||
+      riceFolderPath.trim() ||
+      files.length ||
+      testTargetEnvironment.trim() ||
+      prodTargetEnvironment.trim() ||
+      testPipelineName.trim() ||
+      prodPipelineName.trim() ||
+      testPipelineRun.trim() ||
+      prodPipelineRun.trim() ||
+      testPipelineRunUrl.trim() ||
+      prodPipelineRunUrl.trim() ||
+      pipelineActionPlan.trim() ||
+      executionSteps.length ||
+      executionStepsConfirmed ||
+      evidenceItems.length
+    );
+    if (!hasMeaningfulWork) return null;
+    const environmentValue = isProdPipelineStep
+      ? prodTargetEnvironment || actionEnvironment || actionInstance
+      : testTargetEnvironment || actionEnvironment || actionInstance;
     const stepName = executionMode === "cicd"
       ? t.steps.pipeline[0]
       : executionStepsConfirmed
@@ -2183,7 +2230,7 @@ export function App() {
         : t.steps.actionPlan[0];
     const currentStep = executionMode === "cicd"
       ? "pipeline"
-      : executionStepsConfirmed || pipelineActionPlan.trim()
+      : executionStepsConfirmed || pipelineActionPlan.trim() || actionPlan.trim()
         ? "pipeline"
         : "actionPlan";
     const pendingLabels = [
@@ -2242,7 +2289,36 @@ export function App() {
       }
     };
   }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, manualSourceText, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
-  const pendingWorkItems = useMemo(() => pendingWorkSnapshots, [pendingWorkSnapshots]);
+  const pendingWorkItems = useMemo(() => pendingWorkSnapshots.filter((item) => {
+    const draft = item.draft;
+    if (!draft) return true;
+    return Boolean(
+      draft.repoPath ||
+      draft.actionProduct ||
+      draft.actionEnvironment ||
+      draft.actionInstance ||
+      draft.actionActivity.trim() ||
+      draft.artifactText.trim() ||
+      draft.actionPlan.trim() ||
+      draft.manualInstructions.trim() ||
+      draft.manualSourceText?.trim() ||
+      draft.manualPhases.length ||
+      draft.riceFolderPath.trim() ||
+      draft.files.length ||
+      draft.testTargetEnvironment.trim() ||
+      draft.prodTargetEnvironment.trim() ||
+      draft.testPipelineName.trim() ||
+      draft.prodPipelineName.trim() ||
+      draft.testPipelineRun.trim() ||
+      draft.prodPipelineRun.trim() ||
+      draft.testPipelineRunUrl.trim() ||
+      draft.prodPipelineRunUrl.trim() ||
+      draft.pipelineActionPlan.trim() ||
+      draft.executionSteps.length ||
+      draft.executionStepsConfirmed
+    );
+  }), [pendingWorkSnapshots]);
+  const hasHiddenEmptyPendingWork = pendingWorkItems.length !== pendingWorkSnapshots.length;
   const filteredPendingWorkItems = useMemo(() => {
     const query = pendingSearch.trim().toLowerCase();
     if (!query) return pendingWorkItems;
@@ -2863,6 +2939,35 @@ export function App() {
     setPipelineStepComments({});
   }
 
+  function saveCurrentPendingWork() {
+    if (!currentPendingWorkSnapshot) {
+      setMessage(t.noPendingToSave);
+      return false;
+    }
+    setPendingWorkSnapshots((current) => {
+      const withoutCurrent = current.filter((item) => item.id !== currentPendingWorkSnapshot.id);
+      const next = [currentPendingWorkSnapshot, ...withoutCurrent].slice(0, 50);
+      localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
+      return next;
+    });
+    setMessage(t.pendingSaved);
+    return true;
+  }
+
+  function startNewWork() {
+    if (currentPendingWorkSnapshot) {
+      const shouldSave = window.confirm(t.savePendingFirstConfirm);
+      if (shouldSave) {
+        saveCurrentPendingWork();
+      } else if (!window.confirm(t.newWithoutSavingConfirm)) {
+        return;
+      }
+    }
+    clearCurrentWorkState();
+    setSettingsOpen(false);
+    setActiveStep("actionPlan");
+  }
+
   function removePendingWork(itemId?: string) {
     const confirmed = window.confirm(t.pendingDeleteConfirm);
     if (!confirmed) return;
@@ -2877,6 +2982,7 @@ export function App() {
 
   function continuePendingWork(item: PendingWorkSnapshot) {
     const draft = item.draft;
+    let nextStep = item.currentStep;
     if (draft) {
       setRepoPath(draft.repoPath);
       setRfc(draft.rfc);
@@ -2909,11 +3015,18 @@ export function App() {
       setExecutionStepsConfirmed(draft.executionStepsConfirmed);
       setPipelineStepIndex(draft.pipelineStepIndex);
       setPipelineStepComments(draft.pipelineStepComments);
+      nextStep = draft.executionMode === "cicd" ||
+        draft.pipelineActionPlan.trim() ||
+        draft.executionStepsConfirmed ||
+        draft.executionSteps.length ||
+        draft.actionPlan.trim()
+        ? "pipeline"
+        : "actionPlan";
     } else {
       setRfc(item.rfc);
     }
     setSettingsOpen(false);
-    setActiveStep(item.currentStep);
+    setActiveStep(nextStep);
   }
 
   function collectUserDataBackup() {
@@ -4000,16 +4113,6 @@ export function App() {
   }, [executionHistory]);
 
   useEffect(() => {
-    if (!currentPendingWorkSnapshot) return;
-    setPendingWorkSnapshots((current) => {
-      const withoutCurrent = current.filter((item) => item.id !== currentPendingWorkSnapshot.id);
-      const next = [currentPendingWorkSnapshot, ...withoutCurrent].slice(0, 50);
-      localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
-      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
-    });
-  }, [currentPendingWorkSnapshot]);
-
-  useEffect(() => {
     const draft: ExecutionDraft = {
       sessionId: executionSessionId,
       rfc,
@@ -4073,6 +4176,12 @@ export function App() {
   useEffect(() => {
     if (pendingPage > pendingTotalPages) setPendingPage(pendingTotalPages);
   }, [pendingPage, pendingTotalPages]);
+
+  useEffect(() => {
+    if (!hasHiddenEmptyPendingWork) return;
+    setPendingWorkSnapshots(pendingWorkItems);
+    localStorage.setItem(pendingWorkStorageKey, JSON.stringify(pendingWorkItems));
+  }, [hasHiddenEmptyPendingWork, pendingWorkItems]);
 
   useEffect(() => {
     localStorage.setItem("themeId", themeId);
@@ -4290,6 +4399,14 @@ export function App() {
                 ))}
               </select>
             </label>
+            <button className="secondary compact" onClick={saveCurrentPendingWork} disabled={!currentPendingWorkSnapshot}>
+              <Download size={15} />
+              {t.savePendingWork}
+            </button>
+            <button className="secondary compact" onClick={startNewWork}>
+              <Plus size={15} />
+              {t.newWork}
+            </button>
             <button className="status-pill status-button" onClick={() => setWorkspaceOpen(true)}>
               {busy ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
               {busy ? t.busy : t.ready}
@@ -5760,10 +5877,12 @@ export function App() {
                         {(Object.keys(uiTextSizeNames[lang]) as UiTextSize[]).map((size) => (
                           <button
                             key={size}
-                            className={`option-tile ${uiTextSize === size ? "selected" : ""}`}
+                            className={`text-size-option ${size} ${uiTextSize === size ? "selected" : ""}`}
                             onClick={() => setUiTextSize(size)}
+                            title={uiTextSizeNames[lang][size]}
+                            aria-label={uiTextSizeNames[lang][size]}
                           >
-                            {uiTextSizeNames[lang][size]}
+                            <span className={`text-size-letter ${size}`}>A</span>
                           </button>
                         ))}
                       </div>
