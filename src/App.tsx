@@ -82,6 +82,7 @@ const defaultCustomTheme = {
   colorA: "#d9c4ff",
   colorB: "#8fe8ff",
   colorC: "#ff8fe7",
+  panel: "#34256f",
   sidebar: "#34256f",
   accent: "#4aa3ff",
   transparency: 0.94,
@@ -148,6 +149,16 @@ function readActionMethod(): ActionMethod {
 
 function readExecutionMode(): ExecutionMode {
   return localStorage.getItem(executionModeStorageKey) === "cicd" ? "cicd" : "general";
+}
+
+function hexToRgbString(value: string) {
+  const clean = value.replace("#", "").trim();
+  const normalized = clean.length === 3
+    ? clean.split("").map((char) => `${char}${char}`).join("")
+    : clean;
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return "13, 19, 29";
+  const number = Number.parseInt(normalized, 16);
+  return `${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}`;
 }
 
 function readExecutionDraft(): ExecutionDraft | null {
@@ -601,6 +612,9 @@ const copy = {
     backgroundA: "Fondo 1",
     backgroundB: "Fondo 2",
     backgroundC: "Fondo 3",
+    panelColor: "Panel oscuro",
+    panelTransparency: "Transparencia panel",
+    panelBlur: "Blur panel",
     sidebarColor: "Sidebar",
     sidebarTransparency: "Transparencia sidebar",
     sidebarBlur: "Blur sidebar",
@@ -846,6 +860,9 @@ const copy = {
     backgroundA: "Background 1",
     backgroundB: "Background 2",
     backgroundC: "Background 3",
+    panelColor: "Dark panel",
+    panelTransparency: "Panel transparency",
+    panelBlur: "Panel blur",
     sidebarColor: "Sidebar",
     sidebarTransparency: "Sidebar transparency",
     sidebarBlur: "Sidebar blur",
@@ -1091,6 +1108,9 @@ const copy = {
     backgroundA: "Fundo 1",
     backgroundB: "Fundo 2",
     backgroundC: "Fundo 3",
+    panelColor: "Painel escuro",
+    panelTransparency: "Transparencia painel",
+    panelBlur: "Blur painel",
     sidebarColor: "Sidebar",
     sidebarTransparency: "Transparencia sidebar",
     sidebarBlur: "Blur sidebar",
@@ -1902,6 +1922,7 @@ export function App() {
   const [customColorA, setCustomColorA] = useState(() => localStorage.getItem("customColorA") || defaultCustomTheme.colorA);
   const [customColorB, setCustomColorB] = useState(() => localStorage.getItem("customColorB") || defaultCustomTheme.colorB);
   const [customColorC, setCustomColorC] = useState(() => localStorage.getItem("customColorC") || defaultCustomTheme.colorC);
+  const [customPanelColor, setCustomPanelColor] = useState(() => localStorage.getItem("customPanelColor") || defaultCustomTheme.panel);
   const [customSidebar, setCustomSidebar] = useState(() => localStorage.getItem("customSidebar") || defaultCustomTheme.sidebar);
   const [uiSidebarColor, setUiSidebarColor] = useState(() => localStorage.getItem("uiSidebarColor") || defaultSidebarColor);
   const [sidebarTransparency, setSidebarTransparency] = useState(() => Number(localStorage.getItem("sidebarTransparency") || "0.94"));
@@ -2025,6 +2046,7 @@ export function App() {
     setCustomColorA(defaultCustomTheme.colorA);
     setCustomColorB(defaultCustomTheme.colorB);
     setCustomColorC(defaultCustomTheme.colorC);
+    setCustomPanelColor(defaultCustomTheme.panel);
     setCustomSidebar(defaultCustomTheme.sidebar);
     setUiSidebarColor(defaultCustomTheme.sidebar);
     setSidebarTransparency(0.94);
@@ -2041,33 +2063,34 @@ export function App() {
     setCustomGradient(defaultCustomTheme.gradient);
   };
   const applyCustomSeedFromTheme = (sourceTheme: ThemeId) => {
-    const seeds: Record<ThemeId, { a: string; b: string; c: string; sidebar: string; accent: string }> = {
-      oracle: { a: "#f6f7f9", b: "#f4f1ef", c: "#ffffff", sidebar: "#312d2a", accent: "#c74634" },
-      pastel: { a: "#d5c2ff", b: "#a6d7ff", c: "#f7b6fb", sidebar: "#384c9b", accent: "#238cff" },
-      frosted: { a: "#90989e", b: "#4c5661", c: "#151c26", sidebar: "#0b1018", accent: "#ffb15d" },
-      glass: { a: "#fff7f4", b: "#eef6ff", c: "#f8f1ff", sidebar: "#312d2a", accent: "#c74634" },
-      midnight: { a: "#15110f", b: "#28202d", c: "#102737", sidebar: "#14110f", accent: "#d95d4c" },
-      dracula: { a: "#1e1f29", b: "#282a36", c: "#3b2f4a", sidebar: "#282a36", accent: "#ff5555" },
-      cobalt: { a: "#071629", b: "#102a43", c: "#075985", sidebar: "#071629", accent: "#ffc857" },
-      nord: { a: "#242933", b: "#2e3440", c: "#3b4252", sidebar: "#2e3440", accent: "#88c0d0" },
-      solarized: { a: "#fdf6e3", b: "#eee8d5", c: "#d8e7df", sidebar: "#073642", accent: "#268bd2" },
-      sunset: { a: "#fff8ed", b: "#f6e6d8", c: "#e7eef7", sidebar: "#2b2420", accent: "#c74634" },
-      sage: { a: "#f7fbf2", b: "#e8f2e6", c: "#dcece9", sidebar: "#21362d", accent: "#3f7d5c" },
-      rose: { a: "#fff7fb", b: "#f8e3eb", c: "#edf1ff", sidebar: "#3a2530", accent: "#b64f72" },
-      graphite: { a: "#101418", b: "#1f2937", c: "#111827", sidebar: "#101418", accent: "#f59e0b" },
-      ocean: { a: "#061b24", b: "#0f2f3a", c: "#164e63", sidebar: "#061b24", accent: "#22d3ee" },
-      nordDark: { a: "#1f242f", b: "#2e3440", c: "#3b4252", sidebar: "#1b2029", accent: "#88c0d0" },
-      solarizedDark: { a: "#002b36", b: "#073642", c: "#0b3f4a", sidebar: "#00212a", accent: "#2aa198" },
-      halloween: { a: "#120b16", b: "#2b1234", c: "#3a1d09", sidebar: "#160d1c", accent: "#ff8a00" },
-      cyberpunk: { a: "#120022", b: "#25104b", c: "#001f3f", sidebar: "#10001f", accent: "#ff2bd6" },
-      nightowl: { a: "#011627", b: "#0b2942", c: "#152b4a", sidebar: "#01111f", accent: "#82aaff" },
-      custom: { a: customColorA, b: customColorB, c: customColorC, sidebar: uiSidebarColor, accent: customAccent }
+    const seeds: Record<ThemeId, { a: string; b: string; c: string; panel: string; sidebar: string; accent: string }> = {
+      oracle: { a: "#f6f7f9", b: "#f4f1ef", c: "#ffffff", panel: "#ffffff", sidebar: "#312d2a", accent: "#c74634" },
+      pastel: { a: "#d5c2ff", b: "#a6d7ff", c: "#f7b6fb", panel: "#ffffff", sidebar: "#384c9b", accent: "#238cff" },
+      frosted: { a: "#90989e", b: "#4c5661", c: "#151c26", panel: "#151c26", sidebar: "#0b1018", accent: "#ffb15d" },
+      glass: { a: "#fff7f4", b: "#eef6ff", c: "#f8f1ff", panel: "#ffffff", sidebar: "#312d2a", accent: "#c74634" },
+      midnight: { a: "#15110f", b: "#28202d", c: "#102737", panel: "#1e1720", sidebar: "#14110f", accent: "#d95d4c" },
+      dracula: { a: "#1e1f29", b: "#282a36", c: "#3b2f4a", panel: "#282a36", sidebar: "#282a36", accent: "#ff5555" },
+      cobalt: { a: "#071629", b: "#102a43", c: "#075985", panel: "#102a43", sidebar: "#071629", accent: "#ffc857" },
+      nord: { a: "#242933", b: "#2e3440", c: "#3b4252", panel: "#2e3440", sidebar: "#2e3440", accent: "#88c0d0" },
+      solarized: { a: "#fdf6e3", b: "#eee8d5", c: "#d8e7df", panel: "#fdf6e3", sidebar: "#073642", accent: "#268bd2" },
+      sunset: { a: "#fff8ed", b: "#f6e6d8", c: "#e7eef7", panel: "#ffffff", sidebar: "#2b2420", accent: "#c74634" },
+      sage: { a: "#f7fbf2", b: "#e8f2e6", c: "#dcece9", panel: "#ffffff", sidebar: "#21362d", accent: "#3f7d5c" },
+      rose: { a: "#fff7fb", b: "#f8e3eb", c: "#edf1ff", panel: "#ffffff", sidebar: "#3a2530", accent: "#b64f72" },
+      graphite: { a: "#101418", b: "#1f2937", c: "#111827", panel: "#1f2937", sidebar: "#101418", accent: "#f59e0b" },
+      ocean: { a: "#061b24", b: "#0f2f3a", c: "#164e63", panel: "#0f2f3a", sidebar: "#061b24", accent: "#22d3ee" },
+      nordDark: { a: "#1f242f", b: "#2e3440", c: "#3b4252", panel: "#2e3440", sidebar: "#1b2029", accent: "#88c0d0" },
+      solarizedDark: { a: "#002b36", b: "#073642", c: "#0b3f4a", panel: "#073642", sidebar: "#00212a", accent: "#2aa198" },
+      halloween: { a: "#120b16", b: "#2b1234", c: "#3a1d09", panel: "#2b1234", sidebar: "#160d1c", accent: "#ff8a00" },
+      cyberpunk: { a: "#120022", b: "#25104b", c: "#001f3f", panel: "#25104b", sidebar: "#10001f", accent: "#ff2bd6" },
+      nightowl: { a: "#011627", b: "#0b2942", c: "#152b4a", panel: "#0b2942", sidebar: "#01111f", accent: "#82aaff" },
+      custom: { a: customColorA, b: customColorB, c: customColorC, panel: customPanelColor, sidebar: uiSidebarColor, accent: customAccent }
     };
     const seed = seeds[sourceTheme];
     setCustomThemeTone(themeTone[sourceTheme]);
     setCustomColorA(seed.a);
     setCustomColorB(seed.b);
     setCustomColorC(seed.c);
+    setCustomPanelColor(seed.panel);
     setUiSidebarColor(seed.sidebar);
     setCustomSidebar(seed.sidebar);
     setCustomAccent(seed.accent);
@@ -2086,6 +2109,8 @@ export function App() {
           "--custom-bg-a": customColorA,
           "--custom-bg-b": customColorB,
           "--custom-bg-c": customColorC,
+          "--custom-panel-color": customPanelColor,
+          "--custom-panel-rgb": hexToRgbString(customPanelColor),
           "--custom-sidebar": uiSidebarColor,
           "--oracle-red": customAccent,
           "--oracle-red-dark": customAccent,
@@ -2904,6 +2929,7 @@ export function App() {
         customColorA,
         customColorB,
         customColorC,
+        customPanelColor,
         customSidebar,
         uiSidebarColor,
         sidebarTransparency,
@@ -3020,6 +3046,7 @@ export function App() {
     setCustomColorA(defaultCustomTheme.colorA);
     setCustomColorB(defaultCustomTheme.colorB);
     setCustomColorC(defaultCustomTheme.colorC);
+    setCustomPanelColor(defaultCustomTheme.panel);
     setCustomSidebar(defaultCustomTheme.sidebar);
     setUiSidebarColor(defaultSidebarColor);
     setSidebarTransparency(0.94);
@@ -4070,6 +4097,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("customColorC", customColorC);
   }, [customColorC]);
+
+  useEffect(() => {
+    localStorage.setItem("customPanelColor", customPanelColor);
+  }, [customPanelColor]);
 
   useEffect(() => {
     localStorage.setItem("customSidebar", customSidebar);
@@ -5870,6 +5901,36 @@ export function App() {
                               />
                             </label>
                             <label>
+                              {t.panelColor}
+                              <input
+                                type="color"
+                                value={customPanelColor}
+                                onChange={(event) => setCustomPanelColor(event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              {t.panelTransparency}
+                              <input
+                                type="range"
+                                min="0.62"
+                                max="1"
+                                step="0.02"
+                                value={themeTransparency}
+                                onChange={(event) => setThemeTransparency(Number(event.target.value))}
+                              />
+                            </label>
+                            <label>
+                              {t.panelBlur}
+                              <input
+                                type="range"
+                                min="0"
+                                max="28"
+                                step="1"
+                                value={themeBlur}
+                                onChange={(event) => setThemeBlur(Number(event.target.value))}
+                              />
+                            </label>
+                            <label>
                               {t.sidebarColor}
                               <input
                                 type="color"
@@ -5889,28 +5950,6 @@ export function App() {
                               />
                             </label>
                           </div>
-                          <label>
-                            {t.transparency}
-                            <input
-                              type="range"
-                              min="0.62"
-                              max="1"
-                              step="0.02"
-                              value={themeTransparency}
-                              onChange={(event) => setThemeTransparency(Number(event.target.value))}
-                            />
-                          </label>
-                          <label>
-                            {t.blur}
-                            <input
-                              type="range"
-                              min="0"
-                              max="28"
-                              step="1"
-                              value={themeBlur}
-                              onChange={(event) => setThemeBlur(Number(event.target.value))}
-                            />
-                          </label>
                           <label>
                             {t.sidebarTransparency}
                             <input

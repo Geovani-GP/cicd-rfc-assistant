@@ -926,7 +926,7 @@ label small {
 .theme-custom.custom-tone-dark {
   --oracle-charcoal: #f3f4f6;
   --oracle-ink: #f3f4f6;
-  --oracle-panel: rgba(13, 19, 29, var(--custom-panel-alpha, 0.9));
+  --oracle-panel: rgba(var(--custom-panel-rgb, 13, 19, 29), var(--custom-panel-alpha, 0.9));
   --oracle-soft: rgba(255, 255, 255, 0.08);
   --oracle-line: rgba(255, 255, 255, 0.16);
   color: #f3f4f6;
@@ -973,8 +973,10 @@ label small {
 .theme-custom.custom-tone-dark .artifact-inspector,
 .theme-custom.custom-tone-dark .about-panel {
   border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(13, 19, 29, var(--custom-panel-alpha, 0.9));
+  background: rgba(var(--custom-panel-rgb, 13, 19, 29), var(--custom-panel-alpha, 0.9));
   box-shadow: 0 18px 55px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(var(--custom-blur, 18px)) saturate(1.08);
+  backdrop-filter: blur(var(--custom-blur, 18px)) saturate(1.08);
 }
 
 .theme-custom.custom-tone-dark input,
@@ -997,7 +999,7 @@ label small {
 .theme-custom.custom-tone-dark .mini-check {
   border-color: rgba(255, 255, 255, 0.14);
   color: #f3f4f6;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--custom-panel-color, #0d131d) 72%, rgba(255, 255, 255, 0.14));
 }
 
 .theme-custom.custom-tone-dark input::placeholder,
@@ -4115,6 +4117,130 @@ textarea:focus {
 }
 
 .segmented button.active {
+  color: #ffffff;
+  background: var(--oracle-red);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .pipeline-action-plan {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) textarea {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) textarea::placeholder {
+  color: rgba(245, 247, 250, 0.52);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .segmented {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .segmented button {
+  color: #f5f7fa;
+  background: transparent;
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) .segmented button.active {
+  color: #ffffff;
+  background: var(--oracle-red);
+}
+
+:is(.theme-frosted, .theme-midnight, .theme-dracula, .theme-cobalt, .theme-nord, .theme-graphite, .theme-ocean, .theme-nordDark, .theme-solarizedDark, .theme-halloween, .theme-cyberpunk, .theme-nightowl) button:disabled {
+  color: rgba(245, 247, 250, 0.45);
+}
+
+.theme-tone-dark .pipeline-action-plan {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.theme-custom.custom-tone-dark .pipeline-action-plan {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: rgba(var(--custom-panel-rgb, 13, 19, 29), var(--custom-panel-alpha, 0.9));
+  -webkit-backdrop-filter: blur(var(--custom-blur, 18px)) saturate(1.08);
+  backdrop-filter: blur(var(--custom-blur, 18px)) saturate(1.08);
+}
+
+.theme-tone-dark textarea {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.theme-custom.custom-tone-dark textarea {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f7fa;
+  background: color-mix(in srgb, var(--custom-panel-color, #0d131d) 72%, rgba(255, 255, 255, 0.14));
+}
+
+.theme-tone-dark textarea::placeholder,
+.theme-custom.custom-tone-dark textarea::placeholder {
+  color: rgba(245, 247, 250, 0.52);
+}
+
+.theme-tone-dark .segmented {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.theme-custom.custom-tone-dark .segmented {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: color-mix(in srgb, var(--custom-panel-color, #0d131d) 68%, rgba(255, 255, 255, 0.12));
+}
+
+.theme-tone-dark .segmented button,
+.theme-custom.custom-tone-dark .segmented button {
+  color: #f5f7fa;
+  background: transparent;
+}
+
+.theme-tone-dark .segmented button.active,
+.theme-custom.custom-tone-dark .segmented button.active {
+  color: #ffffff;
+  background: var(--oracle-red);
+}
+
+.theme-tone-dark button:disabled,
+.theme-custom.custom-tone-dark button:disabled {
+  color: rgba(245, 247, 250, 0.45);
+}
+
+.theme-solarized .pipeline-action-plan {
+  border-color: #d8d2bd;
+  color: #073642;
+  background: rgba(238, 232, 213, 0.86);
+}
+
+.theme-solarized textarea {
+  border-color: #d8d2bd;
+  color: #073642;
+  background: rgba(253, 246, 227, 0.92);
+}
+
+.theme-solarized textarea::placeholder {
+  color: rgba(7, 54, 66, 0.48);
+}
+
+.theme-solarized .segmented {
+  border-color: #d8d2bd;
+  background: rgba(253, 246, 227, 0.9);
+}
+
+.theme-solarized .segmented button {
+  color: #586e75;
+  background: transparent;
+}
+
+.theme-solarized .segmented button.active {
   color: #ffffff;
   background: var(--oracle-red);
 }
