@@ -42,6 +42,37 @@ type ZipEntry = {
   localHeaderOffset: number;
 };
 
+type InspectedProject = {
+  code?: string;
+  name?: string;
+  version?: string;
+  type?: string;
+  state?: string;
+};
+
+type InspectedComponent = {
+  kind: "connection" | "schedule" | "dvm";
+  name: string;
+  path: string;
+};
+
+type InternalArtifactInspection = {
+  path: string;
+  name: string;
+  kind: "iar" | "par" | "unsupported" | "error";
+  projects: InspectedProject[];
+  components: InspectedComponent[];
+  entries: string[];
+  error?: string;
+};
+
+type ZipInspectionResult = {
+  projects: InspectedProject[];
+  components: InspectedComponent[];
+  entries: string[];
+  internalArtifacts: InternalArtifactInspection[];
+};
+
 type DraftPayload = {
   repoPath: string;
   baseBranch?: string;
@@ -748,23 +779,74 @@ function baseNameWithoutExtension(pathName: string) {
   return basename(pathName).replace(/\.[^.]+$/, "");
 }
 
-function inspectPackageComponents(entries: ZipEntry[]) {
+function inspectPackageComponents(entries: ZipEntry[]): InspectedComponent[] {
   const visible = entries.map((entry) => entry.name).filter((name) => !name.endsWith("/"));
-  return visible
-    .map((entryPath) => {
-      if (entryPath.startsWith("icspackage/appinstances/")) {
-        return { kind: "connection" as const, name: baseNameWithoutExtension(entryPath), path: entryPath };
-      }
-      if (entryPath.startsWith("icspackage/schedule/")) {
-        return { kind: "schedule" as const, name: baseNameWithoutExtension(entryPath), path: entryPath };
-      }
-      if (entryPath.startsWith("icspackage/dvms/")) {
-        return { kind: "dvm" as const, name: baseNameWithoutExtension(entryPath), path: entryPath };
-      }
-      return null;
-    })
-    .filter(Boolean)
-    .slice(0, 80);
+  const components: InspectedComponent[] = [];
+  for (const entryPath of visible) {
+    if (entryPath.startsWith("icspackage/appinstances/")) {
+      components.push({ kind: "connection", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    } else if (entryPath.startsWith("icspackage/schedule/")) {
+      components.push({ kind: "schedule", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    } else if (entryPath.startsWith("icspackage/dvms/")) {
+      components.push({ kind: "dvm", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    }
+    if (components.length >= 80) break;
+  }
+  return components;
+}
+
+function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "par"): ZipInspectionResult {
+  const entries = listZipEntries(buffer);
+  const projectEntries = entries.filter((entry) => entry.name.endsWith("ics_project_attributes.properties"));
+  const visibleEntries = entries
+    .map((entry) => entry.name)
+    .filter((name) => !name.endsWith("/"))
+    .slice(0, 120);
+  const projects = projectEntries.map((entry) => {
+    const props = parseProperties(readZipEntry(buffer, entry).toString("utf8"));
+    return {
+      code: props.project_code,
+      name: props.project_name,
+      version: props.project_version,
+      type: props.project_type,
+      state: props.project_persisted_state
+    };
+  });
+  const internalArtifacts: InternalArtifactInspection[] = kind === "par"
+    ? entries
+        .filter((entry) => /\.iar$/i.test(entry.name))
+        .slice(0, 80)
+        .map((entry) => {
+          try {
+            const nestedBuffer = readZipEntry(buffer, entry);
+            const nested = inspectZipBuffer(nestedBuffer, basename(entry.name), "iar");
+            return {
+              path: entry.name,
+              name: basename(entry.name),
+              kind: "iar" as const,
+              projects: nested.projects,
+              components: nested.components,
+              entries: nested.entries
+            };
+          } catch (error) {
+            return {
+              path: entry.name,
+              name: basename(entry.name),
+              kind: "error" as const,
+              projects: [],
+              components: [],
+              entries: [],
+              error: (error as Error).message
+            };
+          }
+        })
+    : [];
+  return {
+    projects,
+    components: inspectPackageComponents(entries),
+    entries: visibleEntries,
+    internalArtifacts
+  };
 }
 
 async function inspectArtifact(filePath: string) {
@@ -781,29 +863,15 @@ async function inspectArtifact(filePath: string) {
   }
   try {
     const buffer = await readFile(filePath);
-    const entries = listZipEntries(buffer);
-    const projectEntries = entries.filter((entry) => entry.name.endsWith("ics_project_attributes.properties"));
-    const visibleEntries = entries
-      .map((entry) => entry.name)
-      .filter((name) => !name.endsWith("/"))
-      .slice(0, 120);
-    const projects = projectEntries.map((entry) => {
-      const props = parseProperties(readZipEntry(buffer, entry).toString("utf8"));
-      return {
-        code: props.project_code,
-        name: props.project_name,
-        version: props.project_version,
-        type: props.project_type,
-        state: props.project_persisted_state
-      };
-    });
+    const inspected = inspectZipBuffer(buffer, basename(filePath), ext === ".par" ? "par" : "iar");
     return {
       filePath,
       fileName: basename(filePath),
       kind: ext.slice(1),
-      projects,
-      components: inspectPackageComponents(entries),
-      entries: visibleEntries
+      projects: inspected.projects,
+      components: inspected.components,
+      entries: inspected.entries,
+      internalArtifacts: inspected.internalArtifacts
     };
   } catch (error) {
     const err = error as Error;

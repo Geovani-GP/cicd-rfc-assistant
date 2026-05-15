@@ -65,6 +65,25 @@ export type ArtifactInspection = {
     path: string;
   }>;
   entries: string[];
+  internalArtifacts?: Array<{
+    path: string;
+    name: string;
+    kind: "iar" | "par" | "unsupported" | "error";
+    projects: Array<{
+      code?: string;
+      name?: string;
+      version?: string;
+      type?: string;
+      state?: string;
+    }>;
+    components: Array<{
+      kind: "connection" | "schedule" | "dvm";
+      name: string;
+      path: string;
+    }>;
+    entries: string[];
+    error?: string;
+  }>;
   error?: string;
 };
 

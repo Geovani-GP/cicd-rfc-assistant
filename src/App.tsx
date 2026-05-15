@@ -34,6 +34,33 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { CSSProperties } from "react";
+import {
+  artifactLinesFromText,
+  extractArtifactNames,
+  installableArtifactNames
+} from "./action-plan/parsing/artifacts";
+import {
+  actionPlanLinesFromIm090,
+  availableEnvironmentMessage,
+  availableEnvironmentsFromDocument,
+  environmentSectionFromDocument,
+  filterEnvironmentSection,
+  hasNumberedInstructionSteps,
+  looseSectionByHeadings,
+  normalizeEnvironmentName,
+  operationalIm090Text,
+  sectionByAnyHeading,
+  selectedEnvironmentMissingFromDocument
+} from "./action-plan/parsing/common";
+import { formatManualPhaseForActionPlan } from "./action-plan/parsing/format";
+import {
+  buildManualPhasesForProduct,
+  configurationItemsForProduct,
+  isDatabaseManualPlan,
+  isMftManualPlan,
+  manualPlanMetadataForProduct
+} from "./action-plan/parsing/products";
+import type { ManualActionPhase } from "./action-plan/parsing/types";
 import type {
   ActionSourceDocument,
   ArtifactInspection,
@@ -83,6 +110,8 @@ const avatarOptions = ["general-dev", "cloud-dev", "release-lead", "pipeline-run
 const historyPageSize = 10;
 const executionDraftStorageKey = "rfcExecutionDraft";
 const pendingWorkStorageKey = "pendingWorkSnapshots";
+const actionMethodStorageKey = "actionPlanMethod";
+const executionModeStorageKey = "rfcExecutionMode";
 const maxActionDocumentTextLength = 120000;
 
 function createClientId(prefix: string) {
@@ -113,6 +142,14 @@ function readUiAnimationMotion(): UiAnimationMotion {
   return value === "horizontal" || value === "vertical" || value === "zoom" ? value : "drift";
 }
 
+function readActionMethod(): ActionMethod {
+  return localStorage.getItem(actionMethodStorageKey) === "manual" ? "manual" : "cicd";
+}
+
+function readExecutionMode(): ExecutionMode {
+  return localStorage.getItem(executionModeStorageKey) === "cicd" ? "cicd" : "general";
+}
+
 function readExecutionDraft(): ExecutionDraft | null {
   try {
     return JSON.parse(localStorage.getItem(executionDraftStorageKey) || "null");
@@ -133,6 +170,7 @@ function readPendingWorkSnapshots(): PendingWorkSnapshot[] {
 type StepId = "actionPlan" | "package" | "review" | "pipeline";
 type PipelinePhase = "TEST" | "PROD";
 type ExecutionMode = "general" | "cicd";
+type ActionMethod = "cicd" | "manual";
 type Lang = "es" | "en" | "pt";
 type EvidenceItem = EvidenceImage & {
   id: string;
@@ -201,13 +239,14 @@ type PendingWorkSnapshot = {
     repoPath: string;
     rfc: string;
     actionProduct: string;
-    actionMethod: "cicd" | "manual";
+    actionMethod: ActionMethod;
     actionEnvironment: string;
     actionInstance: string;
     actionActivity: string;
     artifactText: string;
     actionPlan: string;
     manualInstructions: string;
+    manualSourceText?: string;
     manualPhases: ManualActionPhase[];
     riceFolderPath: string;
     mode: "ADHOC" | "FULL";
@@ -228,11 +267,6 @@ type PendingWorkSnapshot = {
     pipelineStepIndex: number;
     pipelineStepComments: Record<string, string>;
   };
-};
-type ManualActionPhase = {
-  id: "prerequisites" | "backup" | "installation" | "schedule" | "validation" | "returnPoint" | "evidence";
-  title: string;
-  content: string;
 };
 type PipelineExecutionStep = {
   title: string;
@@ -1309,6 +1343,21 @@ const actionCopy = {
     activity: "Actividad / resumen RFC",
     artifacts: "Artefactos",
     artifactsHint: "Un artefacto por linea. Ejemplo: GB_AR_HCR_LKP.csv, package.par o integration.iar",
+    inspectArtifacts: "Inspeccionar artefactos",
+    artifactInspectorTitle: "Inspector de artefactos RFC",
+    artifactInspectorBody: "Carga los artefactos adjuntos al RFC para comparar el contenido real contra el IM090.",
+    artifactCompare: "Comparacion IM090 vs artefactos",
+    artifactDetails: "Contenido detectado",
+    artifactDocument: "Documento",
+    artifactLoaded: "Artefacto",
+    artifactVersion: "Version",
+    artifactStatus: "Estado",
+    artifactExtra: "Contenido interno",
+    artifactMissing: "No existe",
+    artifactExists: "Existe",
+    artifactPending: "Pendiente",
+    noActionArtifacts: "No hay artefactos cargados para validar.",
+    noArtifactComparison: "Carga el IM090 o captura artefactos para comparar.",
     sourceDocument: "Documento IM090 / instrucciones",
     loadDocument: "Cargar documento",
     processingDocument: "Procesando archivo...",
@@ -1340,6 +1389,21 @@ const actionCopy = {
     activity: "Activity / RFC summary",
     artifacts: "Artifacts",
     artifactsHint: "One artifact per line. Example: GB_AR_HCR_LKP.csv, package.par, or integration.iar",
+    inspectArtifacts: "Inspect artifacts",
+    artifactInspectorTitle: "RFC artifacts inspector",
+    artifactInspectorBody: "Load the RFC attached artifacts to compare real content against the IM090.",
+    artifactCompare: "IM090 vs artifacts comparison",
+    artifactDetails: "Detected content",
+    artifactDocument: "Document",
+    artifactLoaded: "Artifact",
+    artifactVersion: "Version",
+    artifactStatus: "Status",
+    artifactExtra: "Internal content",
+    artifactMissing: "Missing",
+    artifactExists: "Exists",
+    artifactPending: "Pending",
+    noActionArtifacts: "No artifacts loaded for validation.",
+    noArtifactComparison: "Load the IM090 or capture artifacts to compare.",
     sourceDocument: "IM090 / instructions document",
     loadDocument: "Load document",
     processingDocument: "Processing file...",
@@ -1371,6 +1435,21 @@ const actionCopy = {
     activity: "Atividade / resumo RFC",
     artifacts: "Artefatos",
     artifactsHint: "Um artefato por linha. Exemplo: GB_AR_HCR_LKP.csv, package.par ou integration.iar",
+    inspectArtifacts: "Inspecionar artefatos",
+    artifactInspectorTitle: "Inspetor de artefatos RFC",
+    artifactInspectorBody: "Carregue os artefatos anexos ao RFC para comparar o conteudo real com o IM090.",
+    artifactCompare: "Comparacao IM090 vs artefatos",
+    artifactDetails: "Conteudo detectado",
+    artifactDocument: "Documento",
+    artifactLoaded: "Artefato",
+    artifactVersion: "Versao",
+    artifactStatus: "Status",
+    artifactExtra: "Conteudo interno",
+    artifactMissing: "Nao existe",
+    artifactExists: "Existe",
+    artifactPending: "Pendente",
+    noActionArtifacts: "Nao ha artefatos carregados para validar.",
+    noArtifactComparison: "Carregue o IM090 ou capture artefatos para comparar.",
     sourceDocument: "Documento IM090 / instrucoes",
     loadDocument: "Carregar documento",
     processingDocument: "Processando arquivo...",
@@ -1586,799 +1665,6 @@ async function buildBrowserActionDocument(file: File): Promise<ActionSourceDocum
   };
 }
 
-function cleanIm090Text(text: string) {
-  return text
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => {
-      if (!line) return false;
-      if (/^File Ref:/i.test(line)) return false;
-      if (/^Doc Ref:/i.test(line)) return false;
-      if (/^IM\.090 Installation Instructions$/i.test(line)) return false;
-      if (/^Installation Instructions for Grupo Bimbo \d+ of \d+$/i.test(line)) return false;
-      if (/^Document Control\s+/i.test(line)) return false;
-      if (/^Confidential - Oracle Restricted/i.test(line)) return false;
-      if (/^Open and Closed Issues\. \d+ of \d+$/i.test(line)) return false;
-      if (/^\d+$/.test(line)) return false;
-      if (/^\d+[\w.-]*\.(?:docx|pdf)$/i.test(line)) return false;
-      if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
-      if (/^[A-Za-z]+ \d{1,2}, \d{4}$/i.test(line)) return false;
-      return true;
-    })
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function operationalIm090Text(text: string) {
-  const cleaned = cleanIm090Text(text);
-  const marker = cleaned.match(/2\s+Installation Instructions for Grupo Bimbo\s*\n2\.1\s+Environment Information/i);
-  if (marker?.index !== undefined) return cleaned.slice(marker.index).trim();
-  const looseMarker =
-    looseIndexOf(cleaned, "2 Installation Instructions for Grupo Bimbo 2.1 Environment Information") ??
-    looseIndexOf(cleaned, "Environment Information Environment Name");
-  return looseMarker !== null ? cleaned.slice(looseMarker).trim() : cleaned;
-}
-
-function actionPlanLinesFromIm090(text: string) {
-  const cleaned = cleanIm090Text(text);
-  const lines = cleaned.split("\n").filter(Boolean);
-  const start = lines.findIndex((line) => /^2\s+Installation Instructions for Grupo Bimbo\b/i.test(line) && !line.includes("..."));
-  return start >= 0 ? lines.slice(start) : lines;
-}
-
-function findHeadingLine(lines: string[], pattern: RegExp, from = 0) {
-  return lines.findIndex((line, index) => index >= from && pattern.test(line) && !line.includes("..."));
-}
-
-function findNextMajorHeading(lines: string[], from: number) {
-  const majorHeading =
-    /^(?:\d+(?:\.\d+)*\s+)?(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\b/i;
-  const index = lines.findIndex((line, lineIndex) => lineIndex > from && (
-    majorHeading.test(line) && !line.includes("...")
-  ));
-  return index >= 0 ? index : lines.length;
-}
-
-function normalizeManualSection(lines: string[]) {
-  return lines
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line && !line.includes("................................................................"))
-    .filter((line, index, list) => list.indexOf(line) === index)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function sectionByHeading(lines: string[], pattern: RegExp, from = 0) {
-  const start = findHeadingLine(lines, pattern, from);
-  if (start < 0) return "";
-  return normalizeManualSection(lines.slice(start, findNextMajorHeading(lines, start)));
-}
-
-function sectionByAnyHeading(lines: string[], patterns: RegExp[], from = 0) {
-  const starts = patterns
-    .map((pattern) => findHeadingLine(lines, pattern, from))
-    .filter((index) => index >= 0);
-  if (!starts.length) return "";
-  const start = Math.min(...starts);
-  return normalizeManualSection(lines.slice(start, findNextMajorHeading(lines, start)));
-}
-
-function looseIndexOf(text: string, phrase: string, from = 0) {
-  const normalized: string[] = [];
-  const map: number[] = [];
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (/\s/.test(char)) continue;
-    normalized.push(char.toLowerCase());
-    map.push(index);
-  }
-  const normalizedFrom = Math.max(0, map.findIndex((index) => index >= from));
-  const needle = phrase.replace(/\s+/g, "").toLowerCase();
-  const found = normalized.join("").indexOf(needle, normalizedFrom < 0 ? 0 : normalizedFrom);
-  return found >= 0 ? map[found] : null;
-}
-
-function looseSectionByHeadings(text: string, starts: string[], ends: string[]) {
-  const startIndexes = starts
-    .map((heading) => looseIndexOf(text, heading))
-    .filter((index): index is number => index !== null);
-  if (!startIndexes.length) return "";
-  const start = Math.min(...startIndexes);
-  const endIndexes = ends
-    .map((heading) => looseIndexOf(text, heading, start + 1))
-    .filter((index): index is number => index !== null && index > start);
-  const end = endIndexes.length ? Math.min(...endIndexes) : text.length;
-  return normalizeManualSection(text.slice(start, end).split("\n"));
-}
-
-function cleanArtifactCandidate(value: string) {
-  return value
-    .replace(/^["“”]+|["“”.,;:]+$/g, "")
-    .replace(/\s+(integration|artifact|component|lookup|package|project)$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isLikelyArtifactName(value: string) {
-  const clean = cleanArtifactCandidate(value);
-  if (!clean || /^https?:\/\//i.test(clean)) return false;
-  if (/\.(?:iar|par|xml|csv)\b/i.test(clean)) return true;
-  if (/^[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}$/i.test(clean)) return true;
-  if (clean.length < 10) return false;
-  if (/^(stop schedule|start schedule|confirm|release|test|prod|development|regression|pre-prod|home|schedule)$/i.test(clean)) {
-    return false;
-  }
-  const words = clean.split(/\s+/);
-  const hasTechnicalWord = words.some((word) => /^[A-Z0-9]{2,}$/.test(word) || /[A-Z][a-z]+[A-Z]/.test(word));
-  return words.length >= 3 && hasTechnicalWord;
-}
-
-function extractArtifactNames(text: string, options: { includeComponentNames?: boolean } = {}) {
-  const normalMatches = text.match(/[A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
-  const compactText = text.replace(/\s+/g, "");
-  const compactMatches = compactText.match(/(?:[A-Z0-9]+[_.-])+[A-Z0-9_.-]+\.(?:iar|par|xml|csv)\b/gi) ?? [];
-  const fileArtifacts = [...normalMatches, ...compactMatches]
-    .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
-    .filter(Boolean);
-  if (!options.includeComponentNames || fileArtifacts.length) {
-    return Array.from(new Map(fileArtifacts.map((artifact) => [artifact.toLowerCase(), artifact])).values());
-  }
-  const technicalMatches = text.match(/\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b/g) ?? [];
-  const quotedMatches = quotedValues(text).filter(isLikelyArtifactName);
-  const contextualMatches = Array.from(
-    text.matchAll(/\b(?:integration|artifact|component|lookup|package|project)\b[^A-Z0-9\n]{0,24}["“]?([A-Z0-9][A-Z0-9_ .-]{5,90})["”]?/gi)
-  )
-    .map((match) => match[1])
-    .filter(isLikelyArtifactName);
-  const artifacts = [...fileArtifacts, ...technicalMatches, ...quotedMatches, ...contextualMatches]
-    .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, " "))
-    .filter(Boolean);
-  const byKey = new Map<string, string>();
-  for (const artifact of artifacts) byKey.set(artifact.toLowerCase(), artifact);
-  return Array.from(byKey.values());
-}
-
-function asBullets(items: string[]) {
-  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- Confirm artifacts listed in the IM090.";
-}
-
-function environmentAliases(environment: string) {
-  const value = normalizeEnvironmentName(environment);
-  if (!value) return [];
-  if (value === "DEV" || value === "DEVELOPMENT") return ["DEV", "DEVELOPMENT"];
-  if (value === "TEST" || value === "REGRESSION") return ["TEST", "REGRESSION", "PREPROD", "TE"];
-  if (value === "PREPROD" || value === "TE") return ["PREPROD", "TE"];
-  if (value === "PROD" || value === "PRODUCTION" || value === "PR") return ["PROD", "PRODUCTION", "PR"];
-  return [value];
-}
-
-function normalizeEnvironmentName(value: string) {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function environmentNameFromLine(line: string) {
-  const match = line.match(/^Environment Name:\s*(.+?)(?:\s+IC Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/i);
-  return match?.[1]?.trim() ?? "";
-}
-
-function environmentBlocks(section: string) {
-  const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
-  const heading = lines[0] && /^2\.\d+\s+Environment Information/i.test(lines[0]) ? lines[0] : "2.1 Environment Information";
-  const body = lines[0] === heading ? lines.slice(1) : lines;
-  const environmentIndexes = body
-    .map((line, index) => (/^Environment Name:/i.test(line) ? index : -1))
-    .filter((index) => index >= 0);
-  const blocks = environmentIndexes.map((start, index) => {
-    const end = index + 1 < environmentIndexes.length ? environmentIndexes[index + 1] : body.length;
-    return body.slice(start, end);
-  });
-  return { heading, blocks };
-}
-
-function availableEnvironmentsFromDocument(text: string) {
-  const section = environmentSectionFromDocument(text);
-  const { blocks } = environmentBlocks(section);
-  const names = blocks
-    .map((block) => environmentNameFromLine(block[0] ?? ""))
-    .map((name) => name.trim())
-    .filter(Boolean);
-  return Array.from(new Map(names.map((name) => [normalizeEnvironmentName(name), name])).values());
-}
-
-function availableEnvironmentMessage(environment: string, available: string[]) {
-  const suffix = available.length ? ` Ambientes disponibles: ${available.join(", ")}.` : "";
-  return `El ambiente ${environment} no se encontro en el IM090.${suffix}`;
-}
-
-function findEnvironmentBlock(section: string, environment: string) {
-  const aliases = environmentAliases(environment);
-  const { heading, blocks } = environmentBlocks(section);
-  if (!section || !aliases.length || !blocks.length) return { heading, block: null, hasBlocks: blocks.length > 0 };
-  const selected = blocks.find((block) => aliases.includes(normalizeEnvironmentName(environmentNameFromLine(block[0] ?? ""))));
-  return { heading, block: selected ?? null, hasBlocks: true };
-}
-
-function filterEnvironmentSection(section: string, environment: string) {
-  const result = findEnvironmentBlock(section, environment);
-  if (!section || !environmentAliases(environment).length || !result.hasBlocks) return section;
-  return result.block ? [result.heading, ...result.block].join("\n") : section;
-}
-
-function environmentIsMissingInDocument(section: string, environment: string) {
-  if (!section || !environmentAliases(environment).length) return false;
-  const result = findEnvironmentBlock(section, environment);
-  return result.hasBlocks && !result.block;
-}
-
-function environmentSectionFromDocument(text: string) {
-  const operational = operationalIm090Text(text);
-  const lines = actionPlanLinesFromIm090(text);
-  return sectionByAnyHeading(lines, [/^2\.\d+\s+Environment Information\b/i, /^Environment Information\b/i], 0) ||
-    looseSectionByHeadings(operational, ["2.1 Environment Information", "Environment Information"], [
-      "Installation artifacts",
-      "Pre installation steps",
-      "Installation Steps"
-    ]);
-}
-
-function selectedEnvironmentMissingFromDocument(text: string, environment: string) {
-  return environmentIsMissingInDocument(environmentSectionFromDocument(text), environment);
-}
-
-function normalizeManualBullets(content: string) {
-  return content
-    .split("\n")
-    .map((line) => {
-      if (/^\s*o\s*$/i.test(line)) return "";
-      return line.replace(/^([ \t]*)[•]\s+/, "$1- ").replace(/^([ \t]*)o\s+/, "$1- ");
-    })
-    .join("\n");
-}
-
-function envLabelsFromLine(line: string) {
-  const match = line.match(/^\s*[-•o]?\s*((?:Dev|Development|Regression|Test|Prod|Production|Pre[- ]?Prod|TE|PR)(?:\s*,\s*(?:Dev|Development|Regression|Test|Prod|Production|Pre[- ]?Prod|TE|PR))*)\s*:/i);
-  if (!match) return [];
-  return match[1].split(/\s*,\s*/).map(normalizeEnvironmentName).filter(Boolean);
-}
-
-function filterEnvironmentSpecificLines(content: string, selectedEnvironment: string) {
-  const aliases = environmentAliases(selectedEnvironment);
-  if (!aliases.length) return content;
-  return content
-    .split("\n")
-    .filter((line) => {
-      const labels = envLabelsFromLine(line);
-      return !labels.length || labels.some((label) => aliases.includes(label));
-    })
-    .join("\n");
-}
-
-function prepareManualPhaseContent(content: string, selectedEnvironment: string) {
-  return normalizeManualSection(filterEnvironmentSpecificLines(normalizeManualBullets(content), selectedEnvironment).split("\n"));
-}
-
-function hasNumberedInstructionSteps(text: string) {
-  return /^\s*\d+\s*[.)-]\s+\S/m.test(text);
-}
-
-function hasSqlInstructions(text: string) {
-  return /\b(?:CREATE|ALTER|DROP|TRUNCATE|DELETE|UPDATE|PURGE|GRANT|REVOKE)\s+\w+\b/i.test(text) || /^\s*SQL>/im.test(text);
-}
-
-function databaseObjectNames(text: string) {
-  const matches = Array.from(
-    text.matchAll(/\b(?:CREATE|ALTER|DROP|TRUNCATE)\s+(?:PROFILE|USER|TABLE|VIEW|INDEX|SEQUENCE|ROLE|SYNONYM)\s+([A-Z0-9_$#.-]+)/gi)
-  ).map((match) => match[1]);
-  return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
-}
-
-function classifyDatabaseOperation(text: string) {
-  const normalized = text.toUpperCase();
-  const isPassword = /\bALTER\s+USER\b[\s\S]*\bIDENTIFIED\s+BY\b|\bPASSWORD\b/.test(normalized);
-  const isPurge = /\b(?:DELETE\s+FROM|TRUNCATE\s+TABLE|DROP\s+TABLE|PURGE)\b/.test(normalized);
-  const isDml = /\b(?:UPDATE|DELETE\s+FROM|INSERT\s+INTO|MERGE\s+INTO)\b/.test(normalized);
-  const isCreate = /\bCREATE\s+(?:PROFILE|USER|TABLE|VIEW|INDEX|SEQUENCE|ROLE|SYNONYM)\b/.test(normalized);
-  const restoreMentioned = /\b(?:RESTORE\s+POINT|FLASHBACK|EXPDP|BACKUP|SNAPSHOT|ROLLBACK)\b/.test(normalized);
-
-  if (isPassword) return { kind: "password", restoreMentioned };
-  if (isPurge) return { kind: "purge", restoreMentioned };
-  if (isDml) return { kind: "dml", restoreMentioned };
-  if (isCreate) return { kind: "create", restoreMentioned };
-  return { kind: "general", restoreMentioned };
-}
-
-function databaseBackupGuidance(kind: string, restoreMentioned: boolean) {
-  if (kind === "password") {
-    return [
-      "Do not capture or store previous/new passwords in the Action Plan or evidence.",
-      "Capture current user status from DBA_USERS before the change.",
-      "Confirm the approved credential reset/rotation procedure and secure communication channel."
-    ];
-  }
-  if (kind === "purge" || kind === "dml") {
-    return [
-      "Confirm restore point, export, snapshot, table backup, or approved DBA backup before execution.",
-      "Capture backup/restore evidence before running the SQL.",
-      "Capture pre-change row counts or validation queries for affected data.",
-      restoreMentioned ? "Restore/backup instruction was detected in the source text." : "Do not proceed until backup or restore point evidence is available."
-    ];
-  }
-  if (kind === "create") {
-    return [
-      "Capture current database object/profile configuration before applying changes.",
-      "If the object does not exist, document that no backup applies.",
-      "Prepare rollback statement only if it is approved for this RFC."
-    ];
-  }
-  return [
-    "Capture current database configuration before applying changes.",
-    "Confirm backup, restore point, or rollback procedure with the DBA team when the change can affect data or access."
-  ];
-}
-
-function databaseValidationGuidance(kind: string, objects: string[]) {
-  const objectValidations = objects.length
-    ? objects.map((objectName) => `- Validate ${objectName} exists and matches the requested configuration.`)
-    : ["- Validate the requested database objects exist and match the requested configuration."];
-  if (kind === "password") {
-    return [
-      "Validate the user account status, lock/expiry state, and required connectivity without exposing credentials.",
-      "- Query DBA_USERS or the approved account validation view.",
-      "- Confirm the application/customer can authenticate through the approved secure channel."
-    ].join("\n");
-  }
-  if (kind === "purge" || kind === "dml") {
-    return [
-      "Run post-change validation queries and compare against the pre-change evidence.",
-      "- Capture affected row counts.",
-      "- Validate business/application impact with the request owner."
-    ].join("\n");
-  }
-  return ["Run validation queries and capture the result.", ...objectValidations].join("\n");
-}
-
-function databaseReturnPointGuidance(kind: string, restoreMentioned: boolean) {
-  if (kind === "password") {
-    return "If authentication fails, follow the approved credential reset/rollback procedure. Do not expose credentials in logs or evidence.";
-  }
-  if (kind === "purge" || kind === "dml") {
-    return restoreMentioned
-      ? "Use the documented restore point/backup procedure if validation fails. Stop execution and escalate to DBA before retrying."
-      : "If validation fails, stop the change and use the approved backup/restore plan. Do not continue without DBA approval.";
-  }
-  if (kind === "create") {
-    return "If execution fails, stop the change, capture the error, and consult the DBA/technical team. Run rollback/drop statements only if approved.";
-  }
-  return "If execution fails, stop the change, capture the error, and consult the DBA/technical team before retrying.";
-}
-
-function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
-  const sql = prepareManualPhaseContent(text, selectedEnvironment);
-  const objects = databaseObjectNames(text);
-  const operation = classifyDatabaseOperation(text);
-  const backupGuidance = databaseBackupGuidance(operation.kind, operation.restoreMentioned);
-  const validationGuidance = databaseValidationGuidance(operation.kind, objects);
-
-  return [
-    {
-      id: "prerequisites",
-      title: "Prerequisites",
-      content: [
-        "Confirm target database environment, server, access, and approved maintenance window.",
-        "Confirm the execution user has privileges to run the requested SQL.",
-        objects.length ? `Database object(s):\n${asBullets(objects)}` : ""
-      ].filter(Boolean).join("\n\n")
-    },
-    {
-      id: "backup",
-      title: "Backup",
-      content: backupGuidance.join("\n")
-    },
-    {
-      id: "installation",
-      title: "Installation Steps",
-      content: [
-        "1. Login into the target database server as the approved database/oracle user.",
-        "2. Open SQL*Plus or the approved SQL execution tool.",
-        "3. Execute the SQL below:",
-        sql,
-        "4. Capture the execution output."
-      ].join("\n\n")
-    },
-    {
-      id: "schedule",
-      title: "Schedule Activation",
-      content: "Not applicable for this database change unless the RFC explicitly requests job/scheduler activation."
-    },
-    {
-      id: "validation",
-      title: "Validation",
-      content: validationGuidance
-    },
-    {
-      id: "returnPoint",
-      title: "Return Point / Contingency",
-      content: databaseReturnPointGuidance(operation.kind, operation.restoreMentioned)
-    },
-    {
-      id: "evidence",
-      title: "Evidence",
-      content: [
-        "Attach SQL execution output.",
-        "Attach validation query result.",
-        "Share final result with the customer."
-      ].join("\n")
-    }
-  ];
-}
-
-function hasMftInstructions(text: string) {
-  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts)\b/i.test(text);
-}
-
-function cleanMftCandidate(value: string) {
-  return cleanArtifactCandidate(value)
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
-    .replace(/^\d+\.\s*/, "")
-    .trim();
-}
-
-function isLikelyMftTargetName(value: string) {
-  return /^[A-Z0-9][A-Z0-9_]{5,}$/i.test(value);
-}
-
-function isLikelyMftTransferRuleName(value: string) {
-  return /^[A-Z0-9_]{8,}$/.test(value) && /_/.test(value);
-}
-
-function cleanMftActionName(value: string) {
-  return cleanMftCandidate(value).replace(/^\d+\.\s*/, "").trim();
-}
-
-function mftConfigurationItems(text: string) {
-  const items: string[] = [];
-  const transferMatches = [
-    ...text.matchAll(/\btransfer rule(?: named| name)?[:\s"]+([A-Z0-9_ -]{6,})/gi),
-    ...text.matchAll(/\btransfer name:\s*([A-Z0-9_ -]{6,})/gi),
-    ...text.matchAll(/\bPROCESS\s+(?:TO\s+\w+\s+THE\s+)?TRANSFER RULE\s*\(([A-Z0-9_ -]{6,})\)/gi)
-  ];
-  for (const match of transferMatches) {
-    const value = cleanMftCandidate(match[1]);
-    if (isLikelyMftTransferRuleName(value)) items.push(`Transfer Rule: ${value}`);
-  }
-
-  for (const match of text.matchAll(/\bdestination\s+["“]?([^"\n”]+)["”]?/gi)) {
-    const value = cleanMftCandidate(match[1]);
-    if (isLikelyMftTargetName(value)) items.push(`Target: ${value}`);
-  }
-
-  for (const match of text.matchAll(/\b(?:Preprocessing Actions?|Selected Actions?)\b[\s\S]{0,120}?["“]?([A-Z0-9][A-Z0-9_ .-]*(?:Decryption|Encryption|Compression|Validation|Action))[\"”]?/gi)) {
-    const value = cleanMftActionName(match[1]);
-    if (/^(?:PGP\s+)?(?:Decryption|Encryption|Compression|Validation|Action)\b/i.test(value) || /\b(?:Decryption|Encryption|Compression|Validation)\b/i.test(value)) {
-      items.push(`Processing Action: ${value}`);
-    }
-  }
-
-  for (const value of quotedValues(text)) {
-    const cleanValue = cleanMftCandidate(value);
-    if (/PGP|Decryption|Encryption/i.test(cleanValue)) items.push(`Processing Action: ${cleanMftActionName(cleanValue)}`);
-    if (isLikelyMftTransferRuleName(cleanValue)) items.push(`Transfer Rule: ${cleanValue}`);
-  }
-
-  return Array.from(new Map(items.map((item) => [item.toLowerCase().replace(/^processing action:\s*\d+\.\s*/i, "processing action: "), item.replace(/^Processing Action:\s*\d+\.\s*/i, "Processing Action: ")])).values());
-}
-
-function mftTransferRules(text: string) {
-  return mftConfigurationItems(text)
-    .filter((item) => item.startsWith("Transfer Rule: "))
-    .map((item) => item.replace(/^Transfer Rule:\s*/, ""));
-}
-
-function mftTargets(text: string) {
-  return mftConfigurationItems(text)
-    .filter((item) => item.startsWith("Target: "))
-    .map((item) => item.replace(/^Target:\s*/, ""));
-}
-
-function mftActions(text: string) {
-  return mftConfigurationItems(text)
-    .filter((item) => item.startsWith("Processing Action: "))
-    .map((item) => item.replace(/^Processing Action:\s*/, ""));
-}
-
-function mftConsoleUrl(text: string) {
-  return text.match(/https?:\/\/\S*?mftconsole\b/i)?.[0].replace(/[).,;]+$/g, "") ?? "";
-}
-
-function buildMftImplementationSteps(text: string) {
-  const items = mftConfigurationItems(text);
-  const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
-  const targets = mftTargets(text);
-  const actions = mftActions(text);
-  const action = actions[0] ?? "<Processing action>";
-  const url = mftConsoleUrl(text) || "<MFT console URL>";
-  const targetSteps = targets.length
-    ? targets.map((target, index) => {
-      const stepNumber = 4 + index;
-      return `${stepNumber}. Remove ${action} preprocessing action from target:\n   - ${target}\n\n   Steps:\n   ${stepNumber}.1. In Transfer Definition, locate target:\n         ${target}\n   ${stepNumber}.2. Open Preprocessing Actions.\n   ${stepNumber}.3. Select:\n         1. ${action}\n   ${stepNumber}.4. In Selected Actions, delete:\n         ${action}\n   ${stepNumber}.5. Click OK to confirm the change.`;
-    }).join("\n\n")
-    : `4. Remove or update the affected preprocessing action.\n\n   Steps:\n   4.1. In Transfer Definition, locate the affected target.\n   4.2. Open Preprocessing Actions.\n   4.3. Select the affected processing action.\n   4.4. Apply the approved configuration change.\n   4.5. Click OK to confirm the change.`;
-  const finalStep = targets.length ? 4 + targets.length : 5;
-
-  return [
-    "Implementation steps are based on customer-provided instructions and will be executed as documented.",
-    "",
-    "1. Access the MFT Console:",
-    url,
-    "",
-    "2. Undeploy the transfer rule:",
-    `   - ${transferRule}`,
-    "",
-    "   Steps:",
-    "   2.1. Navigate to Monitoring.",
-    "   2.2. Open Deployments from the left-hand menu.",
-    "   2.3. In Display, select Transfers Only.",
-    "   2.4. Locate transfer rule:",
-    `         ${transferRule}`,
-    "   2.5. Select the transfer rule.",
-    "   2.6. Click Undeployment.",
-    "   2.7. Confirm the undeployment request by clicking Yes.",
-    "   2.8. Wait for completion confirmation and click OK.",
-    "",
-    "3. Update transfer rule:",
-    `   - ${transferRule}`,
-    "",
-    "   Steps:",
-    "   3.1. Navigate to Design.",
-    "   3.2. Click Search Artifacts.",
-    "   3.3. In Search, select Transfers.",
-    "   3.4. Search for:",
-    `         ${transferRule}`,
-    "   3.5. Open the transfer rule from the search results.",
-    "",
-    targetSteps,
-    "",
-    `${finalStep}. Save and deploy the updated transfer rule.`,
-    "",
-    "   Steps:",
-    `   ${finalStep}.1. Click Save.`,
-    `   ${finalStep}.2. Click Deploy.`,
-    `   ${finalStep}.3. In the Deploy Transfer window, click Deploy to complete deployment.`
-  ].join("\n");
-}
-
-function buildMftConfigurationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
-  const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
-  const targets = mftTargets(text);
-  const actions = mftActions(text);
-  const action = actions[0] ?? "<Processing action>";
-  const targetLines = targets.length ? asBullets(targets) : "- Confirm affected MFT targets.";
-  const actionLines = actions.length ? asBullets(actions) : "- Confirm affected processing actions.";
-  return [
-    {
-      id: "prerequisites",
-      title: "Prerequisites",
-      content: [
-        "1. Validate access to the target MFT console before starting the change.",
-        `2. Validate the target transfer rule exists:\n- ${transferRule}`,
-        `3. Validate the affected targets and processing action exist in the transfer definition:\n${targetLines}\n${actionLines}`,
-        "4. Confirm the approved change window and validate the transfer rule can be undeployed and deployed during execution."
-      ].join("\n\n")
-    },
-    {
-      id: "backup",
-      title: "Backup",
-      content: [
-        "Before implementing the change, capture evidence of the current configuration.",
-        "",
-        "Capture:",
-        "- Current deployment status of the transfer rule",
-        "- Current transfer rule configuration",
-        "- Current source and target configuration details",
-        "- Current preprocessing actions for affected targets",
-        `- Current ${action} configuration prior to removal`,
-        "",
-        "If MFT export/versioning functionality is available, export or save the current transfer rule configuration before execution."
-      ].join("\n")
-    },
-    {
-      id: "installation",
-      title: "Implementation Steps",
-      content: buildMftImplementationSteps(text)
-    },
-    {
-      id: "schedule",
-      title: "Schedule Activation",
-      content: `Not applicable unless a separate activation schedule is required by the RFC.\n\nConfirm the transfer rule:\n- ${transferRule}\n\nis successfully deployed after the update.`
-    },
-    {
-      id: "validation",
-      title: "Validation",
-      content: [
-        "Validate the transfer rule and configuration after deployment.",
-        "",
-        "1. Navigate to:\n   Monitoring > Deployments",
-        "2. Select:\n   Transfers Only",
-        `3. Confirm transfer rule:\n   ${transferRule}\n\n   is successfully deployed.`,
-        "4. Navigate to:\n   Design > Search Artifacts",
-        `5. Open transfer rule:\n   ${transferRule}`,
-        targets.map((target, index) => `${6 + index}. Validate target:\n   - ${target}\n\n   no longer contains the ${action} preprocessing action.`).join("\n\n"),
-        `${6 + targets.length}. Capture evidence of:\n   - Final deployment status\n   - Final transfer configuration\n   - Updated preprocessing actions`
-      ].join("\n")
-    },
-    {
-      id: "returnPoint",
-      title: "Return Point / Contingency",
-      content: [
-        "If the update or deployment fails, stop execution and capture all error details before proceeding.",
-        "",
-        "Rollback Procedure:",
-        "",
-        `1. Undeploy the modified transfer rule:\n   - ${transferRule}`,
-        "2. Open the transfer rule from:\n   Design > Search Artifacts",
-        targets.length
-          ? `3. Restore the ${action} preprocessing action for:\n${targetLines}`
-          : "3. Restore the affected processing action/configuration using backup evidence.",
-        "4. Save the transfer rule.",
-        "5. Deploy the transfer rule.",
-        "6. Validate the original preprocessing configuration has been restored successfully.",
-        "7. Capture rollback evidence and deployment confirmation.",
-        "",
-        "If deployment or rollback issues persist:\n- Escalate to the MFT technical support team before retrying execution."
-      ].join("\n")
-    },
-    {
-      id: "evidence",
-      title: "Evidence",
-      content: [
-        "Attach evidence for:",
-        "- MFT login/environment",
-        "- Initial deployment status",
-        "- Backup/current configuration before change",
-        "- Undeployment confirmation",
-        "- Configuration update evidence",
-        targets.length ? `- Removal of ${action} from:\n${targets.map((target) => `  - ${target}`).join("\n")}` : `- ${action} update evidence`,
-        "- Save confirmation",
-        "- Deploy confirmation",
-        "- Final deployment status",
-        "- Final preprocessing action validation",
-        "- Rollback execution evidence (if applicable)",
-        "",
-        "Share final execution results with the RFC requester/customer."
-      ].join("\n")
-    }
-  ];
-}
-
-function manualPlanMetadata(productName: string, environmentName: string, instanceName: string, instructions: string) {
-  if (productName !== "MFT" || !hasMftInstructions(instructions)) return "";
-  const transferRule = mftTransferRules(instructions)[0] ?? "<Transfer rule>";
-  const targets = mftTargets(instructions);
-  const actions = mftActions(instructions);
-  const action = actions[0] ?? "<Processing action>";
-  const url = mftConsoleUrl(instructions);
-  const isProd = /PROD|PR/i.test(environmentName);
-  return [
-    "Environment:",
-    `- MFT Instance: ${instanceName}`,
-    url ? `- URL: ${url}` : "",
-    "",
-    "Estimated Duration:",
-    "15-20 minutes",
-    "",
-    "Impact:",
-    "Temporary interruption of transfer processing for:",
-    `- ${transferRule}`,
-    "",
-    `during undeployment/deployment activities in the ${environmentName} environment.`,
-    "",
-    "Scope:",
-    `- ${environmentName} environment only`,
-    isProd ? "- Production impact must be confirmed with the RFC approver" : "- No production impact expected",
-    "",
-    "Expected Outcome:",
-    `${transferRule} deployed successfully with the requested configuration updates.`,
-    "",
-    targets.length ? `Affected Targets:\n${asBullets(targets)}` : "",
-    "",
-    "Configuration Change:",
-    `- Removal of the ${action} preprocessing action from the affected targets`
-  ].filter(Boolean).join("\n");
-}
-
-function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
-  const operational = operationalIm090Text(text);
-  const lines = actionPlanLinesFromIm090(text);
-  const startAt = 0;
-  const artifactSection = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation artifacts\b/i, /^Installation artifacts\b/i], startAt);
-  const artifactContent = artifactSection || looseSectionByHeadings(operational, ["Installation artifacts"], [
-    "Pre installation steps",
-    "Installation Steps"
-  ]);
-  const artifacts = extractArtifactNames(artifactContent).length
-    ? extractArtifactNames(artifactContent)
-    : extractArtifactNames(artifactContent || operational, { includeComponentNames: true });
-  const preInstall = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Pre installation steps\b/i, /^Pre installation steps\b/i], startAt);
-  const installation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation Steps\b/i, /^Installation Steps\b/i], startAt);
-  const schedule = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Schedule activation\b/i, /^Schedule activation\b/i], startAt);
-  const validation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Verification Checklist\b/i, /^Verification Checklist\b/i], startAt);
-  const returnPoint = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Return Point\b/i, /^Return Point\b/i], startAt);
-  const environmentContentRaw = environmentSectionFromDocument(text);
-  const environmentContent = filterEnvironmentSection(environmentContentRaw, selectedEnvironment);
-  const preInstallContent = preInstall || looseSectionByHeadings(operational, ["Pre installation steps"], ["Installation Steps"]);
-  const installationContent = installation || looseSectionByHeadings(operational, ["Installation Steps"], [
-    "Schedule activation",
-    "Verification Checklist",
-    "Return Point"
-  ]);
-  const directInstructionContent = !installationContent && hasNumberedInstructionSteps(operational) ? operational : "";
-  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation"], [
-    "Verification Checklist",
-    "Return Point"
-  ]);
-  const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
-  const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
-  const prepareContent = (content: string) => prepareManualPhaseContent(content, selectedEnvironment);
-
-  return [
-    {
-      id: "prerequisites",
-      title: "Prerequisites",
-      content: prepareContent([
-        "Validate target environment, access, and artifacts before starting the manual installation.",
-        environmentContent,
-        artifactContent,
-        "Artifacts detected:",
-        asBullets(artifacts),
-        preInstallContent
-      ].filter(Boolean).join("\n\n"))
-    },
-    {
-      id: "backup",
-      title: "Backup",
-      content: prepareContent([
-        "Before installing, validate whether each component already exists in the target environment.",
-        "If it exists, export or download the current version as backup.",
-        "Attach backup files or backup evidence to the RFC.",
-        "If backup is not applicable, document the reason in the RFC evidence."
-      ].join("\n"))
-    },
-    {
-      id: "installation",
-      title: "Installation Steps",
-      content: prepareContent(directInstructionContent || installationContent || "Execute the manual installation steps described in the IM090.")
-    },
-    {
-      id: "schedule",
-      title: "Schedule Activation",
-      content: prepareContent(scheduleContent || "Validate whether schedule activation applies. If applicable, start schedules and capture evidence.")
-    },
-    {
-      id: "validation",
-      title: "Validation",
-      content: prepareContent(validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors.")
-    },
-    {
-      id: "returnPoint",
-      title: "Return Point / Contingency",
-      content: prepareContent(returnPointContent || "If the installation or validation fails, review configuration and consult the technical team.")
-    },
-    {
-      id: "evidence",
-      title: "Evidence",
-      content: prepareContent([
-        "Capture evidence for each relevant installation step.",
-        "Attach the IM090 PDF to the RFC.",
-        "Attach backup evidence to the RFC.",
-        "Attach final validation evidence and share the execution result."
-      ].join("\n"))
-    }
-  ];
-}
-
 function regionFromRepo(name: string) {
   const match = name.match(/BIMBO-(R\d)-REPOSITORY/i);
   return match?.[1] ?? "R?";
@@ -2589,6 +1875,7 @@ export function App() {
   const actionDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const executionPlanInputRef = useRef<HTMLInputElement | null>(null);
   const backgroundImageInputRef = useRef<HTMLInputElement | null>(null);
+  const manualPhaseTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const executionDraftRef = useRef<ExecutionDraft | null>(readExecutionDraft());
   const initialExecutionDraft = executionDraftRef.current;
   const [activeStep, setActiveStep] = useState<StepId>("actionPlan");
@@ -2656,7 +1943,7 @@ export function App() {
   const [repoPath, setRepoPath] = useState("");
   const [rfc, setRfc] = useState(initialExecutionDraft?.rfc ?? "");
   const [actionProduct, setActionProduct] = useState("");
-  const [actionMethod, setActionMethod] = useState<"cicd" | "manual">("cicd");
+  const [actionMethod, setActionMethod] = useState<ActionMethod>(readActionMethod);
   const [actionEnvironment, setActionEnvironment] = useState("");
   const [availableDocumentEnvironments, setAvailableDocumentEnvironments] = useState<string[]>([]);
   const [actionInstance, setActionInstance] = useState("");
@@ -2664,6 +1951,7 @@ export function App() {
   const [artifactText, setArtifactText] = useState("");
   const [actionSourceDocument, setActionSourceDocument] = useState<ActionSourceDocument | null>(null);
   const [manualInstructions, setManualInstructions] = useState("");
+  const [manualSourceText, setManualSourceText] = useState("");
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
   const [manualPhaseIndex, setManualPhaseIndex] = useState(0);
   const [manualPhases, setManualPhases] = useState<ManualActionPhase[]>([]);
@@ -2674,6 +1962,11 @@ export function App() {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<string[]>([]);
   const [artifactInspections, setArtifactInspections] = useState<ArtifactInspection[]>([]);
+  const [actionArtifactModalOpen, setActionArtifactModalOpen] = useState(false);
+  const [actionArtifactFiles, setActionArtifactFiles] = useState<SelectedFile[]>([]);
+  const [isDraggingActionArtifacts, setIsDraggingActionArtifacts] = useState(false);
+  const [expandedActionArtifactFiles, setExpandedActionArtifactFiles] = useState<string[]>([]);
+  const [actionArtifactInspections, setActionArtifactInspections] = useState<ArtifactInspection[]>([]);
   const [summary, setSummary] = useState<DraftSummary | null>(null);
   const [finalOutput, setFinalOutput] = useState("");
   const [localCommitResult, setLocalCommitResult] = useState<FinalizeResult | null>(null);
@@ -2685,7 +1978,7 @@ export function App() {
   const [prodPipelineRun, setProdPipelineRun] = useState(initialExecutionDraft?.prodPipelineRun ?? "");
   const [testPipelineRunUrl, setTestPipelineRunUrl] = useState(initialExecutionDraft?.testPipelineRunUrl ?? "");
   const [prodPipelineRunUrl, setProdPipelineRunUrl] = useState(initialExecutionDraft?.prodPipelineRunUrl ?? "");
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>(initialExecutionDraft?.executionMode ?? "general");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(initialExecutionDraft?.executionMode ?? readExecutionMode());
   const [pipelineExecutionPhase, setPipelineExecutionPhase] = useState<PipelinePhase>(
     initialExecutionDraft?.pipelineExecutionPhase ?? "TEST"
   );
@@ -2853,7 +2146,7 @@ export function App() {
     (pipelineRunValue.trim()
       ? `${projectUrl}/cibuild/pipelines/${pipelineDisplayName}/runs/${pipelineRunValue.trim()}`
       : "");
-  const artifactCount = files.length || artifactText.split(/\r?\n/).filter((line) => line.trim()).length;
+  const artifactCount = files.length || artifactLinesFromText(artifactText).length;
   const currentPendingWorkSnapshot = useMemo<PendingWorkSnapshot | null>(() => {
     const currentRfc = rfc.trim();
     if (!currentRfc) return null;
@@ -2901,6 +2194,7 @@ export function App() {
         artifactText,
         actionPlan,
         manualInstructions,
+        manualSourceText,
         manualPhases,
         riceFolderPath,
         mode,
@@ -2922,7 +2216,7 @@ export function App() {
         pipelineStepComments
       }
     };
-  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, manualSourceText, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
   const pendingWorkItems = useMemo(() => pendingWorkSnapshots, [pendingWorkSnapshots]);
   const filteredPendingWorkItems = useMemo(() => {
     const query = pendingSearch.trim().toLowerCase();
@@ -3008,6 +2302,14 @@ export function App() {
     () => new Map(artifactInspections.map((inspection) => [inspection.filePath, inspection])),
     [artifactInspections]
   );
+  const actionInspectionByPath = useMemo(
+    () => new Map(actionArtifactInspections.map((inspection) => [inspection.filePath, inspection])),
+    [actionArtifactInspections]
+  );
+  const actionArtifactRows = useMemo(
+    () => actionArtifactComparisonRows(),
+    [actionSourceDocument, artifactText, manualInstructions, manualSourceText, actionArtifactFiles, actionArtifactInspections]
+  );
   const activeStepLog = evidenceLog.filter(
     (entry) => entry.step === activeStep && matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId)
   );
@@ -3028,6 +2330,251 @@ export function App() {
     if (kind === "connection") return "Conexion";
     if (kind === "schedule") return "Scheduler";
     return "DVM";
+  }
+
+  function artifactInspectionStatus(file: SelectedFile, inspection?: ArtifactInspection) {
+    if (!isInspectableArtifact(file)) return { state: "exists", label: "Existe" };
+    if (!inspection) return { state: "pending", label: "Pendiente" };
+    if (inspection.kind === "error") return { state: "missing", label: "No existe" };
+    const hasDetectedContent = inspection.projects.length > 0 || inspection.components.length > 0 || inspection.entries.length > 0 || Boolean(inspection.internalArtifacts?.length);
+    return hasDetectedContent ? { state: "exists", label: "Existe" } : { state: "missing", label: "No detectado" };
+  }
+
+  function actionArtifactInspectionStatus(file: SelectedFile, inspection?: ArtifactInspection) {
+    const status = artifactInspectionStatus(file, inspection);
+    const labelMap = {
+      exists: a.artifactExists,
+      missing: status.label === "No detectado" ? "No detectado" : a.artifactMissing,
+      pending: a.artifactPending
+    };
+    return { ...status, label: labelMap[status.state as keyof typeof labelMap] };
+  }
+
+  function normalizeArtifactCompareKey(value: string) {
+    return normalizeEnvironmentName(
+      value
+        .replace(/\.(?:iar|par|xml|csv)$/i, "")
+        .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "")
+        .replace(/\bV(?:ERSION)?\d+$/i, "")
+    );
+  }
+
+  function artifactDisplayName(value: string) {
+    return value
+      .replace(/\.(?:iar|par|xml|csv)$/i, "")
+      .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "");
+  }
+
+  function artifactVersionFromName(value: string) {
+    const match = value.match(/_(\d{2}[._]\d{2}[._]\d{4})(?:\.(?:iar|par|xml|csv))?$/i);
+    return match?.[1]?.replace(/_/g, ".") ?? undefined;
+  }
+
+  function manualDetectionSourceText() {
+    return actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
+  }
+
+  function actionDocumentArtifactNames() {
+    const entered = artifactLinesFromText(artifactText);
+    const sourceText = manualDetectionSourceText();
+    const enteredInstallable = installableArtifactNames(artifactText);
+    const installableArtifacts = installableArtifactNames(sourceText);
+    const detected = entered.length
+      ? enteredInstallable.length
+        ? enteredInstallable
+        : !installableArtifacts.length
+          ? entered
+          : installableArtifacts
+      : installableArtifacts.length
+        ? installableArtifacts
+        : extractArtifactNames(sourceText, { includeComponentNames: true });
+    return Array.from(new Map(detected.map((item) => [normalizeArtifactCompareKey(item), item])).values());
+  }
+
+  function actionLoadedArtifactItems() {
+    const items: Array<{ name: string; version?: string; source: string }> = [];
+    for (const file of actionArtifactFiles) {
+      items.push({ name: artifactDisplayName(file.name), version: artifactVersionFromName(file.name), source: file.name });
+    }
+    for (const inspection of actionArtifactInspections) {
+      for (const project of inspection.projects) {
+        if (project.code) items.push({ name: project.code, version: project.version, source: inspection.fileName });
+        if (project.name) items.push({ name: project.name, version: project.version, source: inspection.fileName });
+      }
+      for (const internalArtifact of inspection.internalArtifacts ?? []) {
+        items.push({ name: artifactDisplayName(internalArtifact.name), version: artifactVersionFromName(internalArtifact.name), source: inspection.fileName });
+        for (const project of internalArtifact.projects) {
+          if (project.code) items.push({ name: project.code, version: project.version, source: internalArtifact.name });
+          if (project.name) items.push({ name: project.name, version: project.version, source: internalArtifact.name });
+        }
+        for (const component of internalArtifact.components) {
+          items.push({ name: component.name, source: internalArtifact.name });
+        }
+      }
+      for (const component of inspection.components) {
+        items.push({ name: component.name, source: inspection.fileName });
+      }
+    }
+    return Array.from(new Map(items.map((item) => [`${normalizeArtifactCompareKey(item.name)}-${item.source}`, item])).values());
+  }
+
+  function actionArtifactComparisonRows() {
+    const documentItems = actionDocumentArtifactNames();
+    const loadedItems = actionLoadedArtifactItems();
+    const matchedKeys = new Set<string>();
+    const rows = documentItems.map((documentName) => {
+      const documentKey = normalizeArtifactCompareKey(documentName);
+      const match = loadedItems.find((item) => {
+        const loadedKey = normalizeArtifactCompareKey(item.name);
+        const isMatch = artifactKeysMatch(documentKey, loadedKey);
+        if (isMatch) matchedKeys.add(`${loadedKey}-${item.source}`);
+        return isMatch;
+      });
+      return {
+        documentName,
+        artifactName: match?.name ?? "-",
+        version: match?.version ?? "-",
+        status: match ? "exists" : "missing"
+      };
+    });
+    for (const item of loadedItems) {
+      const key = `${normalizeArtifactCompareKey(item.name)}-${item.source}`;
+      if (!matchedKeys.has(key)) {
+        rows.push({
+          documentName: "-",
+          artifactName: item.name,
+          version: item.version ?? "-",
+          status: "extra"
+        });
+      }
+    }
+    return rows;
+  }
+
+  function artifactKeysMatch(documentKey: string, loadedKey: string) {
+    if (!documentKey || !loadedKey) return false;
+    if (loadedKey === documentKey) return true;
+    const shorter = documentKey.length <= loadedKey.length ? documentKey : loadedKey;
+    const longer = documentKey.length > loadedKey.length ? documentKey : loadedKey;
+    if (shorter.length < 14) return false;
+    const ratio = shorter.length / longer.length;
+    return ratio >= 0.72 && longer.includes(shorter);
+  }
+
+  function actionArtifactValidationBlock() {
+    if (!actionArtifactFiles.length) return "";
+    const rows = actionArtifactComparisonRows();
+    const lines = rows.length
+      ? rows.map((row) => {
+          const status = row.status === "exists" ? "Exists" : row.status === "missing" ? "Missing artifact" : "Internal content";
+          const version = row.version && row.version !== "-" ? ` | Version: ${row.version}` : "";
+          return `- ${row.documentName !== "-" ? row.documentName : row.artifactName}: ${status}${version}`;
+        })
+      : ["- No document components were available to compare. Validate loaded artifacts manually."];
+    return ["Artifact validation:", ...lines].join("\n");
+  }
+
+  function renderInspectionProjects(projects: ArtifactInspection["projects"], keyPrefix: string) {
+    if (!projects.length) return null;
+    return (
+      <div className="project-list">
+        <div className="project-row project-header">
+          <span>Codigo</span>
+          <span>Integracion</span>
+          <span>Version / estado</span>
+        </div>
+        {projects.map((project, index) => (
+          <div className="project-row" key={`${keyPrefix}-project-${index}`}>
+            <span data-label="Codigo">{project.code ?? "N/A"}</span>
+            <strong data-label="Integracion">{project.name ?? "Unnamed"}</strong>
+            <small data-label="Version / estado">v{project.version ?? "N/A"} · {project.type ?? "N/A"} · {project.state ?? "N/A"}</small>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderInspectionComponents(components: ArtifactInspection["components"], keyPrefix: string) {
+    if (!components.length) return null;
+    return (
+      <div className="component-list">
+        <strong>Componentes incluidos</strong>
+        {components.map((component) => (
+          <div className="component-row" key={`${keyPrefix}-component-${component.path}`}>
+            <span>{componentBadge(component.kind)}</span>
+            <div>
+              <strong>{component.name}</strong>
+              <small>{component.path}</small>
+              <span className="artifact-status-badge exists inline">
+                <CheckCircle2 size={13} />
+                Existe
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderInspectionEntries(entries: string[], keyPrefix: string, limit = 40) {
+    if (!entries.length) return null;
+    return (
+      <div className="package-entry-list">
+        {entries.slice(0, limit).map((entry) => (
+          <span key={`${keyPrefix}-entry-${entry}`}>{entry}</span>
+        ))}
+        {entries.length > limit && <small>+{entries.length - limit} elementos adicionales</small>}
+      </div>
+    );
+  }
+
+  function renderInternalArtifacts(inspection: ArtifactInspection) {
+    if (!inspection.internalArtifacts?.length) return null;
+    return (
+      <div className="internal-artifact-list">
+        <strong>Artefactos internos</strong>
+        {inspection.internalArtifacts.map((artifact, index) => (
+          <details className="internal-artifact" key={`${inspection.filePath}-internal-${artifact.path}-${index}`}>
+            <summary>
+              <span className="badge">.{artifact.kind === "error" ? "iar" : artifact.kind}</span>
+              <strong>{artifact.name}</strong>
+              <span className={`artifact-status-badge ${artifact.kind === "error" ? "missing" : "exists"}`}>
+                {artifact.kind === "error" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+                {artifact.kind === "error" ? "No detectado" : "Existe"}
+              </span>
+            </summary>
+            {artifact.kind === "error" ? (
+              <p>{artifact.error}</p>
+            ) : (
+              <div className="internal-artifact-body">
+                {renderInspectionProjects(artifact.projects, `${inspection.filePath}-${artifact.path}`)}
+                {renderInspectionComponents(artifact.components, `${inspection.filePath}-${artifact.path}`)}
+                {!artifact.projects.length && !artifact.components.length && renderInspectionEntries(artifact.entries, `${inspection.filePath}-${artifact.path}`, 30)}
+              </div>
+            )}
+          </details>
+        ))}
+      </div>
+    );
+  }
+
+  function renderArtifactInspectionContent(inspection: ArtifactInspection | undefined, file: SelectedFile, entryLimit = 40) {
+    if (!inspection) return <div className="empty-inline">Inspeccionando o pendiente de leer este {fileBadge(file.kind)}.</div>;
+    if (inspection.kind === "error") return <p>{inspection.error}</p>;
+    const hasDetails =
+      inspection.projects.length ||
+      inspection.components.length ||
+      inspection.internalArtifacts?.length ||
+      inspection.entries.length;
+    if (!hasDetails) return <p>No se detecto contenido legible dentro del {fileBadge(file.kind)}.</p>;
+    return (
+      <>
+        {renderInternalArtifacts(inspection)}
+        {renderInspectionProjects(inspection.projects, inspection.filePath)}
+        {renderInspectionComponents(inspection.components, inspection.filePath)}
+        {!inspection.projects.length && !inspection.components.length && !inspection.internalArtifacts?.length && renderInspectionEntries(inspection.entries, inspection.filePath, entryLimit)}
+      </>
+    );
   }
 
   function stepTitle(step: StepId) {
@@ -3248,7 +2795,6 @@ export function App() {
     setRfc("");
     setRepoPath("");
     setActionProduct("");
-    setActionMethod("cicd");
     setActionEnvironment("");
     setAvailableDocumentEnvironments([]);
     setActionInstance("");
@@ -3256,9 +2802,14 @@ export function App() {
     setArtifactText("");
     setActionSourceDocument(null);
     setManualInstructions("");
+    setManualSourceText("");
     setManualPhases([]);
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
+    setActionArtifactModalOpen(false);
+    setActionArtifactFiles([]);
+    setActionArtifactInspections([]);
+    setExpandedActionArtifactFiles([]);
     setActionPlan("");
     setRiceFolderPath("");
     setMode("ADHOC");
@@ -3276,7 +2827,6 @@ export function App() {
     setProdPipelineRun("");
     setTestPipelineRunUrl("");
     setProdPipelineRunUrl("");
-    setExecutionMode("general");
     setPipelineExecutionPhase("TEST");
     setPipelineActionPlan("");
     setExecutionSteps([]);
@@ -3313,6 +2863,7 @@ export function App() {
       setArtifactText(draft.artifactText);
       setActionPlan(draft.actionPlan);
       setManualInstructions(draft.manualInstructions);
+      setManualSourceText(draft.manualSourceText ?? draft.manualInstructions);
       setManualPhases(draft.manualPhases);
       setManualPhaseIndex(0);
       setRiceFolderPath(draft.riceFolderPath);
@@ -3457,7 +3008,6 @@ export function App() {
     setProdPipelineRun("");
     setTestPipelineRunUrl("");
     setProdPipelineRunUrl("");
-    setExecutionMode("general");
     setPipelineExecutionPhase("TEST");
     setPipelineActionPlan("");
     setExecutionSteps([]);
@@ -3674,6 +3224,33 @@ export function App() {
     }
   }
 
+  async function selectActionArtifacts() {
+    if (!desktopApi) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const result = await desktopApi.selectFiles(["iar", "par", "csv", "xml"]);
+    if (!result.length) return;
+    const allowed = result.filter((file) => isAllowedArtifact(file.path));
+    if (allowed.length !== result.length) setMessage(t.messages.invalidFiles);
+    addActionArtifactFiles(allowed);
+  }
+
+  function addActionArtifactFiles(allowed: SelectedFile[]) {
+    if (!allowed.length) return;
+    setActionArtifactFiles((current) => {
+      const byPath = new Map(current.map((file) => [file.path, file]));
+      for (const file of allowed) byPath.set(file.path, file);
+      return Array.from(byPath.values());
+    });
+    const inspectablePaths = allowed.filter(isInspectableArtifact).map((file) => file.path);
+    if (inspectablePaths.length) {
+      setExpandedActionArtifactFiles((current) => Array.from(new Set([...current, ...inspectablePaths])));
+      inspectActionArtifacts(inspectablePaths).catch(() => undefined);
+    }
+    addLog(`Artefactos de Action Plan agregados: ${allowed.map((file) => file.name).join(", ")}`, "actionPlan");
+  }
+
   async function selectActionDocument() {
     if (!actionEnvironment.trim()) {
       setMessage("Selecciona el ambiente antes de cargar o revisar el IM090.");
@@ -3710,11 +3287,11 @@ export function App() {
     }
   }
 
-  function applyManualEnvironment(environment: string, text = manualInstructions) {
+  function applyManualEnvironment(environment: string, text = manualDetectionSourceText()) {
     if (!text.trim()) return;
     const available = availableEnvironmentsFromDocument(text);
     setAvailableDocumentEnvironments(available);
-    const phases = buildManualPhasesForProduct(text, environment);
+    const phases = buildManualPhasesForProduct(actionProduct, text, environment);
     setManualPhases(phases);
     setManualPhaseIndex(0);
     if (selectedEnvironmentMissingFromDocument(text, environment)) {
@@ -3727,20 +3304,15 @@ export function App() {
     applyManualEnvironment(environment);
   }
 
-  function buildManualPhasesForProduct(text: string, environment: string) {
-    if (actionProduct === "MFT" && hasMftInstructions(text)) return buildMftConfigurationPlan(text, environment);
-    if (actionProduct === "Base de datos" && hasSqlInstructions(text)) return buildDatabaseSqlPlan(text, environment);
-    return buildManualPhasesFromDocument(text, environment);
-  }
-
   function prepareManualDocumentReview(document: ActionSourceDocument) {
     const text = document.text.trim();
     setActionSourceDocument(document);
     setManualInstructions(text);
+    setManualSourceText(text);
     if (text) {
       const available = availableEnvironmentsFromDocument(text);
       setAvailableDocumentEnvironments(available);
-      const phases = buildManualPhasesForProduct(text, actionEnvironment);
+      const phases = buildManualPhasesForProduct(actionProduct, text, actionEnvironment);
       setManualPhases(phases);
       setManualPhaseIndex(0);
       const operational = operationalIm090Text(text);
@@ -3748,12 +3320,14 @@ export function App() {
       const artifactSection =
         sectionByAnyHeading(lines, [/^2\.\d+\s+Installation artifacts\b/i, /^Installation artifacts\b/i]) ||
         looseSectionByHeadings(operational, ["Installation artifacts"], ["Pre installation steps", "Installation Steps"]);
-      const detectedArtifacts = extractArtifactNames(artifactSection).length
-        ? extractArtifactNames(artifactSection)
-        : actionProduct === "MFT" && hasMftInstructions(text)
-          ? mftConfigurationItems(text)
+      const artifactDetectionText = [artifactSection, operational].filter(Boolean).join("\n");
+      const installableArtifacts = installableArtifactNames(artifactDetectionText);
+      const detectedArtifacts = installableArtifacts.length
+        ? installableArtifacts
+        : isMftManualPlan(actionProduct, text)
+          ? configurationItemsForProduct(actionProduct, text)
           : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
-      if (detectedArtifacts.length && !artifactText.trim()) setArtifactText(detectedArtifacts.join("\n"));
+      if (detectedArtifacts.length) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
       if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
         setMessage(availableEnvironmentMessage(actionEnvironment, available));
@@ -3771,7 +3345,8 @@ export function App() {
   }
 
   function reviewManualPhases() {
-    if (!manualInstructions.trim()) {
+    const sourceText = manualDetectionSourceText();
+    if (!sourceText.trim()) {
       setManualReviewOpen(true);
       return;
     }
@@ -3779,63 +3354,75 @@ export function App() {
       setMessage("Selecciona el ambiente antes de revisar las fases del IM090.");
       return;
     }
-    const phases = buildManualPhasesForProduct(manualInstructions, actionEnvironment);
-    const available = availableEnvironmentsFromDocument(manualInstructions);
+    const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+    const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
-    if (selectedEnvironmentMissingFromDocument(manualInstructions, actionEnvironment)) {
+    if (selectedEnvironmentMissingFromDocument(sourceText, actionEnvironment)) {
       setMessage(availableEnvironmentMessage(actionEnvironment, available));
     }
   }
 
   function buildManualActionPlan(phases: ManualActionPhase[]) {
-    const enteredArtifacts = artifactText
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+    const sourceText = manualDetectionSourceText();
+    const enteredArtifacts = artifactLinesFromText(artifactText);
+    const enteredInstallableArtifacts = installableArtifactNames(artifactText);
+    const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
     const detectedArtifacts = enteredArtifacts.length
       ? []
-      : actionProduct === "MFT" && hasMftInstructions(manualInstructions)
-        ? mftConfigurationItems(manualInstructions)
-        : extractArtifactNames(manualInstructions, { includeComponentNames: true });
-    const artifacts = enteredArtifacts.length ? enteredArtifacts : detectedArtifacts;
-    const isMftPlan = actionProduct === "MFT" && hasMftInstructions(manualInstructions);
+      : isMftManualPlan(actionProduct, sourceText)
+        ? configurationItemsForProduct(actionProduct, sourceText)
+        : sourceInstallableArtifacts.length
+          ? sourceInstallableArtifacts
+          : extractArtifactNames(sourceText, { includeComponentNames: true });
+    const artifacts = enteredArtifacts.length
+      ? enteredInstallableArtifacts.length
+        ? enteredInstallableArtifacts
+        : sourceHasInstallableArtifacts
+          ? sourceInstallableArtifacts
+          : enteredArtifacts
+      : detectedArtifacts;
+    const isMftPlan = isMftManualPlan(actionProduct, sourceText);
     const itemLabel = isMftPlan ? "Configuration Item(s)" : "Artifact(s) / component(s)";
     const fallbackItem = actionProduct === "MFT" ? "- Confirm MFT configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
+    const validationBlock = actionArtifactValidationBlock();
     const productName = actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = actionEnvironment.trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const activityName = actionActivity.trim() || (isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
     const rfcNumber = rfc.trim();
     const sourceDocumentName = actionSourceDocument?.name ?? (
-      manualInstructions.trim()
+      sourceText.trim()
         ? isMftPlan
           ? `Customer-provided implementation instructions${rfcNumber ? ` for RFC ${rfcNumber}` : ""}`
           : "Pasted installation instructions"
         : "<IM090 / instructions document>"
     );
-    const metadata = manualPlanMetadata(productName, environmentName, instanceName, manualInstructions);
+    const metadata = manualPlanMetadataForProduct(productName, environmentName, instanceName, sourceText);
+    const normalizePhaseOutput = !isMftPlan && !isDatabaseManualPlan(actionProduct, sourceText);
     const phaseBlocks = phases.map((phase, index) => {
       const letter = String.fromCharCode(65 + index);
-      return `${letter}) ${phase.title}\n\n${phase.content.trim() || "<Add execution details>"}`;
+      const content = normalizePhaseOutput ? formatManualPhaseForActionPlan(phase) : phase.content.trim();
+      return `${letter}) ${phase.title}\n\n${content || "<Add execution details>"}`;
     }).join(isMftPlan ? "\n\n-----------------------------------------------------------------\n\n" : "\n\n");
 
     if (isMftPlan) {
-      return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
+      return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
     }
 
-    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
+    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
   }
 
   function acceptManualReview() {
+    const sourceText = manualDetectionSourceText();
     const reviewedPhases = manualPhases.length
       ? manualPhases
-      : buildManualPhasesForProduct(manualInstructions, actionEnvironment);
+      : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
     setManualPhases(reviewedPhases);
-    setManualInstructions(reviewedPhases.map((phase) => `${phase.title}\n${phase.content}`).join("\n\n"));
     setActionPlan(buildManualActionPlan(reviewedPhases));
     setManualReviewOpen(false);
     addLog("Action Plan manual generado desde fases revisadas", "actionPlan");
@@ -3878,11 +3465,49 @@ export function App() {
     }
   }
 
+  function addDroppedActionArtifacts(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingActionArtifacts(false);
+    if (!desktopApi) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const dropped = Array.from(event.dataTransfer.files)
+      .map((file) => {
+        const path =
+          desktopApi?.getPathForFile?.(file) ||
+          (file as File & { path?: string }).path ||
+          "";
+        if (!path) return null;
+        return { path, name: file.name, kind: classifyDroppedFile(path) };
+      })
+      .filter(Boolean) as SelectedFile[];
+    const allowed = dropped.filter((file) => isAllowedArtifact(file.path));
+    if (dropped.length !== allowed.length) setMessage(t.messages.invalidFiles);
+    if (!dropped.length) {
+      setMessage(t.messages.dropPath);
+      return;
+    }
+    addActionArtifactFiles(allowed);
+  }
+
   function removeFile(path: string) {
     setFiles((current) => current.filter((file) => file.path !== path));
     setArtifactInspections((current) => current.filter((inspection) => inspection.filePath !== path));
     setExpandedFiles((current) => current.filter((item) => item !== path));
     addLog(`Artefacto eliminado: ${path.split("/").pop() ?? path}`);
+  }
+
+  function removeActionArtifact(path: string) {
+    setActionArtifactFiles((current) => current.filter((file) => file.path !== path));
+    setActionArtifactInspections((current) => current.filter((inspection) => inspection.filePath !== path));
+    setExpandedActionArtifactFiles((current) => current.filter((item) => item !== path));
+  }
+
+  function clearActionArtifacts() {
+    setActionArtifactFiles([]);
+    setActionArtifactInspections([]);
+    setExpandedActionArtifactFiles([]);
   }
 
   function clearPackage() {
@@ -3899,13 +3524,13 @@ export function App() {
   function resetActionPlanFields() {
     setRfc("");
     setActionProduct("");
-    setActionMethod("cicd");
     setActionEnvironment("");
     setActionInstance("");
     setActionActivity("");
     setArtifactText("");
     setActionSourceDocument(null);
     setManualInstructions("");
+    setManualSourceText("");
     setManualPhases([]);
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
@@ -3930,7 +3555,6 @@ export function App() {
     setProdPipelineRun("");
     setTestPipelineRunUrl("");
     setProdPipelineRunUrl("");
-    setExecutionMode("general");
     setPipelineActionPlan("");
     setExecutionSteps([]);
     setExecutionStepsConfirmed(false);
@@ -3945,6 +3569,12 @@ export function App() {
 
   function toggleFileDetails(path: string) {
     setExpandedFiles((current) =>
+      current.includes(path) ? current.filter((item) => item !== path) : [...current, path]
+    );
+  }
+
+  function toggleActionArtifactDetails(path: string) {
+    setExpandedActionArtifactFiles((current) =>
       current.includes(path) ? current.filter((item) => item !== path) : [...current, path]
     );
   }
@@ -3966,6 +3596,17 @@ export function App() {
     if (!paths.length) return;
     const result = await runTask(() => desktopApi.inspectArtifacts(paths));
     setArtifactInspections((current) => {
+      const byPath = new Map(current.map((item) => [item.filePath, item]));
+      for (const item of result ?? []) byPath.set(item.filePath, item);
+      return Array.from(byPath.values());
+    });
+  }
+
+  async function inspectActionArtifacts(paths = actionArtifactFiles.filter(isInspectableArtifact).map((file) => file.path)) {
+    if (!desktopApi) return;
+    if (!paths.length) return;
+    const result = await runTask(() => desktopApi.inspectArtifacts(paths));
+    setActionArtifactInspections((current) => {
       const byPath = new Map(current.map((item) => [item.filePath, item]));
       for (const item of result ?? []) byPath.set(item.filePath, item);
       return Array.from(byPath.values());
@@ -4059,17 +3700,26 @@ export function App() {
   }
 
   function generateActionPlan() {
-    const enteredArtifacts = artifactText
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+    const sourceText = manualDetectionSourceText();
+    const enteredArtifacts = artifactLinesFromText(artifactText);
+    const enteredInstallableArtifacts = installableArtifactNames(artifactText);
+    const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
     const detectedManualArtifacts =
       actionMethod === "manual" && !enteredArtifacts.length
-        ? actionProduct === "MFT" && hasMftInstructions(manualInstructions)
-          ? mftConfigurationItems(manualInstructions)
-          : extractArtifactNames(manualInstructions, { includeComponentNames: true })
+        ? isMftManualPlan(actionProduct, sourceText)
+          ? configurationItemsForProduct(actionProduct, sourceText)
+          : sourceInstallableArtifacts.length
+            ? sourceInstallableArtifacts
+            : extractArtifactNames(sourceText, { includeComponentNames: true })
         : [];
-    const artifacts = enteredArtifacts.length ? enteredArtifacts : detectedManualArtifacts;
+    const artifacts = enteredArtifacts.length
+      ? enteredInstallableArtifacts.length
+        ? enteredInstallableArtifacts
+        : sourceHasInstallableArtifacts
+          ? sourceInstallableArtifacts
+          : enteredArtifacts
+      : detectedManualArtifacts;
     const repoName = selectedRepo?.name ?? "<Repository>";
     const branchName = rfc.trim() || "<RFC>";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <artifact>";
@@ -4081,11 +3731,11 @@ export function App() {
     const environmentName = actionEnvironment.trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const activityName = actionActivity.trim() || "Deploy artifacts";
-    const manualInstructionText = manualInstructions.trim() || "<Installation instructions>";
+    const manualInstructionText = manualInstructions.trim() || sourceText || "<Installation instructions>";
 
     if (actionMethod === "manual") {
-      if (!actionSourceDocument && manualInstructions.trim()) {
-        const phases = buildManualPhasesForProduct(manualInstructions, actionEnvironment);
+      if (!actionSourceDocument && sourceText.trim()) {
+        const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
         setManualPhases(phases);
         setActionPlan(buildManualActionPlan(phases));
         addLog("Action Plan manual generado desde texto pegado", "actionPlan");
@@ -4096,7 +3746,7 @@ export function App() {
         addLog("Action Plan manual generado", "actionPlan");
         return;
       }
-      const sourceDocumentName = actionSourceDocument?.name ?? (manualInstructions.trim() ? "Pasted installation instructions" : "<IM090 / instructions document>");
+      const sourceDocumentName = actionSourceDocument?.name ?? (sourceText.trim() ? "Pasted installation instructions" : "<IM090 / instructions document>");
       const itemLabel = actionProduct === "MFT" ? "Component(s) / configuration item(s)" : "Artifact(s) / component(s)";
       const manualPlan = `==========================================================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nMethod: Manual\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}\n\n1- Review installation instructions:\n1.1- Open the source document and validate the scope for RFC ${branchName}.\n1.2- Confirm the target environment and instance:\n- Environment: ${environmentName}\n- Instance: ${instanceName}\n1.3- Confirm the ${itemLabel.toLowerCase()} listed for this change:\n${artifactLines}\n\n2- Execute manual installation:\n${manualInstructionText}\n\n3- Post-deployment validation (${environmentName} - ${instanceName}):\n3.1- Validate the deployed artifact/component(s):\n${componentLines}\n3.2- Confirm the latest values/configuration are reflected.\n\n4- Share the evidence.\n\n==========================================================`;
 
@@ -4198,6 +3848,10 @@ export function App() {
       setPipelineStepIndex(Math.max(0, currentPipelineSteps.length - 1));
     }
   }, [currentPipelineSteps.length, pipelineStepIndex]);
+
+  useEffect(() => {
+    if (manualPhaseTextareaRef.current) manualPhaseTextareaRef.current.scrollTop = 0;
+  }, [manualPhaseIndex]);
 
   useEffect(() => {
     let activeElement: HTMLElement | null = null;
@@ -4305,6 +3959,14 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("basePath", basePath);
   }, [basePath]);
+
+  useEffect(() => {
+    localStorage.setItem(actionMethodStorageKey, actionMethod);
+  }, [actionMethod]);
+
+  useEffect(() => {
+    localStorage.setItem(executionModeStorageKey, executionMode);
+  }, [executionMode]);
 
   useEffect(() => {
     localStorage.setItem("executionHistory", JSON.stringify(executionHistory.slice(0, 50)));
@@ -4742,13 +4404,30 @@ export function App() {
             </div>
 
             <div className="action-plan-grid">
-              <label>
-                {a.method}
-                <select value={actionMethod} onChange={(event) => setActionMethod(event.target.value as "cicd" | "manual")}>
-                  <option value="cicd">{a.methodCicd}</option>
-                  <option value="manual">{a.methodManual}</option>
-                </select>
-              </label>
+              <div className="action-method-toggle">
+                <span>CI/CD Tool</span>
+                <div className="binary-toggle" role="group" aria-label="CI/CD Tool">
+                  <button
+                    type="button"
+                    className={actionMethod === "manual" ? "active" : ""}
+                    onClick={() => setActionMethod("manual")}
+                    aria-pressed={actionMethod === "manual"}
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    className={actionMethod === "cicd" ? "active" : ""}
+                    onClick={() => setActionMethod("cicd")}
+                    aria-pressed={actionMethod === "cicd"}
+                  >
+                    Yes
+                  </button>
+                </div>
+                <small>
+                  Modo: {actionMethod === "manual" ? a.methodManual : a.methodCicd}
+                </small>
+              </div>
               <label>
                 RFC
                 <input placeholder="4-B002S34" value={rfc} onChange={(event) => setRfc(event.target.value)} />
@@ -4859,7 +4538,11 @@ export function App() {
                 {a.manualInstructions}
                 <textarea
                   value={manualInstructions}
-                  onChange={(event) => setManualInstructions(event.target.value)}
+                  onChange={(event) => {
+                    setManualInstructions(event.target.value);
+                    setManualSourceText(event.target.value);
+                    setActionSourceDocument(null);
+                  }}
                   placeholder={a.manualInstructionsHint}
                 />
               </label>
@@ -4874,14 +4557,24 @@ export function App() {
               />
             )}
 
-            <label className="artifact-input">
-              {a.artifacts}
+            <div className="artifact-input">
+              <div className="artifact-input-head">
+                <span>{a.artifacts}</span>
+                <button type="button" className="secondary compact" onClick={() => setActionArtifactModalOpen(true)}>
+                  <UploadCloud size={15} />
+                  {a.inspectArtifacts}
+                </button>
+              </div>
               <textarea
                 value={artifactText}
                 onChange={(event) => setArtifactText(event.target.value)}
+                onBlur={() => {
+                  const cleanedArtifacts = artifactLinesFromText(artifactText);
+                  if (cleanedArtifacts.length) setArtifactText(cleanedArtifacts.join("\n"));
+                }}
                 placeholder={a.artifactsHint}
               />
-            </label>
+            </div>
 
             <div className="action-plan-output">
               <div className="output-head">
@@ -4963,6 +4656,7 @@ export function App() {
             <div className="file-list">
               {files.map((file) => {
                 const inspection = inspectionByPath.get(file.path);
+                const inspectionStatus = artifactInspectionStatus(file, inspection);
                 const isExpanded = expandedFiles.includes(file.path);
                 return (
                   <div className="file-card" key={file.path}>
@@ -4972,6 +4666,10 @@ export function App() {
                         <strong>{file.name}</strong>
                         <small>{file.path}</small>
                       </div>
+                      <span className={`artifact-status-badge ${inspectionStatus.state}`}>
+                        {inspectionStatus.state === "exists" ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                        {inspectionStatus.label}
+                      </span>
                       {isInspectableArtifact(file) && (
                         <button className="icon-button" onClick={() => toggleFileDetails(file.path)} title={`Ver contenido del ${fileBadge(file.kind)}`}>
                           {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -4992,51 +4690,7 @@ export function App() {
                           </button>
                         </div>
 
-                        {!inspection ? (
-                          <div className="empty-inline">Inspeccionando o pendiente de leer este {fileBadge(file.kind)}.</div>
-                        ) : inspection.kind === "error" ? (
-                          <p>{inspection.error}</p>
-                        ) : inspection.projects.length > 0 ? (
-                          <>
-                            <div className="project-list">
-                              <div className="project-row project-header">
-                                <span>Codigo</span>
-                                <span>Integracion</span>
-                                <span>Version / estado</span>
-                              </div>
-                              {inspection.projects.map((project, index) => (
-                                <div className="project-row" key={`${inspection.filePath}-${index}`}>
-                                  <span data-label="Codigo">{project.code ?? "N/A"}</span>
-                                  <strong data-label="Integracion">{project.name ?? "Unnamed"}</strong>
-                                  <small data-label="Version / estado">v{project.version ?? "N/A"} · {project.type ?? "N/A"} · {project.state ?? "N/A"}</small>
-                                </div>
-                              ))}
-                            </div>
-                            {inspection.components.length > 0 && (
-                              <div className="component-list">
-                                <strong>Componentes incluidos</strong>
-                                {inspection.components.map((component) => (
-                                  <div className="component-row" key={`${inspection.filePath}-${component.path}`}>
-                                    <span>{componentBadge(component.kind)}</span>
-                                    <div>
-                                      <strong>{component.name}</strong>
-                                      <small>{component.path}</small>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        ) : inspection.entries.length > 0 ? (
-                          <div className="package-entry-list">
-                            {inspection.entries.slice(0, 40).map((entry) => (
-                              <span key={`${inspection.filePath}-${entry}`}>{entry}</span>
-                            ))}
-                            {inspection.entries.length > 40 && <small>+{inspection.entries.length - 40} elementos adicionales</small>}
-                          </div>
-                        ) : (
-                          <p>No se detecto contenido legible dentro del {fileBadge(file.kind)}.</p>
-                        )}
+                        {renderArtifactInspectionContent(inspection, file)}
                       </div>
                     )}
                   </div>
@@ -5516,6 +5170,132 @@ export function App() {
         </div>
       </aside>
 
+      {actionArtifactModalOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setActionArtifactModalOpen(false)}>
+          <section className="workspace-modal action-artifact-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2>{a.artifactInspectorTitle}</h2>
+                <p>{a.artifactInspectorBody}</p>
+              </div>
+              <button className="icon-close" onClick={() => setActionArtifactModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div
+              className={`file-drop action-artifact-drop ${isDraggingActionArtifacts ? "dragging" : ""}`}
+              onClick={selectActionArtifacts}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+                setIsDraggingActionArtifacts(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDraggingActionArtifacts(false);
+              }}
+              onDrop={addDroppedActionArtifacts}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  selectActionArtifacts();
+                }
+              }}
+            >
+              <UploadCloud size={26} />
+              <strong>{a.inspectArtifacts}</strong>
+              <span>{t.pkg.dropBody}</span>
+            </div>
+
+            <div className="artifact-compare-section">
+              <div className="output-head compact">
+                <strong>{a.artifactCompare}</strong>
+                <div className="inline-actions compact-actions">
+                  <button className="secondary compact" disabled={!actionArtifactFiles.length} onClick={() => inspectActionArtifacts()}>
+                    <RefreshCw size={15} />
+                    {a.inspectArtifacts}
+                  </button>
+                  <button className="secondary compact" disabled={!actionArtifactFiles.length} onClick={clearActionArtifacts}>
+                    <Trash2 size={15} />
+                    {a.clear}
+                  </button>
+                </div>
+              </div>
+
+              {actionArtifactRows.length ? (
+                <div className="artifact-compare-table">
+                  <div className="artifact-compare-row artifact-compare-header">
+                    <span>{a.artifactDocument}</span>
+                    <span>{a.artifactLoaded}</span>
+                    <span>{a.artifactVersion}</span>
+                    <span>{a.artifactStatus}</span>
+                  </div>
+                  {actionArtifactRows.map((row, index) => {
+                    const statusLabel = row.status === "exists" ? a.artifactExists : row.status === "missing" ? a.artifactMissing : a.artifactExtra;
+                    const statusClass = row.status === "extra" ? "extra" : row.status;
+                    return (
+                      <div className="artifact-compare-row" key={`${row.documentName}-${row.artifactName}-${index}`}>
+                        <span data-label={a.artifactDocument}>{row.documentName}</span>
+                        <span data-label={a.artifactLoaded}>{row.artifactName}</span>
+                        <span data-label={a.artifactVersion}>{row.version}</span>
+                        <span data-label={a.artifactStatus} className={`artifact-status-badge ${statusClass}`}>
+                          {row.status === "exists" ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                          {statusLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="empty-inline">{actionArtifactFiles.length ? a.noArtifactComparison : a.noActionArtifacts}</p>
+              )}
+            </div>
+
+            <div className="artifact-compare-section">
+              <strong>{a.artifactDetails}</strong>
+              <div className="file-list action-artifact-list">
+                {actionArtifactFiles.map((file) => {
+                  const inspection = actionInspectionByPath.get(file.path);
+                  const inspectionStatus = actionArtifactInspectionStatus(file, inspection);
+                  const isExpanded = expandedActionArtifactFiles.includes(file.path);
+                  return (
+                    <div className="file-card" key={file.path}>
+                      <div className="file-row">
+                        <span className="badge">{fileBadge(file.kind)}</span>
+                        <div>
+                          <strong>{file.name}</strong>
+                          <small>{file.path}</small>
+                        </div>
+                        <span className={`artifact-status-badge ${inspectionStatus.state}`}>
+                          {inspectionStatus.state === "exists" ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                          {inspectionStatus.label}
+                        </span>
+                        {isInspectableArtifact(file) && (
+                          <button className="icon-button" onClick={() => toggleActionArtifactDetails(file.path)} title={`Ver contenido del ${fileBadge(file.kind)}`}>
+                            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          </button>
+                        )}
+                        <button className="icon-button" onClick={() => removeActionArtifact(file.path)} title="Quitar archivo">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      {isInspectableArtifact(file) && isExpanded && (
+                        <div className="file-details">
+                          {renderArtifactInspectionContent(inspection, file, 30)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
       {manualReviewOpen && manualPhases.length > 0 && (
         <div className="modal-backdrop" onMouseDown={() => setManualReviewOpen(false)}>
           <section className="workspace-modal manual-review-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -5545,6 +5325,7 @@ export function App() {
               <label className="manual-phase-editor">
                 {manualPhases[manualPhaseIndex]?.title}
                 <textarea
+                  ref={manualPhaseTextareaRef}
                   value={manualPhases[manualPhaseIndex]?.content ?? ""}
                   onChange={(event) => updateManualPhaseContent(event.target.value)}
                 />
