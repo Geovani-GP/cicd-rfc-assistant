@@ -506,7 +506,7 @@ function buildEvidenceHtml(payload: EvidenceExportPayload) {
   const logBlock = payload.logs.length
     ? `<h2>${labels.log}</h2><div class="log">${payload.logs.map((log) => `[${log.at}] ${log.step}: ${log.text}`).join("\n")}</div>`
     : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#272321;margin:36px}h1{color:#c74634}h2{border-bottom:1px solid #ddd;padding-bottom:6px}.meta{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:18px 0}.step{page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:14px;margin:14px 0}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-radius:6px}img{max-width:100%;border:1px solid #ddd;border-radius:6px;margin-top:8px}.log{font-family:monospace;font-size:12px;white-space:pre-wrap}</style></head><body><h1>RFC ${xmlEscape(payload.rfc || "")}</h1><p>${labels.environment}: ${xmlEscape(payload.environment)}</p><p>${new Date().toLocaleDateString()}</p><h2>${labels.execution}</h2>${metaBlock}${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<p><strong>${xmlEscape(image.name)}</strong> ${xmlEscape(image.createdAt)}</p><img src="${image.dataUrl}">`).join("")}</section>`).join("")}${logBlock}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#272321;margin:36px}h1{color:#c74634}h2{border-bottom:1px solid #ddd;padding-bottom:6px}.meta{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:18px 0}.step{page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:14px;margin:14px 0}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-radius:6px}img{max-width:100%;border:1px solid #ddd;border-radius:6px;margin-top:8px}.log{font-family:monospace;font-size:12px;white-space:pre-wrap}</style></head><body><h1>RFC ${xmlEscape(payload.rfc || "")}</h1><p>${labels.environment}: ${xmlEscape(payload.environment)}</p><p>${new Date().toLocaleDateString()}</p><h2>${labels.execution}</h2>${metaBlock}${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<img src="${image.dataUrl}">`).join("")}</section>`).join("")}${logBlock}</body></html>`;
 }
 
 function buildEvidenceDocx(payload: EvidenceExportPayload) {
@@ -540,7 +540,7 @@ function buildEvidenceDocx(payload: EvidenceExportPayload) {
       const relId = `rIdImage${imageIndex}`;
       const name = `image${imageIndex}.${parsed.ext}`;
       media.push({ name, data: parsed.buffer, relId });
-      body.push(paragraph(`${image.name} - ${image.createdAt}`), imageRun(relId, imageIndex));
+      body.push(imageRun(relId, imageIndex));
       imageIndex += 1;
     }
   }

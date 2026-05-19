@@ -3568,6 +3568,12 @@ textarea:focus {
   background: var(--oracle-red);
 }
 
+.rail-step.failed span {
+  border-color: #b3261e;
+  color: #ffffff;
+  background: #b3261e;
+}
+
 .guided-main {
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -3703,6 +3709,43 @@ textarea:focus {
 
 .guided-comment textarea {
   min-height: 210px;
+}
+
+.guided-comment-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.failure-toggle {
+  justify-self: start;
+  width: auto;
+  min-height: 36px;
+  border: 1px solid rgba(199, 70, 52, 0.32);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--oracle-red-dark);
+  background: rgba(199, 70, 52, 0.08);
+  box-shadow: none;
+}
+
+.failure-toggle:hover,
+.failure-toggle.active {
+  color: #ffffff;
+  background: var(--oracle-red);
+}
+
+.theme-tone-dark .failure-toggle,
+.theme-custom.custom-tone-dark .failure-toggle {
+  color: #ffd2ca;
+  background: rgba(255, 113, 91, 0.12);
+}
+
+.theme-tone-dark .failure-toggle:hover,
+.theme-tone-dark .failure-toggle.active,
+.theme-custom.custom-tone-dark .failure-toggle:hover,
+.theme-custom.custom-tone-dark .failure-toggle.active {
+  color: #ffffff;
+  background: rgba(255, 113, 91, 0.78);
 }
 
 .guided-preview {

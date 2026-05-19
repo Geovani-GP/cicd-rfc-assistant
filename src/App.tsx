@@ -31,7 +31,7 @@ import {
   UserRound,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { CSSProperties } from "react";
 import {
@@ -53,6 +53,7 @@ import {
   selectedEnvironmentMissingFromDocument
 } from "./action-plan/parsing/common";
 import { formatManualPhaseForActionPlan } from "./action-plan/parsing/format";
+import { databaseProfileCandidates } from "./action-plan/parsing/database";
 import {
   buildManualPhasesForProduct,
   configurationItemsForProduct,
@@ -220,6 +221,7 @@ type ExecutionDraft = {
   executionStepsConfirmed?: boolean;
   pipelineStepIndex?: number;
   pipelineStepComments?: Record<string, string>;
+  pipelineStepFailures?: Record<string, boolean>;
   evidenceItems?: EvidenceItem[];
   evidenceLog?: EvidenceLog[];
 };
@@ -277,12 +279,34 @@ type PendingWorkSnapshot = {
     executionStepsConfirmed: boolean;
     pipelineStepIndex: number;
     pipelineStepComments: Record<string, string>;
+    pipelineStepFailures: Record<string, boolean>;
   };
 };
 type PipelineExecutionStep = {
   title: string;
   detail: string;
 };
+
+const StepCommentEditor = memo(function StepCommentEditor({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="guided-comment">
+      <label className="step-comment-label">{label}</label>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={label}
+      />
+    </div>
+  );
+});
 
 const cicdExecutionSteps: PipelineExecutionStep[] = [
   {
@@ -765,6 +789,8 @@ const copy = {
       finalMessage: "Cierre del seguimiento",
       currentEvidence: "Evidencia del paso",
       comment: "Comentario del paso",
+      stepFailed: "Paso fallo",
+      failedStepPrefix: "Paso marcado como fallido.",
       previous: "Anterior",
       next: "Siguiente",
       downloadDocx: "Descargar DOCX",
@@ -1019,6 +1045,8 @@ const copy = {
       finalMessage: "Tracking closeout",
       currentEvidence: "Step evidence",
       comment: "Step comment",
+      stepFailed: "Step failed",
+      failedStepPrefix: "Step marked as failed.",
       previous: "Previous",
       next: "Next",
       downloadDocx: "Download DOCX",
@@ -1273,6 +1301,8 @@ const copy = {
       finalMessage: "Fechamento do acompanhamento",
       currentEvidence: "Evidencia do passo",
       comment: "Comentario do passo",
+      stepFailed: "Passo falhou",
+      failedStepPrefix: "Passo marcado como falho.",
       previous: "Anterior",
       next: "Proximo",
       downloadDocx: "Baixar DOCX",
@@ -2039,6 +2069,9 @@ export function App() {
   const [pipelineStepComments, setPipelineStepComments] = useState<Record<string, string>>(
     initialExecutionDraft?.pipelineStepComments ?? {}
   );
+  const [pipelineStepFailures, setPipelineStepFailures] = useState<Record<string, boolean>>(
+    initialExecutionDraft?.pipelineStepFailures ?? {}
+  );
   const [imagePreview, setImagePreview] = useState<EvidenceItem | null>(null);
   const [instantTooltip, setInstantTooltip] = useState<InstantTooltip | null>(null);
 
@@ -2285,10 +2318,11 @@ export function App() {
         executionSteps,
         executionStepsConfirmed,
         pipelineStepIndex,
-        pipelineStepComments
+        pipelineStepComments,
+        pipelineStepFailures
       }
     };
-  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, manualSourceText, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, manualSourceText, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
   const pendingWorkItems = useMemo(() => pendingWorkSnapshots.filter((item) => {
     const draft = item.draft;
     if (!draft) return true;
@@ -2315,7 +2349,8 @@ export function App() {
       draft.prodPipelineRunUrl.trim() ||
       draft.pipelineActionPlan.trim() ||
       draft.executionSteps.length ||
-      draft.executionStepsConfirmed
+      draft.executionStepsConfirmed ||
+      Object.values(draft.pipelineStepFailures ?? {}).some(Boolean)
     );
   }), [pendingWorkSnapshots]);
   const hasHiddenEmptyPendingWork = pendingWorkItems.length !== pendingWorkSnapshots.length;
@@ -2375,6 +2410,9 @@ export function App() {
   const isPipelineTrackingStep = activeStep === "pipeline";
   const isFinalPipelineStep = pipelineStepIndex === currentPipelineSteps.length - 1;
   const pipelineStepKey = `${activeStep}-${trackingEnvironment}-${pipelineStepIndex}`;
+  const failedPipelineStepIndex = currentPipelineSteps.findIndex(
+    (_, index) => pipelineStepFailures[`${activeStep}-${trackingEnvironment}-${index}`]
+  );
   const currentRfc = rfc.trim();
   const matchesCurrentRfc = (recordRfc?: string, text = "") => {
     if (!currentRfc) return !recordRfc;
@@ -2395,7 +2433,9 @@ export function App() {
       (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
   );
   const currentStepComment = pipelineStepComments[pipelineStepKey]?.trim() ?? "";
-  const currentStepComplete = Boolean(currentStepComment || currentStepEvidence.length);
+  const currentStepFailed = Boolean(pipelineStepFailures[pipelineStepKey]);
+  const canExportCurrentEvidence = isFinalPipelineStep || currentStepFailed;
+  const currentStepComplete = Boolean(currentStepComment || currentStepEvidence.length || currentStepFailed);
   const evidenceFormReady =
     activeStep !== "pipeline" ||
     Boolean(currentRfc && targetEnvironment.trim() && hasExecutionActionPlan && currentPipelineSteps.length && currentPipelineStep);
@@ -2472,7 +2512,11 @@ export function App() {
   }
 
   function manualDetectionSourceText() {
-    return actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
+    const sourceText = actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
+    if (actionProduct === "Base de datos") {
+      return [actionActivity, sourceText, artifactText].filter((value) => value.trim()).join("\n\n");
+    }
+    return sourceText;
   }
 
   function actionDocumentArtifactNames() {
@@ -2716,7 +2760,6 @@ export function App() {
       source
     };
     setEvidenceItems((current) => [item, ...current]);
-    addLog(`Evidencia agregada: ${image.name}`, activeStep);
     setMessage(t.evidence.copied);
   }
 
@@ -2803,9 +2846,16 @@ export function App() {
     }
   }
 
-  function updatePipelineStepComment(value: string) {
+  const updatePipelineStepComment = useCallback((value: string) => {
     setPipelineStepComments((current) => ({ ...current, [pipelineStepKey]: value }));
-  }
+  }, [pipelineStepKey]);
+
+  const toggleCurrentPipelineStepFailure = useCallback(() => {
+    setPipelineStepFailures((current) => ({
+      ...current,
+      [pipelineStepKey]: !current[pipelineStepKey]
+    }));
+  }, [pipelineStepKey]);
 
   function movePipelineStep(direction: 1 | -1) {
     if (direction > 0 && !isFinalPipelineStep && !currentStepComplete) {
@@ -2822,6 +2872,7 @@ export function App() {
       : executionStepsConfirmed && executionSteps.length
         ? executionSteps
         : documentCopy.pipeline.steps.map((title) => ({ title, detail: "" }));
+    const exportStepLimit = failedPipelineStepIndex >= 0 ? failedPipelineStepIndex + 1 : documentSteps.length;
     return {
       rfc,
       phase: trackingEnvironment,
@@ -2832,22 +2883,29 @@ export function App() {
       run: executionMode === "cicd" ? pipelineRunValue.trim() : "",
       runUrl: executionMode === "cicd" ? pipelineDisplayUrl : "",
       message: executionMode === "cicd" ? documentPipelineRfcMessage : "",
-      steps: documentSteps.map((step, index) => ({
-        index: index + 1,
-        title: step.title,
-        comment: [step.detail, pipelineStepComments[`${activeStep}-${trackingEnvironment}-${index}`]]
-          .filter((value) => value?.trim())
-          .join("\n\n"),
-        images: evidenceItems
-          .filter(
-            (item) =>
-              item.step === activeStep &&
-              matchesCurrentExecution(item.rfc, "", item.sessionId) &&
-              item.pipelineStep === index &&
-              (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
-          )
-          .map((item) => ({ name: item.name, dataUrl: item.dataUrl, createdAt: item.createdAt }))
-      })),
+      steps: documentSteps.slice(0, exportStepLimit).map((step, index) => {
+        const stepKey = `${activeStep}-${trackingEnvironment}-${index}`;
+        return {
+          index: index + 1,
+          title: step.title,
+          comment: [
+            step.detail,
+            pipelineStepFailures[stepKey] ? documentCopy.pipeline.failedStepPrefix : "",
+            pipelineStepComments[stepKey]
+          ]
+            .filter((value) => value?.trim())
+            .join("\n\n"),
+          images: evidenceItems
+            .filter(
+              (item) =>
+                item.step === activeStep &&
+                matchesCurrentExecution(item.rfc, "", item.sessionId) &&
+                item.pipelineStep === index &&
+                (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
+            )
+            .map((item) => ({ name: item.name, dataUrl: item.dataUrl, createdAt: item.createdAt }))
+        };
+      }),
       logs: evidenceLog
         .filter(
           (entry) =>
@@ -2937,6 +2995,7 @@ export function App() {
     setEvidenceLog([]);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
+    setPipelineStepFailures({});
   }
 
   function saveCurrentPendingWork() {
@@ -3015,6 +3074,7 @@ export function App() {
       setExecutionStepsConfirmed(draft.executionStepsConfirmed);
       setPipelineStepIndex(draft.pipelineStepIndex);
       setPipelineStepComments(draft.pipelineStepComments);
+      setPipelineStepFailures(draft.pipelineStepFailures ?? {});
       nextStep = draft.executionMode === "cicd" ||
         draft.pipelineActionPlan.trim() ||
         draft.executionStepsConfirmed ||
@@ -3175,6 +3235,7 @@ export function App() {
     setCustomGradient(defaultCustomTheme.gradient);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
+    setPipelineStepFailures({});
     setImagePreview(null);
     setProfileName(defaultProfile.name);
     setProfileEmail(defaultProfile.email);
@@ -3199,8 +3260,13 @@ export function App() {
       setMessage(t.messages.evidenceSetupRequired);
       return false;
     }
-    const missingStepIndex = currentPipelineSteps.findIndex((_, index) => {
-      const comment = pipelineStepComments[`${activeStep}-${trackingEnvironment}-${index}`]?.trim();
+    const stepsToValidate = failedPipelineStepIndex >= 0
+      ? currentPipelineSteps.slice(0, failedPipelineStepIndex + 1)
+      : currentPipelineSteps;
+    const missingStepIndex = stepsToValidate.findIndex((_, index) => {
+      const stepKey = `${activeStep}-${trackingEnvironment}-${index}`;
+      const comment = pipelineStepComments[stepKey]?.trim();
+      const failed = pipelineStepFailures[stepKey];
       const images = evidenceItems.filter(
         (item) =>
           item.step === activeStep &&
@@ -3208,7 +3274,7 @@ export function App() {
           item.pipelineStep === index &&
           (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
       );
-      return !comment && images.length === 0;
+      return !comment && images.length === 0 && !failed;
     });
     if (missingStepIndex >= 0) {
       setMessage(`${t.messages.exportNeedStep} ${missingStepIndex + 1}.`);
@@ -3510,16 +3576,21 @@ export function App() {
     const enteredArtifacts = artifactLinesFromText(artifactText);
     const enteredInstallableArtifacts = installableArtifactNames(artifactText);
     const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
     const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
     const detectedArtifacts = enteredArtifacts.length
       ? []
       : isMftManualPlan(actionProduct, sourceText)
         ? configurationItemsForProduct(actionProduct, sourceText)
+        : databaseItems.length
+          ? databaseItems
         : sourceInstallableArtifacts.length
           ? sourceInstallableArtifacts
           : extractArtifactNames(sourceText, { includeComponentNames: true });
     const artifacts = enteredArtifacts.length
-      ? enteredInstallableArtifacts.length
+      ? databaseItems.length
+        ? databaseItems
+        : enteredInstallableArtifacts.length
         ? enteredInstallableArtifacts
         : sourceHasInstallableArtifacts
           ? sourceInstallableArtifacts
@@ -3530,7 +3601,9 @@ export function App() {
     const fallbackItem = actionProduct === "MFT" ? "- Confirm MFT configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const validationBlock = actionArtifactValidationBlock();
-    const productName = actionProduct.trim() || "Oracle Integration Cloud";
+    const productName = actionProduct === "Base de datos"
+      ? "Oracle Database"
+      : actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = actionEnvironment.trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const activityName = actionActivity.trim() || (isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
@@ -3544,6 +3617,9 @@ export function App() {
     );
     const metadata = manualPlanMetadataForProduct(productName, environmentName, instanceName, sourceText);
     const normalizePhaseOutput = !isMftPlan && !isDatabaseManualPlan(actionProduct, sourceText);
+    const sourceDocumentLine = actionProduct === "Base de datos" && !actionSourceDocument
+      ? ""
+      : `Source document: ${sourceDocumentName}\n`;
     const phaseBlocks = phases.map((phase, index) => {
       const letter = String.fromCharCode(65 + index);
       const content = normalizePhaseOutput ? formatManualPhaseForActionPlan(phase) : phase.content.trim();
@@ -3554,7 +3630,7 @@ export function App() {
       return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
     }
 
-    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
+    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n${sourceDocumentLine}${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
   }
 
   function acceptManualReview() {
@@ -3700,6 +3776,7 @@ export function App() {
     setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
+    setPipelineStepFailures({});
     setLocalCommitResult(null);
     setEvidenceItems((current) => current.filter((item) => item.step !== "pipeline"));
     setEvidenceLog((current) => current.filter((entry) => entry.step !== "pipeline"));
@@ -3938,6 +4015,7 @@ export function App() {
     setExecutionSteps(parseActionPlanExecutionSteps(text, t.pipeline.steps));
     setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
+    setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
     event.target.value = "";
   }
@@ -3948,6 +4026,7 @@ export function App() {
     setExecutionSteps(parseActionPlanExecutionSteps(actionPlan, t.pipeline.steps));
     setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
+    setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
   }
 
@@ -3955,6 +4034,7 @@ export function App() {
     setExecutionSteps(parsedExecutionSteps);
     setExecutionStepsConfirmed(false);
     setPipelineStepIndex(0);
+    setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
   }
 
@@ -3966,6 +4046,7 @@ export function App() {
   function removeExecutionStep(index: number) {
     setExecutionSteps((current) => current.filter((_, stepIndex) => stepIndex !== index));
     setPipelineStepIndex((current) => Math.max(0, Math.min(current, executionSteps.length - 2)));
+    setPipelineStepFailures({});
     setExecutionStepsConfirmed(false);
   }
 
@@ -3976,6 +4057,7 @@ export function App() {
     setExecutionSteps(cleanSteps);
     setExecutionStepsConfirmed(Boolean(cleanSteps.length));
     setPipelineStepIndex(0);
+    setPipelineStepFailures({});
     setMessage(cleanSteps.length ? t.pipeline.stepsConfirmed : t.pipeline.planPlaceholder);
   }
 
@@ -4131,6 +4213,7 @@ export function App() {
       executionStepsConfirmed,
       pipelineStepIndex,
       pipelineStepComments,
+      pipelineStepFailures,
       evidenceItems,
       evidenceLog
     };
@@ -4157,6 +4240,7 @@ export function App() {
     executionStepsConfirmed,
     pipelineStepIndex,
     pipelineStepComments,
+    pipelineStepFailures,
     evidenceItems,
     evidenceLog
   ]);
@@ -4717,7 +4801,9 @@ export function App() {
                 value={artifactText}
                 onChange={(event) => setArtifactText(event.target.value)}
                 onBlur={() => {
-                  const cleanedArtifacts = artifactLinesFromText(artifactText);
+                  const cleanedArtifacts = actionProduct === "Base de datos"
+                    ? databaseProfileCandidates(artifactText)
+                    : artifactLinesFromText(artifactText);
                   if (cleanedArtifacts.length) setArtifactText(cleanedArtifacts.join("\n"));
                 }}
                 placeholder={a.artifactsHint}
@@ -4984,6 +5070,7 @@ export function App() {
                       setExecutionMode("general");
                       setPipelineStepIndex(0);
                       setPipelineStepComments({});
+                      setPipelineStepFailures({});
                       setExecutionStepsConfirmed(false);
                     }}
                   >
@@ -4999,6 +5086,7 @@ export function App() {
                       setExecutionStepsConfirmed(false);
                       setPipelineStepIndex(0);
                       setPipelineStepComments({});
+                      setPipelineStepFailures({});
                     }}
                   >
                     {t.pipeline.modeCicd}
@@ -5098,6 +5186,7 @@ export function App() {
                   setExecutionSteps(parseActionPlanExecutionSteps(value, t.pipeline.steps));
                   setExecutionStepsConfirmed(false);
                   setPipelineStepIndex(0);
+                  setPipelineStepFailures({});
                 }}
                 placeholder={t.pipeline.planPlaceholder}
                 wrap="soft"
@@ -5155,7 +5244,9 @@ export function App() {
                 {currentPipelineSteps.map((step, index) => (
                   <button
                     key={`${step.title}-${index}`}
-                    className={`rail-step ${pipelineStepIndex === index ? "active" : ""}`}
+                    className={`rail-step ${pipelineStepIndex === index ? "active" : ""} ${
+                      pipelineStepFailures[`${activeStep}-${trackingEnvironment}-${index}`] ? "failed" : ""
+                    }`}
                     onClick={() => setPipelineStepIndex(index)}
                     title={step.title}
                   >
@@ -5205,13 +5296,21 @@ export function App() {
                 </div>
 
                 <div className="guided-body">
-                  <div className="guided-comment">
-                    <label className="step-comment-label">{t.pipeline.comment}</label>
-                    <textarea
+                  <div className="guided-comment-stack">
+                    <StepCommentEditor
+                      label={t.pipeline.comment}
                       value={pipelineStepComments[pipelineStepKey] ?? ""}
-                      onChange={(event) => updatePipelineStepComment(event.target.value)}
-                      placeholder={t.pipeline.comment}
+                      onChange={updatePipelineStepComment}
                     />
+                    <button
+                      type="button"
+                      className={`failure-toggle ${currentStepFailed ? "active" : ""}`}
+                      onClick={toggleCurrentPipelineStepFailure}
+                      aria-pressed={currentStepFailed}
+                    >
+                      <AlertCircle size={16} />
+                      {t.pipeline.stepFailed}
+                    </button>
                   </div>
                   <div className="guided-preview">
                     <strong>{t.pipeline.currentEvidence}</strong>
@@ -5223,7 +5322,6 @@ export function App() {
                           </button>
                           <div>
                             <strong>{item.name}</strong>
-                            <span>{new Date(item.createdAt).toLocaleString()}</span>
                             {item.note && <span>{item.note}</span>}
                           </div>
                           <button className="icon-button evidence-remove" onClick={() => removeEvidence(item.id)}>
@@ -5237,7 +5335,7 @@ export function App() {
                   </div>
                 </div>
 
-                {isFinalPipelineStep && (
+                {canExportCurrentEvidence && (
                   <div className="guided-final actions inline-actions">
                     <button className="secondary" onClick={() => exportEvidence("docx")}>
                       <Download size={16} />

@@ -1,4 +1,4 @@
-import { buildDatabaseSqlPlan, hasSqlInstructions } from "./database";
+import { buildDatabaseSqlPlan, hasDatabaseInstructions } from "./database";
 import { buildMftConfigurationPlan, hasMftInstructions, mftConfigurationItems, mftManualPlanMetadata } from "./mft";
 import { buildManualPhasesFromDocument } from "./oic";
 import type { ManualActionPhase } from "./types";
@@ -8,7 +8,7 @@ export function isMftManualPlan(productName: string, text: string) {
 }
 
 export function isDatabaseManualPlan(productName: string, text: string) {
-  return productName === "Base de datos" && hasSqlInstructions(text);
+  return productName === "Base de datos" && hasDatabaseInstructions(text);
 }
 
 export function buildManualPhasesForProduct(productName: string, text: string, environment: string): ManualActionPhase[] {
