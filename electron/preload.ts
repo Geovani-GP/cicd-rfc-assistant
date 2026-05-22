@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("cicd", {
   selectEvidenceImages: () => ipcRenderer.invoke("select-evidence-images"),
   captureAppWindow: () => ipcRenderer.invoke("capture-app-window"),
   captureScreenRegion: () => ipcRenderer.invoke("capture-screen-region"),
+  saveEvidenceImage: (payload: unknown) => ipcRenderer.invoke("save-evidence-image", payload),
+  saveEvidenceImages: (payload: unknown) => ipcRenderer.invoke("save-evidence-images", payload),
+  saveActionPlanText: (payload: unknown) => ipcRenderer.invoke("save-action-plan-text", payload),
   getPathForFile: (file: File) => webUtils?.getPathForFile(file) ?? (file as File & { path?: string })?.path ?? "",
   scanRepositories: (basePath: string) => ipcRenderer.invoke("scan-repositories", basePath),
   cloneRepository: (payload: unknown) => ipcRenderer.invoke("clone-repository", payload),
@@ -23,5 +26,6 @@ contextBridge.exposeInMainWorld("cicd", {
   backupUserData: (payload: unknown) => ipcRenderer.invoke("backup-user-data", payload),
   clearUserFiles: () => ipcRenderer.invoke("clear-user-files"),
   deleteLocalFile: (path: string) => ipcRenderer.invoke("delete-local-file", path),
-  openExternal: (url: string) => ipcRenderer.invoke("open-external", url)
+  openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
+  showItemInFolder: (path: string) => ipcRenderer.invoke("show-item-in-folder", path)
 });

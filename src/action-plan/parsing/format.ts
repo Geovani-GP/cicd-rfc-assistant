@@ -7,7 +7,7 @@ function actionPlanSubheadingFromLine(line: string) {
   const title = numbered?.[1]?.trim() ?? trimmed;
   const technicalHeading = /^[A-Z0-9][A-Z0-9_-]*(?:_[A-Z0-9_-]+){1,}$/i;
   const knownHeading =
-    /^(?:Overview Installation|Environment Information|Pre[- ]Installation Steps|Get a backup integration|Get a backup lookups\.?|Installation Steps|Configuration of Connections|Importation of Lookups\.? Only if it is necessary\.?|Activate integration|Configure and start scheduler|Appendix Lookups|Verification Checklist|Return Point|Open and Closed Issues)$/i;
+    /^(?:Overview Installation|Environment Information|Pre[- ]Installation Steps|Get a backup integration|Get a backup lookups\.?|Installation Steps|Configuration of Connections|Importation of Lookups\.? Only if it is necessary\.?|Activate integration|Configure and start scheduler|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Verification Checklist|Return Point|Open and Closed Issues)$/i;
   if (numbered && (knownHeading.test(title) || technicalHeading.test(title))) return title.replace(/\.$/, "");
   if (!numbered && knownHeading.test(title)) return title.replace(/\.$/, "");
   return "";

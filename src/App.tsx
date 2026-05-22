@@ -58,7 +58,10 @@ import {
   buildManualPhasesForProduct,
   configurationItemsForProduct,
   isDatabaseManualPlan,
+  isJavaManualPlan,
+  isOdiManualPlan,
   isMftManualPlan,
+  isOsbManualPlan,
   manualPlanMetadataForProduct
 } from "./action-plan/parsing/products";
 import type { ManualActionPhase } from "./action-plan/parsing/types";
@@ -79,6 +82,15 @@ const projectUrl =
 const defaultBasePath = "";
 const desktopApi = window.cicd;
 const releaseBranch = "release";
+const pipelinePhases: PipelinePhase[] = ["DEV", "REG", "TEST", "PROD"];
+const actionPlanEnvironments = ["DEV", "REG", "TEST", "PROD"];
+const converterTechnologies = [
+  { id: "oic", name: "OIC", version: "2026.05.19-04", previous: "2026.05.18-03" },
+  { id: "mft", name: "MFT", version: "2026.05.18-02", previous: "2026.05.15-01" },
+  { id: "database", name: "Oracle Database", version: "2026.05.19-02", previous: "2026.05.19-01" },
+  { id: "soa", name: "SOA", version: "2026.05.19-00", previous: "2026.05.19-00" },
+  { id: "java", name: "JAVA", version: "2026.05.19-00", previous: "2026.05.19-00" }
+];
 const defaultCustomTheme = {
   colorA: "#d9c4ff",
   colorB: "#8fe8ff",
@@ -180,7 +192,7 @@ function readPendingWorkSnapshots(): PendingWorkSnapshot[] {
 }
 
 type StepId = "actionPlan" | "package" | "review" | "pipeline";
-type PipelinePhase = "TEST" | "PROD";
+type PipelinePhase = "DEV" | "REG" | "TEST" | "PROD";
 type ExecutionMode = "general" | "cicd";
 type ActionMethod = "cicd" | "manual";
 type Lang = "es" | "en" | "pt";
@@ -206,6 +218,8 @@ type EvidenceLog = {
 type ExecutionDraft = {
   sessionId?: string;
   rfc?: string;
+  devTargetEnvironment?: string;
+  regTargetEnvironment?: string;
   testTargetEnvironment?: string;
   prodTargetEnvironment?: string;
   testPipelineName?: string;
@@ -217,6 +231,8 @@ type ExecutionDraft = {
   executionMode?: ExecutionMode;
   pipelineExecutionPhase?: PipelinePhase;
   pipelineActionPlan?: string;
+  actionPlanConfirmed?: boolean;
+  actionPlanConfirmedAt?: string;
   executionSteps?: PipelineExecutionStep[];
   executionStepsConfirmed?: boolean;
   pipelineStepIndex?: number;
@@ -250,6 +266,7 @@ type PendingWorkSnapshot = {
   updatedAt: string;
   draft?: {
     repoPath: string;
+    outputFolder: string;
     rfc: string;
     actionProduct: string;
     actionMethod: ActionMethod;
@@ -258,12 +275,17 @@ type PendingWorkSnapshot = {
     actionActivity: string;
     artifactText: string;
     actionPlan: string;
+    actionPlanConfirmed: boolean;
+    actionPlanConfirmedAt: string;
     manualInstructions: string;
     manualSourceText?: string;
     manualPhases: ManualActionPhase[];
+    manualPhaseDisabledKeys?: string[];
     riceFolderPath: string;
     mode: "ADHOC" | "FULL";
     files: SelectedFile[];
+    devTargetEnvironment: string;
+    regTargetEnvironment: string;
     testTargetEnvironment: string;
     prodTargetEnvironment: string;
     testPipelineName: string;
@@ -346,6 +368,10 @@ const cicdExecutionSteps: PipelineExecutionStep[] = [
     detail: "Descargar evidencia DOCX/PDF y adjuntarla al RFC."
   }
 ];
+
+function manualPhaseKey(phase: ManualActionPhase | undefined, index: number) {
+  return `${phase?.id || phase?.title || "phase"}-${index}`;
+}
 type InstantTooltip = {
   text: string;
   x: number;
@@ -604,12 +630,22 @@ const copy = {
     newWork: "Nuevo",
     savePendingFirstConfirm: "Hay trabajo en curso. Quieres guardarlo como pendiente antes de iniciar uno nuevo?",
     newWithoutSavingConfirm: "Iniciar nuevo trabajo sin guardar el actual?",
+    pendingOpenExecutionConfirm: "Este RFC ya tiene un Action Plan confirmado. Aceptar: iniciar RFC Execution con la misma carpeta del RFC. Cancelar: seguir en Action Plan.",
     pendingSaved: "Pendiente guardado.",
     noPendingToSave: "Captura datos del RFC antes de guardar un pendiente.",
+    syncConverters: "Sincronizar",
+    converterSyncTitle: "Sincronizar convertidores",
+    converterSyncBody: "Actualiza o regresa la version del motor de conversion por tecnologia. La descarga desde la nube quedara conectada a Cloudflare.",
+    converterVersion: "Version actual",
+    converterUpdate: "Actualizar",
+    converterRollback: "Version anterior",
+    converterUpdated: "Convertidor actualizado.",
+    converterRolledBack: "Convertidor regresado a version anterior.",
     historyRemoveConfirm: "Eliminar {{rfc}} del historial?",
     historyDiskConfirm: "Tambien quieres eliminar el documento del disco duro?",
     deleteHistoryItem: "Eliminar",
     openFile: "Abrir",
+    openFolder: "Abrir carpeta",
     userData: "Usuario",
     userDataTitle: "Datos de usuario",
     userDataBody: "Genera un respaldo y elimina preferencias, historial, rutas, temas y logs locales de la app. No borra repositorios ni artefactos.",
@@ -692,7 +728,7 @@ const copy = {
       baseFolderRequired: "Elige una carpeta de trabajo antes de actualizar o clonar repositorios.",
       cloneOk: "Repositorio clonado correctamente.",
       dropPath: "No pude leer la ruta local de los archivos arrastrados. Haz click en el recuadro para seleccionarlos.",
-      invalidFiles: "Solo se permiten artefactos .iar, .par, .xml o .csv.",
+      invalidFiles: "Solo se permiten artefactos .iar, .par, .xml, .wsdl, .csv, .zip, .jar o .sql.",
       summaryOk: "Resumen actualizado.",
       draftOk: "Borrador preparado localmente.",
       noFiles: "Agrega al menos un artefacto antes de continuar.",
@@ -738,7 +774,7 @@ const copy = {
       mode: "Modo",
       modeHelp: "ADHOC usa int_adhoc.txt para desplegar solo lo listado. FULL usa int_full.txt para una lista completa/controlada.",
       dropTitle: "Arrastra archivos aqui o haz click para buscarlos",
-      dropBody: "Acepta .iar, .par, .xml y lookups .csv. Los .csv se colocan en OIC/Lookups.",
+      dropBody: "Acepta .iar, .par, .xml, .wsdl, lookups .csv, librerias .zip, paquetes OSB .jar y scripts .sql. Los .csv se colocan en OIC/Lookups.",
       preview: "Vista previa",
       clearPackage: "Limpiar paquete",
       prepareDraft: "Revisar paquete"
@@ -821,6 +857,10 @@ const copy = {
       addImage: "Agregar imagen",
       copyLog: "Copiar log",
       paste: "Pegar captura",
+      saveImage: "Guardar captura",
+      saveStepImages: "Guardar capturas del paso",
+      saved: "Captura guardada.",
+      savedMany: "Capturas guardadas.",
       empty: "Aun no hay evidencias.",
       note: "Nota de evidencia",
       copied: "Captura agregada a evidencia.",
@@ -860,12 +900,22 @@ const copy = {
     newWork: "New",
     savePendingFirstConfirm: "There is work in progress. Save it as pending before starting a new one?",
     newWithoutSavingConfirm: "Start a new work item without saving the current one?",
+    pendingOpenExecutionConfirm: "This RFC already has a confirmed Action Plan. OK: start RFC Execution with the same RFC folder. Cancel: continue in Action Plan.",
     pendingSaved: "Pending item saved.",
     noPendingToSave: "Capture RFC data before saving a pending item.",
+    syncConverters: "Sync",
+    converterSyncTitle: "Sync converters",
+    converterSyncBody: "Update or roll back the conversion engine version by technology. Cloud download will be wired through Cloudflare.",
+    converterVersion: "Current version",
+    converterUpdate: "Update",
+    converterRollback: "Previous version",
+    converterUpdated: "Converter updated.",
+    converterRolledBack: "Converter rolled back.",
     historyRemoveConfirm: "Remove {{rfc}} from history?",
     historyDiskConfirm: "Do you also want to delete the document from disk?",
     deleteHistoryItem: "Delete",
     openFile: "Open",
+    openFolder: "Open folder",
     userData: "User",
     userDataTitle: "User data",
     userDataBody: "Create a backup and remove app preferences, history, paths, themes, and local logs. Repositories and artifacts are not deleted.",
@@ -948,7 +998,7 @@ const copy = {
       baseFolderRequired: "Choose a workspace folder before refreshing or cloning repositories.",
       cloneOk: "Repository cloned successfully.",
       dropPath: "I could not read the local path for dropped files. Click the drop area to select them.",
-      invalidFiles: "Only .iar, .par, .xml, or .csv artifacts are allowed.",
+      invalidFiles: "Only .iar, .par, .xml, .wsdl, .csv, .zip, .jar, or .sql artifacts are allowed.",
       summaryOk: "Summary refreshed.",
       draftOk: "Local draft prepared.",
       noFiles: "Add at least one artifact before continuing.",
@@ -994,7 +1044,7 @@ const copy = {
       mode: "Mode",
       modeHelp: "ADHOC uses int_adhoc.txt to deploy only listed items. FULL uses int_full.txt for a complete/controlled list.",
       dropTitle: "Drop files here or click to browse",
-      dropBody: "Accepts .iar, .par, .xml, and lookup .csv files. .csv files go into OIC/Lookups.",
+      dropBody: "Accepts .iar, .par, .xml, .wsdl, lookup .csv files, library .zip files, OSB .jar packages, and .sql scripts. .csv files go into OIC/Lookups.",
       preview: "Preview",
       clearPackage: "Clear package",
       prepareDraft: "Review package"
@@ -1077,6 +1127,10 @@ const copy = {
       addImage: "Add image",
       copyLog: "Copy log",
       paste: "Paste screenshot",
+      saveImage: "Save screenshot",
+      saveStepImages: "Save step screenshots",
+      saved: "Screenshot saved.",
+      savedMany: "Screenshots saved.",
       empty: "No evidence yet.",
       note: "Evidence note",
       copied: "Screenshot added to evidence.",
@@ -1116,12 +1170,22 @@ const copy = {
     newWork: "Novo",
     savePendingFirstConfirm: "Ha trabalho em andamento. Deseja salvar como pendente antes de iniciar um novo?",
     newWithoutSavingConfirm: "Iniciar um novo trabalho sem salvar o atual?",
+    pendingOpenExecutionConfirm: "Este RFC ja tem um Action Plan confirmado. OK: iniciar RFC Execution com a mesma pasta do RFC. Cancelar: continuar no Action Plan.",
     pendingSaved: "Pendente salvo.",
     noPendingToSave: "Capture dados do RFC antes de salvar um pendente.",
+    syncConverters: "Sincronizar",
+    converterSyncTitle: "Sincronizar conversores",
+    converterSyncBody: "Atualize ou reverta a versao do motor de conversao por tecnologia. O download em nuvem sera conectado ao Cloudflare.",
+    converterVersion: "Versao atual",
+    converterUpdate: "Atualizar",
+    converterRollback: "Versao anterior",
+    converterUpdated: "Conversor atualizado.",
+    converterRolledBack: "Conversor revertido.",
     historyRemoveConfirm: "Excluir {{rfc}} do historico?",
     historyDiskConfirm: "Tambem deseja excluir o documento do disco?",
     deleteHistoryItem: "Excluir",
     openFile: "Abrir",
+    openFolder: "Abrir pasta",
     userData: "Usuario",
     userDataTitle: "Dados do usuario",
     userDataBody: "Gera um backup e remove preferencias, historico, rotas, temas e logs locais do app. Nao apaga repositorios nem artefatos.",
@@ -1204,7 +1268,7 @@ const copy = {
       baseFolderRequired: "Escolha uma pasta de trabalho antes de atualizar ou clonar repositorios.",
       cloneOk: "Repositorio clonado com sucesso.",
       dropPath: "Nao foi possivel ler a rota local dos arquivos arrastados. Clique na area para seleciona-los.",
-      invalidFiles: "Somente artefatos .iar, .par, .xml ou .csv sao permitidos.",
+      invalidFiles: "Somente artefatos .iar, .par, .xml, .wsdl, .csv, .zip, .jar ou .sql sao permitidos.",
       summaryOk: "Resumo atualizado.",
       draftOk: "Rascunho local preparado.",
       noFiles: "Adicione pelo menos um artefato antes de continuar.",
@@ -1250,7 +1314,7 @@ const copy = {
       mode: "Modo",
       modeHelp: "ADHOC usa int_adhoc.txt para implantar apenas itens listados. FULL usa int_full.txt para uma lista completa/controlada.",
       dropTitle: "Arraste arquivos aqui ou clique para buscar",
-      dropBody: "Aceita .iar, .par, .xml e lookups .csv. Arquivos .csv vao para OIC/Lookups.",
+      dropBody: "Aceita .iar, .par, .xml, .wsdl, lookups .csv, bibliotecas .zip, pacotes OSB .jar e scripts .sql. Arquivos .csv vao para OIC/Lookups.",
       preview: "Preview",
       clearPackage: "Limpar pacote",
       prepareDraft: "Revisar pacote"
@@ -1333,6 +1397,10 @@ const copy = {
       addImage: "Adicionar imagem",
       copyLog: "Copiar log",
       paste: "Colar captura",
+      saveImage: "Salvar captura",
+      saveStepImages: "Salvar capturas do passo",
+      saved: "Captura salva.",
+      savedMany: "Capturas salvas.",
       empty: "Ainda nao ha evidencias.",
       note: "Nota da evidencia",
       copied: "Captura adicionada a evidencia.",
@@ -1435,10 +1503,16 @@ const actionCopy = {
     reviewManual: "Revisar fases",
     manualReviewTitle: "Revisar Action Plan manual",
     manualReviewBody: "Confirma o ajusta las fases detectadas antes de generar el Action Plan.",
+    includePhase: "Incluir fase",
+    manualSelectOne: "Selecciona al menos una fase para generar el Action Plan.",
     acceptReview: "Generar Action Plan",
     generate: "Generar plan",
     clear: "Limpiar Action Plan",
     copy: "Copiar",
+    confirm: "Confirmar Action Plan",
+    confirmed: "Action Plan confirmado",
+    confirmedSaved: "Action Plan confirmado y guardado en:",
+    editedAfterConfirm: "Editado despues de confirmar",
     preview: "Action Plan generado",
     methodCicd: "CI/CD Tool"
   },
@@ -1481,10 +1555,16 @@ const actionCopy = {
     reviewManual: "Review phases",
     manualReviewTitle: "Review manual Action Plan",
     manualReviewBody: "Confirm or adjust the detected phases before generating the Action Plan.",
+    includePhase: "Include phase",
+    manualSelectOne: "Select at least one phase to generate the Action Plan.",
     acceptReview: "Generate Action Plan",
     generate: "Generate plan",
     clear: "Clear Action Plan",
     copy: "Copy",
+    confirm: "Confirm Action Plan",
+    confirmed: "Action Plan confirmed",
+    confirmedSaved: "Action Plan confirmed and saved at:",
+    editedAfterConfirm: "Edited after confirmation",
     preview: "Generated Action Plan",
     methodCicd: "CI/CD Tool"
   },
@@ -1527,16 +1607,22 @@ const actionCopy = {
     reviewManual: "Revisar fases",
     manualReviewTitle: "Revisar Action Plan manual",
     manualReviewBody: "Confirme ou ajuste as fases detectadas antes de gerar o Action Plan.",
+    includePhase: "Incluir fase",
+    manualSelectOne: "Selecione pelo menos uma fase para gerar o Action Plan.",
     acceptReview: "Gerar Action Plan",
     generate: "Gerar plano",
     clear: "Limpar Action Plan",
     copy: "Copiar",
+    confirm: "Confirmar Action Plan",
+    confirmed: "Action Plan confirmado",
+    confirmedSaved: "Action Plan confirmado e salvo em:",
+    editedAfterConfirm: "Editado apos confirmar",
     preview: "Action Plan gerado",
     methodCicd: "CI/CD Tool"
   }
 } as const;
 
-const allowedArtifactExtensions = [".iar", ".par", ".xml", ".csv"];
+const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql"];
 
 function readLe16(view: DataView, offset: number) {
   return view.getUint16(offset, true);
@@ -1713,6 +1799,14 @@ async function extractPdfTextFromBrowserFile(file: File) {
 
 async function buildBrowserActionDocument(file: File): Promise<ActionSourceDocument> {
   const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith(".sql")) {
+    return {
+      path: "",
+      name: file.name,
+      kind: "sql",
+      text: await file.text()
+    };
+  }
   if (lowerName.endsWith(".docx")) {
     const text = await extractDocxTextFromBrowserFile(file);
     return {
@@ -1739,11 +1833,12 @@ function regionFromRepo(name: string) {
 }
 
 function classifyDroppedFile(path: string): SelectedFile["kind"] {
-  const clean = path.toLowerCase();
-  if (clean.endsWith(".iar")) return "integration";
-  if (clean.endsWith(".par")) return "package";
+    const clean = path.toLowerCase();
+    if (clean.endsWith(".iar")) return "integration";
+    if (clean.endsWith(".par") || clean.endsWith(".jar")) return "package";
   if (clean.endsWith(".csv")) return "lookup";
-  if (clean.endsWith(".xml")) return "xml";
+  if (clean.endsWith(".xml") || clean.endsWith(".wsdl")) return "xml";
+  if (clean.endsWith(".sql")) return "sql";
   return "other";
 }
 
@@ -2000,6 +2095,7 @@ export function App() {
   const [pendingSearch, setPendingSearch] = useState("");
   const [pendingPage, setPendingPage] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [converterSyncOpen, setConverterSyncOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionDocumentProcessing, setActionDocumentProcessing] = useState(false);
@@ -2024,7 +2120,10 @@ export function App() {
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
   const [manualPhaseIndex, setManualPhaseIndex] = useState(0);
   const [manualPhases, setManualPhases] = useState<ManualActionPhase[]>([]);
+  const [manualPhaseDisabledKeys, setManualPhaseDisabledKeys] = useState<string[]>([]);
   const [actionPlan, setActionPlan] = useState("");
+  const [actionPlanConfirmed, setActionPlanConfirmed] = useState(false);
+  const [actionPlanConfirmedAt, setActionPlanConfirmedAt] = useState("");
   const [riceFolderPath, setRiceFolderPath] = useState("");
   const [mode, setMode] = useState<"ADHOC" | "FULL">("ADHOC");
   const [files, setFiles] = useState<SelectedFile[]>([]);
@@ -2039,6 +2138,8 @@ export function App() {
   const [summary, setSummary] = useState<DraftSummary | null>(null);
   const [finalOutput, setFinalOutput] = useState("");
   const [localCommitResult, setLocalCommitResult] = useState<FinalizeResult | null>(null);
+  const [devTargetEnvironment, setDevTargetEnvironment] = useState(initialExecutionDraft?.devTargetEnvironment ?? "");
+  const [regTargetEnvironment, setRegTargetEnvironment] = useState(initialExecutionDraft?.regTargetEnvironment ?? "");
   const [testTargetEnvironment, setTestTargetEnvironment] = useState(initialExecutionDraft?.testTargetEnvironment ?? "");
   const [prodTargetEnvironment, setProdTargetEnvironment] = useState(initialExecutionDraft?.prodTargetEnvironment ?? "");
   const [testPipelineName, setTestPipelineName] = useState(initialExecutionDraft?.testPipelineName ?? "");
@@ -2055,6 +2156,9 @@ export function App() {
   const [executionSteps, setExecutionSteps] = useState<PipelineExecutionStep[]>(initialExecutionDraft?.executionSteps ?? []);
   const [executionStepsConfirmed, setExecutionStepsConfirmed] = useState(
     Boolean(initialExecutionDraft?.executionStepsConfirmed)
+  );
+  const [executionStepsReviewOpen, setExecutionStepsReviewOpen] = useState(
+    !Boolean(initialExecutionDraft?.executionStepsConfirmed)
   );
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [executionSessionId, setExecutionSessionId] = useState(
@@ -2197,7 +2301,32 @@ export function App() {
   const canPushBranch = Boolean(localCommitResult?.ok && localCommitResult.branch === rfc.trim());
   const isProdPipelineStep = pipelineExecutionPhase === "PROD";
   const trackingEnvironment = pipelineExecutionPhase;
-  const pipelineBody = isProdPipelineStep ? t.pipeline.bodyProd : t.pipeline.bodyTest;
+  const pipelineBody = isProdPipelineStep
+    ? t.pipeline.bodyProd
+    : t.pipeline.bodyTest.replace(/\bTEST\b/g, pipelineExecutionPhase);
+  const targetEnvironment =
+    pipelineExecutionPhase === "DEV"
+      ? devTargetEnvironment
+      : pipelineExecutionPhase === "REG"
+        ? regTargetEnvironment
+        : pipelineExecutionPhase === "PROD"
+          ? prodTargetEnvironment
+          : testTargetEnvironment;
+  const setTargetEnvironmentForPhase = (value: string) => {
+    if (pipelineExecutionPhase === "DEV") {
+      setDevTargetEnvironment(value);
+      return;
+    }
+    if (pipelineExecutionPhase === "REG") {
+      setRegTargetEnvironment(value);
+      return;
+    }
+    if (pipelineExecutionPhase === "PROD") {
+      setProdTargetEnvironment(value);
+      return;
+    }
+    setTestTargetEnvironment(value);
+  };
   const executionActionPlan = executionMode === "cicd" ? "" : pipelineActionPlan.trim();
   const hasExecutionActionPlan = executionMode === "cicd" || Boolean(executionActionPlan.trim());
   const parsedExecutionSteps = useMemo(
@@ -2212,7 +2341,6 @@ export function App() {
     [executionMode, executionSteps, executionStepsConfirmed]
   );
   const defaultPipelineName = `${(selectedRepo?.name ?? "BIMBO-R2-REPOSITORY").replace("BIMBO-", "").replace("-REPOSITORY", "")}-${pipelineInstanceFrom(actionInstance)}-OIC-DEPLOYMENT_PIPELINE`;
-  const targetEnvironment = isProdPipelineStep ? prodTargetEnvironment : testTargetEnvironment;
   const pipelineNameValue = isProdPipelineStep ? prodPipelineName : testPipelineName;
   const pipelineRunValue = isProdPipelineStep ? prodPipelineRun : testPipelineRun;
   const pipelineRunUrlValue = isProdPipelineStep ? prodPipelineRunUrl : testPipelineRunUrl;
@@ -2239,6 +2367,8 @@ export function App() {
       manualPhases.length ||
       riceFolderPath.trim() ||
       files.length ||
+      devTargetEnvironment.trim() ||
+      regTargetEnvironment.trim() ||
       testTargetEnvironment.trim() ||
       prodTargetEnvironment.trim() ||
       testPipelineName.trim() ||
@@ -2248,22 +2378,23 @@ export function App() {
       testPipelineRunUrl.trim() ||
       prodPipelineRunUrl.trim() ||
       pipelineActionPlan.trim() ||
+      actionPlanConfirmed ||
       executionSteps.length ||
       executionStepsConfirmed ||
       evidenceItems.length
     );
     if (!hasMeaningfulWork) return null;
-    const environmentValue = isProdPipelineStep
-      ? prodTargetEnvironment || actionEnvironment || actionInstance
-      : testTargetEnvironment || actionEnvironment || actionInstance;
+    const environmentValue = targetEnvironment || actionEnvironment || actionInstance;
     const stepName = executionMode === "cicd"
       ? t.steps.pipeline[0]
       : executionStepsConfirmed
         ? t.pipeline.checklist
+        : actionPlanConfirmed
+          ? a.confirmed
         : t.steps.actionPlan[0];
     const currentStep = executionMode === "cicd"
       ? "pipeline"
-      : executionStepsConfirmed || pipelineActionPlan.trim() || actionPlan.trim()
+      : executionStepsConfirmed || pipelineActionPlan.trim() || actionPlanConfirmed
         ? "pipeline"
         : "actionPlan";
     const pendingLabels = [
@@ -2290,6 +2421,7 @@ export function App() {
       updatedAt: new Date().toISOString(),
       draft: {
         repoPath,
+        outputFolder,
         rfc: currentRfc,
         actionProduct,
         actionMethod,
@@ -2298,12 +2430,17 @@ export function App() {
         actionActivity,
         artifactText,
         actionPlan,
+        actionPlanConfirmed,
+        actionPlanConfirmedAt,
         manualInstructions,
         manualSourceText,
         manualPhases,
+        manualPhaseDisabledKeys,
         riceFolderPath,
         mode,
         files,
+        devTargetEnvironment,
+        regTargetEnvironment,
         testTargetEnvironment,
         prodTargetEnvironment,
         testPipelineName,
@@ -2322,7 +2459,7 @@ export function App() {
         pipelineStepFailures
       }
     };
-  }, [actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionProduct, artifactCount, artifactText, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, isProdPipelineStep, manualInstructions, manualPhases, manualSourceText, mode, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  }, [a.confirmed, actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionPlanConfirmed, actionPlanConfirmedAt, actionProduct, artifactCount, artifactText, devTargetEnvironment, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, manualInstructions, manualPhaseDisabledKeys, manualPhases, manualSourceText, mode, outputFolder, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, regTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, targetEnvironment, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
   const pendingWorkItems = useMemo(() => pendingWorkSnapshots.filter((item) => {
     const draft = item.draft;
     if (!draft) return true;
@@ -2339,6 +2476,8 @@ export function App() {
       draft.manualPhases.length ||
       draft.riceFolderPath.trim() ||
       draft.files.length ||
+      draft.devTargetEnvironment?.trim() ||
+      draft.regTargetEnvironment?.trim() ||
       draft.testTargetEnvironment.trim() ||
       draft.prodTargetEnvironment.trim() ||
       draft.testPipelineName.trim() ||
@@ -2425,12 +2564,16 @@ export function App() {
     if (activeStep === "pipeline") return true;
     return matchesCurrentRfc(recordRfc, text);
   };
-  const currentStepEvidence = evidenceItems.filter(
-    (item) =>
-      item.step === activeStep &&
-      matchesCurrentExecution(item.rfc, "", item.sessionId) &&
-      item.pipelineStep === pipelineStepIndex &&
-      (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
+  const sortEvidenceDescending = (items: EvidenceItem[]) =>
+    items.slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const currentStepEvidence = sortEvidenceDescending(
+    evidenceItems.filter(
+      (item) =>
+        item.step === activeStep &&
+        matchesCurrentExecution(item.rfc, "", item.sessionId) &&
+        item.pipelineStep === pipelineStepIndex &&
+        (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
+    )
   );
   const currentStepComment = pipelineStepComments[pipelineStepKey]?.trim() ?? "";
   const currentStepFailed = Boolean(pipelineStepFailures[pipelineStepKey]);
@@ -2460,6 +2603,7 @@ export function App() {
     if (kind === "package") return ".par";
     if (kind === "lookup") return "lookup";
     if (kind === "xml") return ".xml";
+    if (kind === "sql") return ".sql";
     return t.badgeOther;
   }
 
@@ -2470,6 +2614,10 @@ export function App() {
   function componentBadge(kind: ArtifactInspection["components"][number]["kind"]) {
     if (kind === "connection") return "Conexion";
     if (kind === "schedule") return "Scheduler";
+    if (kind === "pipeline") return "Pipeline";
+    if (kind === "proxyService") return "Proxy Service";
+    if (kind === "businessService") return "Business Service";
+    if (kind === "serviceAccount") return "Service Account";
     return "DVM";
   }
 
@@ -2494,7 +2642,7 @@ export function App() {
   function normalizeArtifactCompareKey(value: string) {
     return normalizeEnvironmentName(
       value
-        .replace(/\.(?:iar|par|xml|csv)$/i, "")
+        .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i, "")
         .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "")
         .replace(/\bV(?:ERSION)?\d+$/i, "")
     );
@@ -2502,19 +2650,50 @@ export function App() {
 
   function artifactDisplayName(value: string) {
     return value
-      .replace(/\.(?:iar|par|xml|csv)$/i, "")
+      .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i, "")
       .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "");
   }
 
   function artifactVersionFromName(value: string) {
-    const match = value.match(/_(\d{2}[._]\d{2}[._]\d{4})(?:\.(?:iar|par|xml|csv))?$/i);
+    const match = value.match(/_(\d{2}[._]\d{2}[._]\d{4})(?:\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))?$/i);
     return match?.[1]?.replace(/_/g, ".") ?? undefined;
+  }
+
+  function artifactInspectionTextForPlan(inspections = actionArtifactInspections) {
+    const lines: string[] = [];
+    for (const inspection of inspections) {
+      lines.push(`Artifact file: ${inspection.fileName}`);
+      for (const project of inspection.projects) {
+        lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+      }
+      for (const component of inspection.components) {
+        lines.push(`${component.kind}: ${component.name}`);
+        lines.push(`Component path: ${component.path}`);
+      }
+      for (const entry of inspection.entries.filter((item) => /\.(?:Pipeline|BusinessService|ServiceAccount)$/i.test(item))) {
+        lines.push(`Package entry: ${entry}`);
+      }
+      for (const internalArtifact of inspection.internalArtifacts ?? []) {
+        lines.push(`Artifact file: ${internalArtifact.name}`);
+        for (const project of internalArtifact.projects) {
+          lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+        }
+        for (const component of internalArtifact.components) {
+          lines.push(`${component.kind}: ${component.name}`);
+          lines.push(`Component path: ${component.path}`);
+        }
+      }
+    }
+    return lines.filter(Boolean).join("\n");
   }
 
   function manualDetectionSourceText() {
     const sourceText = actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
-    if (actionProduct === "Base de datos") {
-      return [actionActivity, sourceText, artifactText].filter((value) => value.trim()).join("\n\n");
+    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC") {
+      const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
+      return [actionActivity, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
+        .filter((value) => value.trim())
+        .join("\n\n");
     }
     return sourceText;
   }
@@ -2524,9 +2703,19 @@ export function App() {
     const sourceText = manualDetectionSourceText();
     const enteredInstallable = installableArtifactNames(artifactText);
     const installableArtifacts = installableArtifactNames(sourceText);
+    const combinedInstallable = actionProduct === "OIC"
+      ? Array.from(
+          new Map(
+            [...enteredInstallable, ...installableArtifacts].map((item) => [
+              normalizeArtifactCompareKey(item),
+              item
+            ])
+          ).values()
+        )
+      : enteredInstallable;
     const detected = entered.length
-      ? enteredInstallable.length
-        ? enteredInstallable
+      ? combinedInstallable.length
+        ? combinedInstallable
         : !installableArtifacts.length
           ? entered
           : installableArtifacts
@@ -2772,6 +2961,45 @@ export function App() {
     addLog("Evidencia eliminada");
   }
 
+  async function saveEvidenceImage(item: EvidenceItem) {
+    if (!desktopApi?.saveEvidenceImage) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const output = await runTask(() =>
+      desktopApi.saveEvidenceImage({
+        rfc: currentRfc || item.rfc || "RFC",
+        phase: trackingEnvironment,
+        outputDirectory: outputFolder.trim() || undefined,
+        name: item.name,
+        dataUrl: item.dataUrl
+      })
+    );
+    if (!output) return;
+    setMessage(`${t.evidence.saved} ${output}`);
+  }
+
+  async function saveCurrentStepEvidence() {
+    if (!desktopApi?.saveEvidenceImages) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    if (!currentStepEvidence.length) {
+      setMessage(t.evidence.empty);
+      return;
+    }
+    const result = await runTask(() =>
+      desktopApi.saveEvidenceImages({
+        rfc: currentRfc || "RFC",
+        phase: trackingEnvironment,
+        outputDirectory: outputFolder.trim() || undefined,
+        images: currentStepEvidence.map((item) => ({ name: item.name, dataUrl: item.dataUrl }))
+      })
+    );
+    if (!result) return;
+    setMessage(`${t.evidence.savedMany} ${result.directory}`);
+  }
+
   function blobToDataUrl(blob: Blob) {
     return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -2873,11 +3101,18 @@ export function App() {
         ? executionSteps
         : documentCopy.pipeline.steps.map((title) => ({ title, detail: "" }));
     const exportStepLimit = failedPipelineStepIndex >= 0 ? failedPipelineStepIndex + 1 : documentSteps.length;
+    const registeredProfileName = profileName.trim() && profileName.trim() !== defaultProfile.name ? profileName.trim() : "";
+    const registeredProfileEmail = profileEmail.trim();
+    const registeredProfilePhone = profilePhone.trim();
+    const hasRegisteredProfile = Boolean(registeredProfileName || registeredProfileEmail || registeredProfilePhone);
     return {
       rfc,
       phase: trackingEnvironment,
       documentLanguage: documentLang,
       outputDirectory: outputFolder.trim() || undefined,
+      preparedBy: hasRegisteredProfile ? registeredProfileName : "",
+      preparedByEmail: hasRegisteredProfile ? registeredProfileEmail : "",
+      preparedByPhone: hasRegisteredProfile ? registeredProfilePhone : "",
       environment: targetEnvironment,
       pipeline: executionMode === "cicd" ? pipelineDisplayName : "",
       run: executionMode === "cicd" ? pipelineRunValue.trim() : "",
@@ -2903,20 +3138,11 @@ export function App() {
                 item.pipelineStep === index &&
                 (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
             )
+            .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
             .map((item) => ({ name: item.name, dataUrl: item.dataUrl, createdAt: item.createdAt }))
         };
       }),
-      logs: evidenceLog
-        .filter(
-          (entry) =>
-            matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId) &&
-            (entry.step === activeStep || (executionMode === "cicd" && Boolean(currentRfc)))
-        )
-        .map((entry) => ({
-          at: entry.at,
-          step: stepTitle(entry.step),
-          text: entry.text
-        }))
+      logs: []
     };
   }
 
@@ -2931,6 +3157,14 @@ export function App() {
 
   function openLocalPath(path: string) {
     desktopApi?.openExternal(`file://${encodeURI(path)}`);
+  }
+
+  function showItemInFolder(path: string) {
+    if (desktopApi?.showItemInFolder) {
+      desktopApi.showItemInFolder(path);
+      return;
+    }
+    openLocalPath(path);
   }
 
   async function removeHistoryItem(item: ExecutionHistoryItem) {
@@ -2963,6 +3197,7 @@ export function App() {
     setManualInstructions("");
     setManualSourceText("");
     setManualPhases([]);
+    setManualPhaseDisabledKeys([]);
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
     setActionArtifactModalOpen(false);
@@ -2970,6 +3205,8 @@ export function App() {
     setActionArtifactInspections([]);
     setExpandedActionArtifactFiles([]);
     setActionPlan("");
+    setActionPlanConfirmed(false);
+    setActionPlanConfirmedAt("");
     setRiceFolderPath("");
     setMode("ADHOC");
     setFiles([]);
@@ -2978,6 +3215,8 @@ export function App() {
     setSummary(null);
     setFinalOutput("");
     setLocalCommitResult(null);
+    setDevTargetEnvironment("");
+    setRegTargetEnvironment("");
     setTestTargetEnvironment("");
     setProdTargetEnvironment("");
     setTestPipelineName("");
@@ -2990,6 +3229,7 @@ export function App() {
     setPipelineActionPlan("");
     setExecutionSteps([]);
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setExecutionSessionId(createClientId("execution"));
     setEvidenceItems([]);
     setEvidenceLog([]);
@@ -3011,6 +3251,10 @@ export function App() {
     });
     setMessage(t.pendingSaved);
     return true;
+  }
+
+  function markConverterSynced(action: "update" | "rollback") {
+    setMessage(action === "update" ? t.converterUpdated : t.converterRolledBack);
   }
 
   function startNewWork() {
@@ -3044,6 +3288,7 @@ export function App() {
     let nextStep = item.currentStep;
     if (draft) {
       setRepoPath(draft.repoPath);
+      if (draft.outputFolder) setOutputFolder(draft.outputFolder);
       setRfc(draft.rfc);
       setActionProduct(draft.actionProduct);
       setActionMethod(draft.actionMethod);
@@ -3052,13 +3297,18 @@ export function App() {
       setActionActivity(draft.actionActivity);
       setArtifactText(draft.artifactText);
       setActionPlan(draft.actionPlan);
+      setActionPlanConfirmed(Boolean(draft.actionPlanConfirmed));
+      setActionPlanConfirmedAt(draft.actionPlanConfirmedAt ?? "");
       setManualInstructions(draft.manualInstructions);
       setManualSourceText(draft.manualSourceText ?? draft.manualInstructions);
       setManualPhases(draft.manualPhases);
+      setManualPhaseDisabledKeys(draft.manualPhaseDisabledKeys ?? []);
       setManualPhaseIndex(0);
       setRiceFolderPath(draft.riceFolderPath);
       setMode(draft.mode);
       setFiles(draft.files);
+      setDevTargetEnvironment(draft.devTargetEnvironment ?? "");
+      setRegTargetEnvironment(draft.regTargetEnvironment ?? "");
       setTestTargetEnvironment(draft.testTargetEnvironment);
       setProdTargetEnvironment(draft.prodTargetEnvironment);
       setTestPipelineName(draft.testPipelineName);
@@ -3069,17 +3319,27 @@ export function App() {
       setProdPipelineRunUrl(draft.prodPipelineRunUrl);
       setExecutionMode(draft.executionMode);
       setPipelineExecutionPhase(draft.pipelineExecutionPhase);
-      setPipelineActionPlan(draft.pipelineActionPlan);
-      setExecutionSteps(draft.executionSteps);
-      setExecutionStepsConfirmed(draft.executionStepsConfirmed);
-      setPipelineStepIndex(draft.pipelineStepIndex);
-      setPipelineStepComments(draft.pipelineStepComments);
-      setPipelineStepFailures(draft.pipelineStepFailures ?? {});
-      nextStep = draft.executionMode === "cicd" ||
+      const wantsExecution = Boolean(
+        draft.executionMode === "cicd" ||
         draft.pipelineActionPlan.trim() ||
         draft.executionStepsConfirmed ||
         draft.executionSteps.length ||
-        draft.actionPlan.trim()
+        (draft.actionPlanConfirmed && draft.actionPlan.trim() && window.confirm(t.pendingOpenExecutionConfirm))
+      );
+      const restoredPipelineActionPlan = wantsExecution && !draft.pipelineActionPlan.trim()
+        ? draft.actionPlan
+        : draft.pipelineActionPlan;
+      const restoredExecutionSteps = wantsExecution && !draft.executionSteps.length && restoredPipelineActionPlan.trim()
+        ? parseActionPlanExecutionSteps(restoredPipelineActionPlan, t.pipeline.steps)
+        : draft.executionSteps;
+      setPipelineActionPlan(restoredPipelineActionPlan);
+      setExecutionSteps(restoredExecutionSteps);
+      setExecutionStepsConfirmed(draft.executionStepsConfirmed);
+      setExecutionStepsReviewOpen(!draft.executionStepsConfirmed);
+      setPipelineStepIndex(draft.pipelineStepIndex);
+      setPipelineStepComments(draft.pipelineStepComments);
+      setPipelineStepFailures(draft.pipelineStepFailures ?? {});
+      nextStep = wantsExecution
         ? "pipeline"
         : "actionPlan";
     } else {
@@ -3126,6 +3386,9 @@ export function App() {
         actionActivity,
         artifactText,
         actionSourceDocument,
+        actionPlan,
+        actionPlanConfirmed,
+        actionPlanConfirmedAt,
         manualInstructions,
         riceFolderPath,
         testTargetEnvironment,
@@ -3199,6 +3462,8 @@ export function App() {
     setSummary(null);
     setFinalOutput("");
     setLocalCommitResult(null);
+    setDevTargetEnvironment("");
+    setRegTargetEnvironment("");
     setTestTargetEnvironment("");
     setProdTargetEnvironment("");
     setTestPipelineName("");
@@ -3211,6 +3476,7 @@ export function App() {
     setPipelineActionPlan("");
     setExecutionSteps([]);
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setEvidenceItems([]);
     setEvidenceLog([]);
     setExecutionHistory([]);
@@ -3296,7 +3562,6 @@ export function App() {
     if (output) {
       setLastExportPath(output);
       setExportModalOpen(true);
-      setMessage(t.messages.exportOk);
       addLog(`Evidencia exportada: ${output}`);
       setExecutionHistory((current) => [
         {
@@ -3412,7 +3677,7 @@ export function App() {
       setMessage(t.messages.filesElectron);
       return;
     }
-    const result = await desktopApi.selectFiles(["iar", "par", "csv", "xml"]);
+    const result = await desktopApi.selectFiles(["iar", "par", "csv", "xml", "wsdl", "zip", "jar", "sql"]);
     if (!result.length) return;
     const allowed = result.filter((file) => isAllowedArtifact(file.path));
     if (allowed.length !== result.length) setMessage(t.messages.invalidFiles);
@@ -3435,7 +3700,7 @@ export function App() {
       setMessage(t.messages.filesElectron);
       return;
     }
-    const result = await desktopApi.selectFiles(["iar", "par", "csv", "xml"]);
+    const result = await desktopApi.selectFiles(["iar", "par", "csv", "xml", "wsdl", "zip", "jar", "sql"]);
     if (!result.length) return;
     const allowed = result.filter((file) => isAllowedArtifact(file.path));
     if (allowed.length !== result.length) setMessage(t.messages.invalidFiles);
@@ -3458,10 +3723,6 @@ export function App() {
   }
 
   async function selectActionDocument() {
-    if (!actionEnvironment.trim()) {
-      setMessage("Selecciona el ambiente antes de cargar o revisar el IM090.");
-      return;
-    }
     if (!desktopApi?.selectActionDocument) {
       actionDocumentInputRef.current?.click();
       return;
@@ -3499,6 +3760,7 @@ export function App() {
     setAvailableDocumentEnvironments(available);
     const phases = buildManualPhasesForProduct(actionProduct, text, environment);
     setManualPhases(phases);
+    setManualPhaseDisabledKeys([]);
     setManualPhaseIndex(0);
     if (selectedEnvironmentMissingFromDocument(text, environment)) {
       setMessage(availableEnvironmentMessage(environment, available));
@@ -3520,6 +3782,7 @@ export function App() {
       setAvailableDocumentEnvironments(available);
       const phases = buildManualPhasesForProduct(actionProduct, text, actionEnvironment);
       setManualPhases(phases);
+      setManualPhaseDisabledKeys([]);
       setManualPhaseIndex(0);
       const operational = operationalIm090Text(text);
       const lines = actionPlanLinesFromIm090(text);
@@ -3535,11 +3798,14 @@ export function App() {
           : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
       if (detectedArtifacts.length) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
-      if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
+      if (!actionEnvironment.trim()) {
+        setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
+      } else if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
         setMessage(availableEnvironmentMessage(actionEnvironment, available));
       }
     } else {
       setManualPhases([]);
+      setManualPhaseDisabledKeys([]);
       setAvailableDocumentEnvironments([]);
     }
     if (document.warning) setMessage(document.warning);
@@ -3550,23 +3816,39 @@ export function App() {
     setManualPhases((current) => current.map((phase, index) => index === manualPhaseIndex ? { ...phase, content } : phase));
   }
 
+  function toggleManualPhaseEnabled(index: number, enabled: boolean) {
+    const phase = manualPhases[index];
+    if (!phase) return;
+    const key = manualPhaseKey(phase, index);
+    setManualPhaseDisabledKeys((current) =>
+      enabled
+        ? current.filter((item) => item !== key)
+        : current.includes(key)
+          ? current
+          : [...current, key]
+    );
+  }
+
+  function selectedManualPhases(phases = manualPhases) {
+    return phases.filter((phase, index) => !manualPhaseDisabledKeys.includes(manualPhaseKey(phase, index)));
+  }
+
   function reviewManualPhases() {
     const sourceText = manualDetectionSourceText();
     if (!sourceText.trim()) {
       setManualReviewOpen(true);
       return;
     }
-    if (!actionEnvironment.trim()) {
-      setMessage("Selecciona el ambiente antes de revisar las fases del IM090.");
-      return;
-    }
     const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
     const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
+    setManualPhaseDisabledKeys([]);
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
-    if (selectedEnvironmentMissingFromDocument(sourceText, actionEnvironment)) {
+    if (!actionEnvironment.trim()) {
+      setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
+    } else if (selectedEnvironmentMissingFromDocument(sourceText, actionEnvironment)) {
       setMessage(availableEnvironmentMessage(actionEnvironment, available));
     }
   }
@@ -3576,12 +3858,31 @@ export function App() {
     const enteredArtifacts = artifactLinesFromText(artifactText);
     const enteredInstallableArtifacts = installableArtifactNames(artifactText);
     const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const oicInstallableArtifacts = actionProduct === "OIC"
+      ? Array.from(
+          new Map(
+            [...enteredInstallableArtifacts, ...sourceInstallableArtifacts].map((item) => [
+              normalizeArtifactCompareKey(item),
+              item
+            ])
+          ).values()
+        )
+      : enteredInstallableArtifacts;
     const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
-    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
+    const isOdiPlan = isOdiManualPlan(actionProduct, sourceText);
+    const isOsbPlan = isOsbManualPlan(actionProduct, sourceText);
+    const isJavaPlan = isJavaManualPlan(actionProduct, sourceText);
+    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && !isOdiPlan && !isOsbPlan && !isJavaPlan && sourceInstallableArtifacts.length > 0;
     const detectedArtifacts = enteredArtifacts.length
       ? []
       : isMftManualPlan(actionProduct, sourceText)
         ? configurationItemsForProduct(actionProduct, sourceText)
+        : isOdiPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
+        : isOsbPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
+        : isJavaPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
         : databaseItems.length
           ? databaseItems
         : sourceInstallableArtifacts.length
@@ -3590,18 +3891,26 @@ export function App() {
     const artifacts = enteredArtifacts.length
       ? databaseItems.length
         ? databaseItems
-        : enteredInstallableArtifacts.length
-        ? enteredInstallableArtifacts
+        : isOdiPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
+        : isOsbPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
+        : isJavaPlan
+          ? configurationItemsForProduct(actionProduct, sourceText)
+        : oicInstallableArtifacts.length
+        ? oicInstallableArtifacts
         : sourceHasInstallableArtifacts
           ? sourceInstallableArtifacts
           : enteredArtifacts
       : detectedArtifacts;
     const isMftPlan = isMftManualPlan(actionProduct, sourceText);
-    const itemLabel = isMftPlan ? "Configuration Item(s)" : "Artifact(s) / component(s)";
-    const fallbackItem = actionProduct === "MFT" ? "- Confirm MFT configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
+    const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan ? "Configuration item(s)" : "Artifact(s) / component(s)";
+    const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const validationBlock = actionArtifactValidationBlock();
-    const productName = actionProduct === "Base de datos"
+    const productName = isJavaPlan
+      ? "JAVA / WebLogic"
+      : actionProduct === "Base de datos"
       ? "Oracle Database"
       : actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = actionEnvironment.trim() || "<Environment>";
@@ -3616,8 +3925,8 @@ export function App() {
         : "<IM090 / instructions document>"
     );
     const metadata = manualPlanMetadataForProduct(productName, environmentName, instanceName, sourceText);
-    const normalizePhaseOutput = !isMftPlan && !isDatabaseManualPlan(actionProduct, sourceText);
-    const sourceDocumentLine = actionProduct === "Base de datos" && !actionSourceDocument
+    const normalizePhaseOutput = !isMftPlan && !isOdiPlan && !isOsbPlan && !isJavaPlan && !isDatabaseManualPlan(actionProduct, sourceText);
+    const sourceDocumentLine = (actionProduct === "Base de datos" || isOdiPlan || isOsbPlan || isJavaPlan) && !actionSourceDocument
       ? ""
       : `Source document: ${sourceDocumentName}\n`;
     const phaseBlocks = phases.map((phase, index) => {
@@ -3638,8 +3947,15 @@ export function App() {
     const reviewedPhases = manualPhases.length
       ? manualPhases
       : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+    const enabledPhases = selectedManualPhases(reviewedPhases);
+    if (!enabledPhases.length) {
+      setMessage(a.manualSelectOne);
+      return;
+    }
     setManualPhases(reviewedPhases);
-    setActionPlan(buildManualActionPlan(reviewedPhases));
+    setActionPlan(buildManualActionPlan(enabledPhases));
+    setActionPlanConfirmed(false);
+    setActionPlanConfirmedAt("");
     setManualReviewOpen(false);
     addLog("Action Plan manual generado desde fases revisadas", "actionPlan");
   }
@@ -3748,12 +4064,16 @@ export function App() {
     setManualInstructions("");
     setManualSourceText("");
     setManualPhases([]);
+    setManualPhaseDisabledKeys([]);
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
     setActionPlan("");
+    setActionPlanConfirmed(false);
+    setActionPlanConfirmedAt("");
     setPipelineActionPlan("");
     setExecutionSteps([]);
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setMessage(a.clear);
     setLocalCommitResult(null);
   }
@@ -3763,6 +4083,8 @@ export function App() {
     setExecutionSessionId(createClientId("execution"));
     setRfc("");
     setPipelineExecutionPhase("TEST");
+    setDevTargetEnvironment("");
+    setRegTargetEnvironment("");
     setTestTargetEnvironment("");
     setProdTargetEnvironment("");
     setTestPipelineName("");
@@ -3774,6 +4096,7 @@ export function App() {
     setPipelineActionPlan("");
     setExecutionSteps([]);
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setPipelineStepIndex(0);
     setPipelineStepComments({});
     setPipelineStepFailures({});
@@ -3917,6 +4240,8 @@ export function App() {
   }
 
   function generateActionPlan() {
+    setActionPlanConfirmed(false);
+    setActionPlanConfirmedAt("");
     const sourceText = manualDetectionSourceText();
     const enteredArtifacts = artifactLinesFromText(artifactText);
     const enteredInstallableArtifacts = installableArtifactNames(artifactText);
@@ -3954,12 +4279,18 @@ export function App() {
       if (!actionSourceDocument && sourceText.trim()) {
         const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
         setManualPhases(phases);
+        setManualPhaseDisabledKeys([]);
         setActionPlan(buildManualActionPlan(phases));
         addLog("Action Plan manual generado desde texto pegado", "actionPlan");
         return;
       }
       if (manualPhases.length) {
-        setActionPlan(buildManualActionPlan(manualPhases));
+        const enabledPhases = selectedManualPhases();
+        if (!enabledPhases.length) {
+          setMessage(a.manualSelectOne);
+          return;
+        }
+        setActionPlan(buildManualActionPlan(enabledPhases));
         addLog("Action Plan manual generado", "actionPlan");
         return;
       }
@@ -3985,6 +4316,51 @@ export function App() {
   async function copyActionPlan() {
     if (!actionPlan) return;
     await navigator.clipboard?.writeText(actionPlan);
+  }
+
+  async function confirmActionPlan() {
+    if (!actionPlan.trim()) return;
+    if (!desktopApi?.saveActionPlanText) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const output = await runTask(() =>
+      desktopApi.saveActionPlanText({
+        rfc: rfc.trim() || "RFC",
+        outputDirectory: outputFolder.trim() || undefined,
+        content: actionPlan
+      })
+    );
+    if (!output) return;
+    const outputPath = typeof output === "string" ? output : output.path;
+    const outputBaseDirectory = typeof output === "string" ? outputFolder : output.baseDirectory;
+    if (outputBaseDirectory) setOutputFolder(outputBaseDirectory);
+    const confirmedAt = new Date().toISOString();
+    setActionPlanConfirmed(true);
+    setActionPlanConfirmedAt(confirmedAt);
+    if (currentPendingWorkSnapshot?.draft) {
+      const confirmedSnapshot: PendingWorkSnapshot = {
+        ...currentPendingWorkSnapshot,
+        stepName: a.confirmed,
+        currentStep: "pipeline",
+        actionPlanReady: true,
+        updatedAt: confirmedAt,
+        draft: {
+          ...currentPendingWorkSnapshot.draft,
+          outputFolder: outputBaseDirectory || currentPendingWorkSnapshot.draft.outputFolder,
+          actionPlan,
+          actionPlanConfirmed: true,
+          actionPlanConfirmedAt: confirmedAt
+        }
+      };
+      setPendingWorkSnapshots((current) => {
+        const withoutCurrent = current.filter((item) => item.id !== confirmedSnapshot.id);
+        const next = [confirmedSnapshot, ...withoutCurrent].slice(0, 50);
+        localStorage.setItem(pendingWorkStorageKey, JSON.stringify(next));
+        return next;
+      });
+    }
+    setMessage(`${a.confirmedSaved} ${outputPath}`);
   }
 
   async function copyActiveStepLog() {
@@ -4014,6 +4390,7 @@ export function App() {
     setPipelineActionPlan(text);
     setExecutionSteps(parseActionPlanExecutionSteps(text, t.pipeline.steps));
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setPipelineStepIndex(0);
     setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
@@ -4025,6 +4402,7 @@ export function App() {
     setPipelineActionPlan(actionPlan);
     setExecutionSteps(parseActionPlanExecutionSteps(actionPlan, t.pipeline.steps));
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setPipelineStepIndex(0);
     setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
@@ -4033,6 +4411,7 @@ export function App() {
   function refreshExecutionSteps() {
     setExecutionSteps(parsedExecutionSteps);
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
     setPipelineStepIndex(0);
     setPipelineStepFailures({});
     setMessage(t.pipeline.stepsLoaded);
@@ -4041,6 +4420,7 @@ export function App() {
   function updateExecutionStep(index: number, field: keyof PipelineExecutionStep, value: string) {
     setExecutionSteps((current) => current.map((step, stepIndex) => (stepIndex === index ? { ...step, [field]: value } : step)));
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
   }
 
   function removeExecutionStep(index: number) {
@@ -4048,6 +4428,7 @@ export function App() {
     setPipelineStepIndex((current) => Math.max(0, Math.min(current, executionSteps.length - 2)));
     setPipelineStepFailures({});
     setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(true);
   }
 
   function confirmExecutionSteps() {
@@ -4056,6 +4437,7 @@ export function App() {
       .filter((step) => step.title);
     setExecutionSteps(cleanSteps);
     setExecutionStepsConfirmed(Boolean(cleanSteps.length));
+    setExecutionStepsReviewOpen(false);
     setPipelineStepIndex(0);
     setPipelineStepFailures({});
     setMessage(cleanSteps.length ? t.pipeline.stepsConfirmed : t.pipeline.planPlaceholder);
@@ -4198,6 +4580,8 @@ export function App() {
     const draft: ExecutionDraft = {
       sessionId: executionSessionId,
       rfc,
+      devTargetEnvironment,
+      regTargetEnvironment,
       testTargetEnvironment,
       prodTargetEnvironment,
       testPipelineName,
@@ -4209,6 +4593,8 @@ export function App() {
       executionMode,
       pipelineExecutionPhase,
       pipelineActionPlan,
+      actionPlanConfirmed,
+      actionPlanConfirmedAt,
       executionSteps,
       executionStepsConfirmed,
       pipelineStepIndex,
@@ -4225,6 +4611,8 @@ export function App() {
   }, [
     executionSessionId,
     rfc,
+    devTargetEnvironment,
+    regTargetEnvironment,
     testTargetEnvironment,
     prodTargetEnvironment,
     testPipelineName,
@@ -4236,6 +4624,8 @@ export function App() {
     executionMode,
     pipelineExecutionPhase,
     pipelineActionPlan,
+    actionPlanConfirmed,
+    actionPlanConfirmedAt,
     executionSteps,
     executionStepsConfirmed,
     pipelineStepIndex,
@@ -4384,6 +4774,14 @@ export function App() {
       setProdTargetEnvironment(actionInstance);
       return;
     }
+    if (actionEnvironment === "DEV") {
+      setDevTargetEnvironment(actionInstance);
+      return;
+    }
+    if (actionEnvironment === "REG") {
+      setRegTargetEnvironment(actionInstance);
+      return;
+    }
     if (actionEnvironment === "TEST") {
       setTestTargetEnvironment(actionInstance);
     }
@@ -4490,6 +4888,10 @@ export function App() {
             <button className="secondary compact" onClick={startNewWork}>
               <Plus size={15} />
               {t.newWork}
+            </button>
+            <button className="secondary compact" onClick={() => setConverterSyncOpen(true)}>
+              <RefreshCw size={15} />
+              {t.syncConverters}
             </button>
             <button className="status-pill status-button" onClick={() => setWorkspaceOpen(true)}>
               {busy ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
@@ -4623,6 +5025,42 @@ export function App() {
           </div>
         )}
 
+        {converterSyncOpen && (
+          <div className="modal-backdrop" onMouseDown={() => setConverterSyncOpen(false)}>
+            <section className="workspace-modal converter-sync-modal" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="modal-head">
+                <div>
+                  <h2>{t.converterSyncTitle}</h2>
+                  <p>{t.converterSyncBody}</p>
+                </div>
+                <button className="icon-close" onClick={() => setConverterSyncOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="converter-list">
+                {converterTechnologies.map((converter) => (
+                  <article className="converter-row" key={converter.id}>
+                    <div>
+                      <strong>{converter.name}</strong>
+                      <span>{t.converterVersion}: {converter.version}</span>
+                    </div>
+                    <div className="inline-actions compact-actions">
+                      <button className="secondary" onClick={() => markConverterSynced("update")}>
+                        <RefreshCw size={16} />
+                        {t.converterUpdate}
+                      </button>
+                      <button className="secondary" onClick={() => markConverterSynced("rollback")}>
+                        <ChevronLeft size={16} />
+                        {t.converterRollback}: {converter.previous}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
         {activeStep === "actionPlan" && (
           <section className="panel action-plan-panel">
             <div className="panel-heading">
@@ -4673,6 +5111,8 @@ export function App() {
                   <option value="OIC">OIC</option>
                   <option value="MFT">MFT</option>
                   <option value="Base de datos">Base de datos</option>
+                  <option value="SOA">SOA</option>
+                  <option value="JAVA">JAVA</option>
                   <option value="ODI Studio">ODI Studio</option>
                   <option value="OSB">OSB</option>
                 </select>
@@ -4698,16 +5138,15 @@ export function App() {
                   <option value="" disabled>
                     {a.selectEnvironment}
                   </option>
-                  <option value="DEVELOPMENT">DEVELOPMENT</option>
-                  <option value="TEST">TEST</option>
-                  <option value="REGRESSION">REGRESSION</option>
-                  <option value="PRE-PROD">PRE-PROD</option>
-                  <option value="PROD">PROD</option>
-                  <option value="DEV">DEV</option>
+                  {actionPlanEnvironments.map((environment) => (
+                    <option key={environment} value={environment}>
+                      {environment}
+                    </option>
+                  ))}
                   {availableDocumentEnvironments
                     .filter(
                       (environment) =>
-                        !["DEVELOPMENT", "TEST", "REGRESSION", "PRE-PROD", "PROD", "DEV"].some(
+                        !actionPlanEnvironments.some(
                           (option) => normalizeEnvironmentName(option) === normalizeEnvironmentName(environment)
                         )
                     )
@@ -4784,7 +5223,7 @@ export function App() {
                 ref={actionDocumentInputRef}
                 className="hidden-file-input"
                 type="file"
-                accept=".docx,.pdf"
+                accept=".docx,.pdf,.sql"
                 onChange={handleActionDocumentInput}
               />
             )}
@@ -4814,6 +5253,16 @@ export function App() {
               <div className="output-head">
                 <strong>{a.preview}</strong>
                 <div>
+                  {actionPlanConfirmed && (
+                    <span className="action-plan-status">
+                      <CheckCircle2 size={15} />
+                      {a.confirmed}
+                    </span>
+                  )}
+                  <button className="secondary" disabled={!actionPlan.trim()} onClick={confirmActionPlan} title={a.confirm}>
+                    <CheckCircle2 size={16} />
+                    {a.confirm}
+                  </button>
                   <button className="secondary" disabled={!actionPlan} onClick={copyActionPlan} title={a.copy}>
                     <Copy size={16} />
                     {a.copy}
@@ -4823,9 +5272,20 @@ export function App() {
               <textarea
                 className="action-plan-text"
                 value={actionPlan}
-                onChange={(event) => setActionPlan(event.target.value)}
+                onChange={(event) => {
+                  setActionPlan(event.target.value);
+                  if (actionPlanConfirmed) {
+                    setActionPlanConfirmed(false);
+                    setActionPlanConfirmedAt("");
+                  }
+                }}
                 placeholder="=========================================================="
               />
+              {actionPlanConfirmedAt && (
+                <small className="action-plan-confirmed-at">
+                  {a.confirmed}: {new Date(actionPlanConfirmedAt).toLocaleString()}
+                </small>
+              )}
             </div>
           </section>
         )}
@@ -5072,6 +5532,7 @@ export function App() {
                       setPipelineStepComments({});
                       setPipelineStepFailures({});
                       setExecutionStepsConfirmed(false);
+                      setExecutionStepsReviewOpen(true);
                     }}
                   >
                     {t.pipeline.modeGeneral}
@@ -5084,6 +5545,7 @@ export function App() {
                       setPipelineActionPlan("");
                       setExecutionSteps([]);
                       setExecutionStepsConfirmed(false);
+                      setExecutionStepsReviewOpen(true);
                       setPipelineStepIndex(0);
                       setPipelineStepComments({});
                       setPipelineStepFailures({});
@@ -5106,19 +5568,18 @@ export function App() {
                     setPipelineStepIndex(0);
                   }}
                 >
-                  <option value="TEST">TEST</option>
-                  <option value="PROD">PROD</option>
+                  {pipelinePhases.map((phase) => (
+                    <option key={phase} value={phase}>
+                      {phase}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
                 {t.pipeline.environment}
                 <input
                   value={targetEnvironment}
-                  onChange={(event) =>
-                    isProdPipelineStep
-                      ? setProdTargetEnvironment(event.target.value)
-                      : setTestTargetEnvironment(event.target.value)
-                  }
+                  onChange={(event) => setTargetEnvironmentForPhase(event.target.value)}
                 />
               </label>
             </div>
@@ -5185,6 +5646,7 @@ export function App() {
                   setPipelineActionPlan(value);
                   setExecutionSteps(parseActionPlanExecutionSteps(value, t.pipeline.steps));
                   setExecutionStepsConfirmed(false);
+                  setExecutionStepsReviewOpen(true);
                   setPipelineStepIndex(0);
                   setPipelineStepFailures({});
                 }}
@@ -5208,32 +5670,45 @@ export function App() {
                     <strong>{t.pipeline.reviewSteps}</strong>
                     <p>{t.pipeline.editStepsHint}</p>
                   </div>
-                  <button className="secondary" onClick={confirmExecutionSteps}>
-                    <CheckCircle2 size={16} />
-                    {t.pipeline.confirmSteps}
-                  </button>
+                  {executionStepsConfirmed && !executionStepsReviewOpen ? (
+                    <button className="secondary" onClick={() => setExecutionStepsReviewOpen(true)}>
+                      <FileText size={16} />
+                      {t.pipeline.reviewSteps}
+                    </button>
+                  ) : (
+                    <button className="secondary" onClick={confirmExecutionSteps}>
+                      <CheckCircle2 size={16} />
+                      {t.pipeline.confirmSteps}
+                    </button>
+                  )}
                 </div>
-                <div className="execution-step-editor">
-                  {executionSteps.map((step, index) => (
-                    <article className="execution-step-row" key={`${index}-${step.title}`}>
-                      <span>{index + 1}</span>
-                      <div>
-                        <input
-                          value={step.title}
-                          onChange={(event) => updateExecutionStep(index, "title", event.target.value)}
-                        />
-                        <textarea
-                          value={step.detail}
-                          onChange={(event) => updateExecutionStep(index, "detail", event.target.value)}
-                          placeholder={t.pipeline.comment}
-                        />
-                      </div>
-                      <button className="icon-button" onClick={() => removeExecutionStep(index)} title={t.deleteHistoryItem}>
-                        <Trash2 size={15} />
-                      </button>
-                    </article>
-                  ))}
-                </div>
+                {executionStepsConfirmed && !executionStepsReviewOpen ? (
+                  <div className="execution-steps-collapsed">
+                    {executionSteps.length} {t.pipeline.stepsConfirmed}
+                  </div>
+                ) : (
+                  <div className="execution-step-editor">
+                    {executionSteps.map((step, index) => (
+                      <article className="execution-step-row" key={index}>
+                        <span>{index + 1}</span>
+                        <div>
+                          <input
+                            value={step.title}
+                            onChange={(event) => updateExecutionStep(index, "title", event.target.value)}
+                          />
+                          <textarea
+                            value={step.detail}
+                            onChange={(event) => updateExecutionStep(index, "detail", event.target.value)}
+                            placeholder={t.pipeline.comment}
+                          />
+                        </div>
+                        <button className="icon-button" onClick={() => removeExecutionStep(index)} title={t.deleteHistoryItem}>
+                          <Trash2 size={15} />
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -5292,6 +5767,14 @@ export function App() {
                         <ExternalLink size={18} />
                       </button>
                     )}
+                    <div className="pipeline-nav-actions guided-nav-actions">
+                      <button className="secondary" disabled={pipelineStepIndex === 0} onClick={() => movePipelineStep(-1)}>
+                        {t.pipeline.previous}
+                      </button>
+                      <button disabled={isFinalPipelineStep} onClick={() => movePipelineStep(1)}>
+                        {t.pipeline.next}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -5313,7 +5796,18 @@ export function App() {
                     </button>
                   </div>
                   <div className="guided-preview">
-                    <strong>{t.pipeline.currentEvidence}</strong>
+                    <div className="evidence-preview-head">
+                      <strong>{t.pipeline.currentEvidence}</strong>
+                      <button
+                        className="icon-button"
+                        onClick={saveCurrentStepEvidence}
+                        disabled={!currentStepEvidence.length}
+                        title={t.evidence.saveStepImages}
+                        aria-label={t.evidence.saveStepImages}
+                      >
+                        <Download size={15} />
+                      </button>
+                    </div>
                     {currentStepEvidence.length ? (
                       currentStepEvidence.map((item) => (
                         <article className="step-evidence-card preview-card" key={item.id}>
@@ -5324,6 +5818,14 @@ export function App() {
                             <strong>{item.name}</strong>
                             {item.note && <span>{item.note}</span>}
                           </div>
+                          <button
+                            className="icon-button evidence-save"
+                            onClick={() => saveEvidenceImage(item)}
+                            title={t.evidence.saveImage}
+                            aria-label={t.evidence.saveImage}
+                          >
+                            <Download size={15} />
+                          </button>
                           <button className="icon-button evidence-remove" onClick={() => removeEvidence(item.id)}>
                             <Trash2 size={15} />
                           </button>
@@ -5354,14 +5856,6 @@ export function App() {
                   </div>
                 )}
 
-                <div className="pipeline-nav-actions">
-                  <button className="secondary" disabled={pipelineStepIndex === 0} onClick={() => movePipelineStep(-1)}>
-                    {t.pipeline.previous}
-                  </button>
-                  <button disabled={isFinalPipelineStep} onClick={() => movePipelineStep(1)}>
-                    {t.pipeline.next}
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -5557,18 +6051,31 @@ export function App() {
 
             <div className="manual-review-layout">
               <nav className="manual-phase-tabs" aria-label={a.manualReviewTitle}>
-                {manualPhases.map((phase, index) => (
-                  <button
-                    key={phase.id}
-                    className={manualPhaseIndex === index ? "active" : ""}
-                    onClick={() => setManualPhaseIndex(index)}
-                  >
-                    <span>{String.fromCharCode(65 + index)}</span>
-                    {phase.title}
-                  </button>
-                ))}
+                {manualPhases.map((phase, index) => {
+                  const phaseKey = manualPhaseKey(phase, index);
+                  const enabled = !manualPhaseDisabledKeys.includes(phaseKey);
+                  return (
+                    <div
+                      key={phaseKey}
+                      className={`manual-phase-tab ${manualPhaseIndex === index ? "active" : ""} ${enabled ? "" : "excluded"}`}
+                    >
+                      <label className="manual-phase-check" title={a.includePhase}>
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(event) => toggleManualPhaseEnabled(index, event.target.checked)}
+                        />
+                        <span className="sr-only">{a.includePhase}</span>
+                      </label>
+                      <button type="button" onClick={() => setManualPhaseIndex(index)}>
+                        <span>{String.fromCharCode(65 + index)}</span>
+                        {phase.title}
+                      </button>
+                    </div>
+                  );
+                })}
               </nav>
-              <label className="manual-phase-editor">
+              <label className={`manual-phase-editor ${manualPhaseDisabledKeys.includes(manualPhaseKey(manualPhases[manualPhaseIndex], manualPhaseIndex)) ? "excluded" : ""}`}>
                 {manualPhases[manualPhaseIndex]?.title}
                 <textarea
                   ref={manualPhaseTextareaRef}
@@ -5744,6 +6251,14 @@ export function App() {
                             <small>{item.path}</small>
                           </div>
                           <div className="history-actions">
+                            <button
+                              className="icon-button"
+                              onClick={() => showItemInFolder(item.path)}
+                              title={t.openFolder}
+                              aria-label={t.openFolder}
+                            >
+                              <Folder size={16} />
+                            </button>
                             <button className="secondary" onClick={() => openLocalPath(item.path)}>
                               <ExternalLink size={16} />
                               {t.openFile}
@@ -6301,9 +6816,19 @@ export function App() {
                 <strong>{imagePreview.name}</strong>
                 <span>{stepTitle(imagePreview.step)} · {new Date(imagePreview.createdAt).toLocaleString()}</span>
               </div>
-              <button className="icon-button" onClick={() => setImagePreview(null)}>
-                <X size={18} />
-              </button>
+              <div className="image-modal-actions">
+                <button
+                  className="icon-button"
+                  onClick={() => saveEvidenceImage(imagePreview)}
+                  title={t.evidence.saveImage}
+                  aria-label={t.evidence.saveImage}
+                >
+                  <Download size={18} />
+                </button>
+                <button className="icon-button" onClick={() => setImagePreview(null)}>
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             <img src={imagePreview.dataUrl} alt={imagePreview.name} />
           </div>

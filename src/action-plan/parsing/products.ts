@@ -1,6 +1,9 @@
 import { buildDatabaseSqlPlan, hasDatabaseInstructions } from "./database";
+import { buildJavaWeblogicPlan, hasJavaWeblogicInstructions, javaConfigurationItems } from "./java";
 import { buildMftConfigurationPlan, hasMftInstructions, mftConfigurationItems, mftManualPlanMetadata } from "./mft";
+import { buildOdiTopologyPlan, hasOdiInstructions, odiConfigurationItems } from "./odi";
 import { buildManualPhasesFromDocument } from "./oic";
+import { buildOsbConfigurationPlan, hasOsbInstructions, osbConfigurationItems } from "./osb";
 import type { ManualActionPhase } from "./types";
 
 export function isMftManualPlan(productName: string, text: string) {
@@ -11,14 +14,33 @@ export function isDatabaseManualPlan(productName: string, text: string) {
   return productName === "Base de datos" && hasDatabaseInstructions(text);
 }
 
+export function isOdiManualPlan(productName: string, text: string) {
+  return productName === "ODI Studio" && hasOdiInstructions(text);
+}
+
+export function isOsbManualPlan(productName: string, text: string) {
+  return productName === "OSB" && hasOsbInstructions(text);
+}
+
+export function isJavaManualPlan(productName: string, text: string) {
+  return productName === "JAVA" && hasJavaWeblogicInstructions(text);
+}
+
 export function buildManualPhasesForProduct(productName: string, text: string, environment: string): ManualActionPhase[] {
   if (isMftManualPlan(productName, text)) return buildMftConfigurationPlan(text, environment);
   if (isDatabaseManualPlan(productName, text)) return buildDatabaseSqlPlan(text, environment);
+  if (isOdiManualPlan(productName, text)) return buildOdiTopologyPlan(text, environment);
+  if (isOsbManualPlan(productName, text)) return buildOsbConfigurationPlan(text, environment);
+  if (isJavaManualPlan(productName, text)) return buildJavaWeblogicPlan(text, environment);
   return buildManualPhasesFromDocument(text, environment);
 }
 
 export function configurationItemsForProduct(productName: string, text: string) {
-  return isMftManualPlan(productName, text) ? mftConfigurationItems(text) : [];
+  if (isMftManualPlan(productName, text)) return mftConfigurationItems(text);
+  if (isOdiManualPlan(productName, text)) return odiConfigurationItems(text);
+  if (isOsbManualPlan(productName, text)) return osbConfigurationItems(text);
+  if (isJavaManualPlan(productName, text)) return javaConfigurationItems(text);
+  return [];
 }
 
 export function manualPlanMetadataForProduct(productName: string, environmentName: string, instanceName: string, instructions: string) {

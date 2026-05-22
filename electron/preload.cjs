@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("cicd", {
   selectEvidenceImages: () => ipcRenderer.invoke("select-evidence-images"),
   captureAppWindow: () => ipcRenderer.invoke("capture-app-window"),
   captureScreenRegion: () => ipcRenderer.invoke("capture-screen-region"),
+  saveEvidenceImage: (payload) => ipcRenderer.invoke("save-evidence-image", payload),
+  saveEvidenceImages: (payload) => ipcRenderer.invoke("save-evidence-images", payload),
+  saveActionPlanText: (payload) => ipcRenderer.invoke("save-action-plan-text", payload),
   getPathForFile: (file) => webUtils?.getPathForFile(file) ?? file?.path ?? "",
   scanRepositories: (basePath) => ipcRenderer.invoke("scan-repositories", basePath),
   cloneRepository: (payload) => ipcRenderer.invoke("clone-repository", payload),
@@ -23,5 +26,6 @@ contextBridge.exposeInMainWorld("cicd", {
   backupUserData: (payload) => ipcRenderer.invoke("backup-user-data", payload),
   clearUserFiles: () => ipcRenderer.invoke("clear-user-files"),
   deleteLocalFile: (path) => ipcRenderer.invoke("delete-local-file", path),
-  openExternal: (url) => ipcRenderer.invoke("open-external", url)
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  showItemInFolder: (path) => ipcRenderer.invoke("show-item-in-folder", path)
 });

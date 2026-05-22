@@ -20,13 +20,13 @@ export type RepositoryInfo = {
 export type SelectedFile = {
   path: string;
   name: string;
-  kind: "integration" | "package" | "lookup" | "xml" | "other";
+  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "other";
 };
 
 export type ActionSourceDocument = {
   path: string;
   name: string;
-  kind: "docx" | "pdf";
+  kind: "docx" | "pdf" | "sql";
   text: string;
   warning?: string;
 };
@@ -51,7 +51,7 @@ export type FinalizeResult = {
 export type ArtifactInspection = {
   filePath: string;
   fileName: string;
-  kind: "iar" | "par" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "unsupported" | "error";
   projects: Array<{
     code?: string;
     name?: string;
@@ -60,7 +60,7 @@ export type ArtifactInspection = {
     state?: string;
   }>;
   components: Array<{
-    kind: "connection" | "schedule" | "dvm";
+    kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
     name: string;
     path: string;
   }>;
@@ -68,7 +68,7 @@ export type ArtifactInspection = {
   internalArtifacts?: Array<{
     path: string;
     name: string;
-    kind: "iar" | "par" | "unsupported" | "error";
+    kind: "iar" | "par" | "jar" | "unsupported" | "error";
     projects: Array<{
       code?: string;
       name?: string;
@@ -77,7 +77,7 @@ export type ArtifactInspection = {
       state?: string;
     }>;
     components: Array<{
-      kind: "connection" | "schedule" | "dvm";
+      kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
       name: string;
       path: string;
     }>;
@@ -103,6 +103,24 @@ declare global {
       selectEvidenceImages: () => Promise<EvidenceImage[]>;
       captureAppWindow: () => Promise<EvidenceImage>;
       captureScreenRegion: () => Promise<EvidenceImage>;
+      saveEvidenceImage: (payload: {
+        rfc?: string;
+        phase?: string;
+        outputDirectory?: string;
+        name: string;
+        dataUrl: string;
+      }) => Promise<string | null>;
+      saveEvidenceImages: (payload: {
+        rfc?: string;
+        phase?: string;
+        outputDirectory?: string;
+        images: Array<{ name: string; dataUrl: string }>;
+      }) => Promise<{ directory: string; count: number; paths: string[] } | null>;
+      saveActionPlanText: (payload: {
+        rfc?: string;
+        outputDirectory?: string;
+        content: string;
+      }) => Promise<{ path: string; baseDirectory: string; outputDirectory: string } | string | null>;
       getPathForFile: (file: File) => string;
       scanRepositories: (basePath: string) => Promise<RepositoryInfo[]>;
       cloneRepository: (payload: { url: string; destination: string }) => Promise<RepositoryInfo>;
@@ -119,6 +137,7 @@ declare global {
       clearUserFiles: () => Promise<boolean>;
       deleteLocalFile: (path: string) => Promise<boolean>;
       openExternal: (url: string) => Promise<void>;
+      showItemInFolder: (path: string) => Promise<boolean>;
     };
   }
 }

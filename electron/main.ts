@@ -23,13 +23,13 @@ type RepositoryInfo = {
 type SelectedFile = {
   path: string;
   name: string;
-  kind: "integration" | "package" | "lookup" | "xml" | "other";
+  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "other";
 };
 
 type ActionSourceDocument = {
   path: string;
   name: string;
-  kind: "docx" | "pdf";
+  kind: "docx" | "pdf" | "sql";
   text: string;
   warning?: string;
 };
@@ -51,7 +51,7 @@ type InspectedProject = {
 };
 
 type InspectedComponent = {
-  kind: "connection" | "schedule" | "dvm";
+  kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
   name: string;
   path: string;
 };
@@ -59,7 +59,7 @@ type InspectedComponent = {
 type InternalArtifactInspection = {
   path: string;
   name: string;
-  kind: "iar" | "par" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "unsupported" | "error";
   projects: InspectedProject[];
   components: InspectedComponent[];
   entries: string[];
@@ -87,6 +87,9 @@ type EvidenceExportPayload = {
   phase: string;
   documentLanguage?: "en" | "es" | "pt";
   outputDirectory?: string;
+  preparedBy?: string;
+  preparedByEmail?: string;
+  preparedByPhone?: string;
   environment: string;
   pipeline: string;
   run: string;
@@ -99,6 +102,27 @@ type EvidenceExportPayload = {
     images: Array<{ name: string; dataUrl: string; createdAt: string }>;
   }>;
   logs: Array<{ at: string; step: string; text: string }>;
+};
+
+type EvidenceImageSavePayload = {
+  rfc?: string;
+  phase?: string;
+  outputDirectory?: string;
+  name: string;
+  dataUrl: string;
+};
+
+type EvidenceImagesSavePayload = {
+  rfc?: string;
+  phase?: string;
+  outputDirectory?: string;
+  images: EvidenceImageSavePayload[];
+};
+
+type ActionPlanTextSavePayload = {
+  rfc?: string;
+  outputDirectory?: string;
+  content: string;
 };
 
 type UserDataBackupPayload = {
@@ -318,7 +342,8 @@ function classifyFile(filePath: string): SelectedFile["kind"] {
   if (ext === ".iar") return "integration";
   if (ext === ".par") return "package";
   if (ext === ".csv") return "lookup";
-  if (ext === ".xml") return "xml";
+  if (ext === ".xml" || ext === ".wsdl") return "xml";
+  if (ext === ".sql") return "sql";
   return "other";
 }
 
@@ -455,34 +480,49 @@ function hasEvidenceStepContent(step: EvidenceExportPayload["steps"][number]) {
 function evidenceLabels(language: EvidenceExportPayload["documentLanguage"]) {
   if (language === "es") {
     return {
-      subtitle: "Evidencia de ejecucion CI/CD",
+      title: "Evidencia de ejecucion RFC",
+      subtitle: "Equipo CSS",
+      classification: "Confidential - Oracle Internal",
+      rfc: "RFC",
       environment: "Ambiente",
       execution: "Ejecucion RFC",
       phase: "Fase",
+      preparedBy: "Preparado por",
+      email: "Correo",
+      phone: "Telefono",
       message: "Mensaje RFC",
-      steps: "Pasos",
-      log: "Log"
+      steps: "Evidencia por paso"
     };
   }
   if (language === "pt") {
     return {
-      subtitle: "Evidencia de execucao CI/CD",
+      title: "Evidencia de execucao RFC",
+      subtitle: "Equipe CSS",
+      classification: "Confidential - Oracle Internal",
+      rfc: "RFC",
       environment: "Ambiente",
       execution: "Execucao RFC",
       phase: "Fase",
+      preparedBy: "Preparado por",
+      email: "Email",
+      phone: "Telefone",
       message: "Mensagem RFC",
-      steps: "Passos",
-      log: "Log"
+      steps: "Evidencia por passo"
     };
   }
   return {
-    subtitle: "CI/CD execution evidence",
+    title: "RFC Execution Evidence",
+    subtitle: "CSS Team",
+    classification: "Confidential - Oracle Internal",
+    rfc: "RFC",
     environment: "Environment",
     execution: "RFC Execution",
     phase: "Phase",
+    preparedBy: "Prepared by",
+    email: "Email",
+    phone: "Phone",
     message: "RFC message",
-    steps: "Steps",
-    log: "Log"
+    steps: "Step Evidence"
   };
 }
 
@@ -495,7 +535,12 @@ function buildEvidenceHtml(payload: EvidenceExportPayload) {
   const steps = payload.steps.filter(hasEvidenceStepContent);
   const messageBlock = payload.message.trim() ? `<h2>${labels.message}</h2><pre>${xmlEscape(payload.message)}</pre>` : "";
   const metaRows = [
+    [labels.rfc, payload.rfc],
+    [labels.environment, payload.environment],
     [labels.phase, payload.phase],
+    [labels.preparedBy, payload.preparedBy ?? ""],
+    [labels.email, payload.preparedByEmail ?? ""],
+    [labels.phone, payload.preparedByPhone ?? ""],
     ["Pipeline", payload.pipeline],
     ["Run", payload.run],
     ["URL", payload.runUrl]
@@ -503,10 +548,7 @@ function buildEvidenceHtml(payload: EvidenceExportPayload) {
   const metaBlock = metaRows.length
     ? `<div class="meta">${metaRows.map(([label, value]) => `<strong>${xmlEscape(label)}</strong><span>${xmlEscape(value)}</span>`).join("")}</div>`
     : "";
-  const logBlock = payload.logs.length
-    ? `<h2>${labels.log}</h2><div class="log">${payload.logs.map((log) => `[${log.at}] ${log.step}: ${log.text}`).join("\n")}</div>`
-    : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#272321;margin:36px}h1{color:#c74634}h2{border-bottom:1px solid #ddd;padding-bottom:6px}.meta{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:18px 0}.step{page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:14px;margin:14px 0}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-radius:6px}img{max-width:100%;border:1px solid #ddd;border-radius:6px;margin-top:8px}.log{font-family:monospace;font-size:12px;white-space:pre-wrap}</style></head><body><h1>RFC ${xmlEscape(payload.rfc || "")}</h1><p>${labels.environment}: ${xmlEscape(payload.environment)}</p><p>${new Date().toLocaleDateString()}</p><h2>${labels.execution}</h2>${metaBlock}${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<img src="${image.dataUrl}">`).join("")}</section>`).join("")}${logBlock}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#312d2a;margin:42px 48px}h1{color:#312d2a;font-size:30px;margin:0 0 4px}h2{color:#312d2a;border-bottom:1px solid #d8d1cc;padding-bottom:6px;margin-top:28px}.oracle-line{height:4px;background:#c74634;margin:0 0 28px}.subtitle{color:#6f625c;margin:0 0 4px}.classification{color:#6f625c;font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 22px}.meta{display:grid;grid-template-columns:150px 1fr;gap:8px 14px;margin:18px 0 26px}.meta strong{color:#5f5650}.step{page-break-inside:avoid;border:1px solid #d8d1cc;border-radius:3px;padding:14px;margin:14px 0}.step h3{margin:0 0 10px;color:#312d2a}.comment{white-space:pre-wrap;background:#f7f4f2;padding:10px;border-left:4px solid #c74634}img{max-width:100%;border:1px solid #d8d1cc;margin-top:10px}</style></head><body><div class="oracle-line"></div><h1>${xmlEscape(labels.title)}</h1><p class="subtitle">${xmlEscape(labels.subtitle)}</p><p class="classification">${xmlEscape(labels.classification)}</p><h2>${labels.execution}</h2>${metaBlock}${messageBlock}<h2>${labels.steps}</h2>${steps.map((step) => `<section class="step"><h3>${step.index}. ${xmlEscape(step.title)}</h3>${step.comment.trim() ? `<div class="comment">${xmlEscape(step.comment)}</div>` : ""}${step.images.map((image) => `<img src="${image.dataUrl}">`).join("")}</section>`).join("")}</body></html>`;
 }
 
 function buildEvidenceDocx(payload: EvidenceExportPayload) {
@@ -515,10 +557,14 @@ function buildEvidenceDocx(payload: EvidenceExportPayload) {
   let imageIndex = 1;
   const steps = payload.steps.filter(hasEvidenceStepContent);
   const body: string[] = [
-    paragraph(`RFC ${payload.rfc || ""}`, "Title"),
+    paragraph(labels.title, "Title"),
     paragraph(labels.subtitle, "Subtitle"),
+    paragraph(labels.classification, "Subtitle"),
+    labeledParagraph(labels.rfc, payload.rfc),
     labeledParagraph(labels.environment, payload.environment),
-    paragraph(new Date().toLocaleDateString(), "Subtitle"),
+    labeledParagraph(labels.preparedBy, payload.preparedBy ?? ""),
+    labeledParagraph(labels.email, payload.preparedByEmail ?? ""),
+    labeledParagraph(labels.phone, payload.preparedByPhone ?? ""),
     pageBreak(),
     paragraph(labels.execution, "Title"),
     labeledParagraph(labels.phase, payload.phase),
@@ -543,9 +589,6 @@ function buildEvidenceDocx(payload: EvidenceExportPayload) {
       body.push(imageRun(relId, imageIndex));
       imageIndex += 1;
     }
-  }
-  if (payload.logs.length) {
-    body.push(heading(labels.log), ...payload.logs.map((log) => paragraph(`[${log.at}] ${log.step}: ${log.text}`)));
   }
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body.join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>`;
   const rels = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${media.map((image) => `<Relationship Id="${image.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${image.name}"/>`).join("")}</Relationships>`;
@@ -763,6 +806,13 @@ async function extractPdfTextFromFile(filePath: string) {
   return cleanExtractedPdfText(extractPdfText(await readFile(filePath)));
 }
 
+function lowSignalActionDocumentText(text: string) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+  if (normalized.length < 700) return true;
+  return !/\b(?:Installation artifacts|Installation Steps|Pre[- ]Installation|Activate integration|Deactivate integration|Connection|Lookup|Schedule|Import|Backup|Validation|Return Point)\b/i.test(normalized);
+}
+
 function parseProperties(text: string) {
   const props: Record<string, string> = {};
   for (const line of text.split(/\r?\n/)) {
@@ -793,6 +843,38 @@ function inspectPackageComponents(entries: ZipEntry[]): InspectedComponent[] {
     if (components.length >= 80) break;
   }
   return components;
+}
+
+function inspectOsbJarComponents(entries: ZipEntry[]): InspectedComponent[] {
+  const visible = entries.map((entry) => entry.name).filter((name) => !name.endsWith("/"));
+  const components: InspectedComponent[] = [];
+  for (const entryPath of visible) {
+    if (/\.Pipeline$/i.test(entryPath)) {
+      components.push({ kind: "pipeline", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    } else if (/\.ProxyService$/i.test(entryPath)) {
+      components.push({ kind: "proxyService", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    } else if (/\.BusinessService$/i.test(entryPath)) {
+      components.push({ kind: "businessService", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    } else if (/\.ServiceAccount$/i.test(entryPath)) {
+      components.push({ kind: "serviceAccount", name: baseNameWithoutExtension(entryPath), path: entryPath });
+    }
+    if (components.length >= 80) break;
+  }
+  return components;
+}
+
+function inspectOsbJarBuffer(buffer: Buffer): ZipInspectionResult {
+  const entries = listZipEntries(buffer);
+  const visibleEntries = entries
+    .map((entry) => entry.name)
+    .filter((name) => !name.endsWith("/"))
+    .slice(0, 120);
+  return {
+    projects: [],
+    components: inspectOsbJarComponents(entries),
+    entries: visibleEntries,
+    internalArtifacts: []
+  };
 }
 
 function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "par"): ZipInspectionResult {
@@ -851,7 +933,7 @@ function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "p
 
 async function inspectArtifact(filePath: string) {
   const ext = extname(filePath).toLowerCase();
-  if (ext !== ".iar" && ext !== ".par") {
+  if (ext !== ".iar" && ext !== ".par" && ext !== ".jar") {
     return {
       filePath,
       fileName: basename(filePath),
@@ -863,6 +945,18 @@ async function inspectArtifact(filePath: string) {
   }
   try {
     const buffer = await readFile(filePath);
+    if (ext === ".jar") {
+      const inspected = inspectOsbJarBuffer(buffer);
+      return {
+        filePath,
+        fileName: basename(filePath),
+        kind: "jar",
+        projects: inspected.projects,
+        components: inspected.components,
+        entries: inspected.entries,
+        internalArtifacts: inspected.internalArtifacts
+      };
+    }
     const inspected = inspectZipBuffer(buffer, basename(filePath), ext === ".par" ? "par" : "iar");
     return {
       filePath,
@@ -889,6 +983,67 @@ async function inspectArtifact(filePath: string) {
 
 function safeRfc(rfc: string) {
   return rfc.trim().replace(/[^\w.-]/g, "_");
+}
+
+function safeFileSegment(value: string) {
+  return value.trim().replace(/[^\w.-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function evidenceExportTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join("") + `_${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+function evidenceExportFileBase(payload: EvidenceExportPayload) {
+  return [
+    safeFileSegment(payload.rfc || "RFC"),
+    safeFileSegment(payload.phase || "ENV").toUpperCase(),
+    safeFileSegment(payload.environment || ""),
+    "RFC_Execution_Evidence",
+    evidenceExportTimestamp()
+  ].filter(Boolean).join("_");
+}
+
+function safeEvidenceFileName(name: string) {
+  const clean = basename(name || "captura-evidencia.png").replace(/[^\w .-]/g, "_");
+  return extname(clean) ? clean : `${clean}.png`;
+}
+
+async function uniqueOutputPath(directory: string, fileName: string) {
+  const extension = extname(fileName);
+  const base = extension ? fileName.slice(0, -extension.length) : fileName;
+  let outputPath = join(directory, fileName);
+  let suffix = 2;
+  while (await pathExists(outputPath)) {
+    outputPath = join(directory, `${base}-${suffix}${extension}`);
+    suffix += 1;
+  }
+  return outputPath;
+}
+
+async function rfcOutputDirectory(baseDirectory: string, rfc: string) {
+  const directory = join(baseDirectory, safeRfc(rfc || "RFC"));
+  await mkdir(directory, { recursive: true });
+  return directory;
+}
+
+async function chooseEvidenceBaseDirectory(title: string) {
+  const result = await dialog.showOpenDialog({
+    title,
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+}
+
+function evidenceBufferFromDataUrl(dataUrl: string) {
+  const match = /^data:image\/(?:png|jpe?g|webp);base64,(.+)$/i.exec(dataUrl);
+  if (!match) throw new Error("Formato de imagen no soportado.");
+  return Buffer.from(match[1], "base64");
 }
 
 function getManifestName(mode: DraftPayload["mode"]) {
@@ -920,7 +1075,7 @@ function buildDraft(payload: DraftPayload) {
   if (!cleanRfc) warnings.push("El RFC está vacío.");
   if (!riceFolderPath) warnings.push("La ruta RICE_FOLDER_PATH está vacía.");
   if (payload.files.length === 0) warnings.push("No hay archivos seleccionados.");
-  if (manifestEntries.length === 0) warnings.push("No hay .iar, .par o .xml para listar en el manifiesto.");
+  if (manifestEntries.length === 0) warnings.push("No hay .iar, .par, .xml o .wsdl para listar en el manifiesto.");
   return { targetPath, filesToCopy, manifestPath, manifestEntries, inputUpdates, warnings };
 }
 
@@ -1058,7 +1213,7 @@ ipcMain.handle("delete-local-file", async (_event, filePath: string) => {
 });
 
 ipcMain.handle("select-files", async (_event, extensions: string[]) => {
-  const filters = [{ name: "OIC artifacts", extensions: extensions.length ? extensions : ["iar", "par", "csv", "xml"] }];
+  const filters = [{ name: "Integration artifacts", extensions: extensions.length ? extensions : ["iar", "par", "csv", "xml", "wsdl", "zip", "jar", "sql"] }];
   const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters });
   if (result.canceled) return [];
   return result.filePaths
@@ -1069,7 +1224,7 @@ ipcMain.handle("select-files", async (_event, extensions: string[]) => {
 ipcMain.handle("select-action-document", async (): Promise<ActionSourceDocument | null> => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [{ name: "IM090 / installation document", extensions: ["docx", "pdf"] }]
+    filters: [{ name: "IM090 / installation document / SQL", extensions: ["docx", "pdf", "sql"] }]
   });
   if (result.canceled || !result.filePaths[0]) return null;
   const filePath = result.filePaths[0];
@@ -1084,13 +1239,24 @@ ipcMain.handle("select-action-document", async (): Promise<ActionSourceDocument 
       warning: text ? undefined : "No se pudo extraer texto del documento DOCX."
     };
   }
+  if (ext === ".sql") {
+    const text = (await readFile(filePath, "utf8")).slice(0, maxActionDocumentTextLength);
+    return {
+      path: filePath,
+      name: basename(filePath),
+      kind: "sql",
+      text
+    };
+  }
   const text = await extractPdfTextFromFile(filePath);
   return {
     path: filePath,
     name: basename(filePath),
     kind: "pdf",
     text,
-    warning: text ? undefined : "PDF cargado como referencia. No se detecto texto seleccionable; puede requerir OCR si es escaneado."
+    warning: lowSignalActionDocumentText(text)
+      ? "PDF cargado como referencia, pero no contiene suficiente texto operativo. Si las instrucciones estan en capturas, revisa el Action Plan o agrega detalles manuales antes de confirmar."
+      : undefined
   };
 });
 
@@ -1151,6 +1317,41 @@ ipcMain.handle("capture-screen-region", async (event) => {
       window.focus();
     }
   }
+});
+
+ipcMain.handle("save-evidence-image", async (_event, payload: EvidenceImageSavePayload) => {
+  const fileName = safeEvidenceFileName(payload.name);
+  const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para evidencias");
+  if (!baseDirectory) return null;
+  const outputDirectory = await rfcOutputDirectory(baseDirectory, payload.rfc || "RFC");
+  const outputPath = await uniqueOutputPath(outputDirectory, fileName);
+  await writeFile(outputPath, evidenceBufferFromDataUrl(payload.dataUrl));
+  return outputPath;
+});
+
+ipcMain.handle("save-evidence-images", async (_event, payload: EvidenceImagesSavePayload) => {
+  if (!payload.images.length) return null;
+  const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para evidencias");
+  if (!baseDirectory) return null;
+  const outputDirectory = await rfcOutputDirectory(baseDirectory, payload.rfc || "RFC");
+  const savedPaths: string[] = [];
+  for (const [index, image] of payload.images.entries()) {
+    const fileName = safeEvidenceFileName(image.name || `captura-evidencia-${index + 1}.png`);
+    const outputPath = await uniqueOutputPath(outputDirectory, fileName);
+    await writeFile(outputPath, evidenceBufferFromDataUrl(image.dataUrl));
+    savedPaths.push(outputPath);
+  }
+  return { directory: outputDirectory, count: savedPaths.length, paths: savedPaths };
+});
+
+ipcMain.handle("save-action-plan-text", async (_event, payload: ActionPlanTextSavePayload) => {
+  const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para Action Plan");
+  if (!baseDirectory) return null;
+  const cleanRfc = safeRfc(payload.rfc || "RFC");
+  const outputDirectory = await rfcOutputDirectory(baseDirectory, cleanRfc);
+  const outputPath = join(outputDirectory, `${cleanRfc}-action-plan.txt`);
+  await writeFile(outputPath, payload.content, "utf8");
+  return { path: outputPath, baseDirectory, outputDirectory };
 });
 
 ipcMain.handle("scan-repositories", async (_event, basePath: string) => {
@@ -1306,35 +1507,21 @@ ipcMain.handle("inspect-artifacts", async (_event, filePaths: string[]) => {
 });
 
 ipcMain.handle("export-evidence-docx", async (_event, payload: EvidenceExportPayload) => {
-  const fileBase = `${safeRfc(payload.rfc || "RFC")}-${payload.phase}-evidencia`;
-  if (payload.outputDirectory) {
-    await mkdir(payload.outputDirectory, { recursive: true });
-    const outputPath = join(payload.outputDirectory, `${fileBase}.docx`);
-    await writeFile(outputPath, buildEvidenceDocx(payload));
-    return outputPath;
-  }
-  const result = await dialog.showSaveDialog({
-    title: "Guardar evidencia DOCX",
-    defaultPath: `${fileBase}.docx`,
-    filters: [{ name: "Word document", extensions: ["docx"] }]
-  });
-  if (result.canceled || !result.filePath) return null;
-  await writeFile(result.filePath, buildEvidenceDocx(payload));
-  return result.filePath;
+  const fileBase = evidenceExportFileBase(payload);
+  const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para evidencias");
+  if (!baseDirectory) return null;
+  const outputDirectory = await rfcOutputDirectory(baseDirectory, payload.rfc || "RFC");
+  const outputPath = await uniqueOutputPath(outputDirectory, `${fileBase}.docx`);
+  await writeFile(outputPath, buildEvidenceDocx(payload));
+  return outputPath;
 });
 
 ipcMain.handle("export-evidence-pdf", async (_event, payload: EvidenceExportPayload) => {
-  const fileBase = `${safeRfc(payload.rfc || "RFC")}-${payload.phase}-evidencia`;
-  const outputPath = payload.outputDirectory ? join(payload.outputDirectory, `${fileBase}.pdf`) : null;
-  const result = outputPath
-    ? null
-    : await dialog.showSaveDialog({
-        title: "Guardar evidencia PDF",
-        defaultPath: `${fileBase}.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }]
-      });
-  if (!outputPath && (result?.canceled || !result?.filePath)) return null;
-  if (payload.outputDirectory) await mkdir(payload.outputDirectory, { recursive: true });
+  const fileBase = evidenceExportFileBase(payload);
+  const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para evidencias");
+  if (!baseDirectory) return null;
+  const outputDirectory = await rfcOutputDirectory(baseDirectory, payload.rfc || "RFC");
+  const outputPath = await uniqueOutputPath(outputDirectory, `${fileBase}.pdf`);
   const htmlPath = join(tmpdir(), `${fileBase}-${Date.now()}.html`);
   const win = new BrowserWindow({
     show: false,
@@ -1353,10 +1540,8 @@ ipcMain.handle("export-evidence-pdf", async (_event, payload: EvidenceExportPayl
       pageSize: "A4",
       margins: { marginType: "default" }
     });
-    const targetPath = outputPath ?? result?.filePath;
-    if (!targetPath) return null;
-    await writeFile(targetPath, pdf);
-    return targetPath;
+    await writeFile(outputPath, pdf);
+    return outputPath;
   } finally {
     if (!win.isDestroyed()) win.destroy();
     await unlink(htmlPath).catch(() => undefined);
@@ -1365,4 +1550,9 @@ ipcMain.handle("export-evidence-pdf", async (_event, payload: EvidenceExportPayl
 
 ipcMain.handle("open-external", async (_event, url: string) => {
   await shell.openExternal(url || projectUrl);
+});
+
+ipcMain.handle("show-item-in-folder", async (_event, path: string) => {
+  shell.showItemInFolder(path);
+  return true;
 });

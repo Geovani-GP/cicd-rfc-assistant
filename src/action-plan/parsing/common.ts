@@ -7,13 +7,16 @@ export function cleanIm090Text(text: string) {
       if (!line) return false;
       if (/^File Ref:/i.test(line)) return false;
       if (/^Doc Ref:/i.test(line)) return false;
-      if (/^IM\.090 Installation Instructions$/i.test(line)) return false;
+      if (/^IM\.090 Installation Instructions(?:\s+[A-Za-z]+ \d{1,2}, \d{4})?$/i.test(line)) return false;
       if (/^Installation Instructions for Grupo Bimbo \d+ of \d+$/i.test(line)) return false;
       if (/^Document Control\s+/i.test(line)) return false;
       if (/^Confidential - Oracle Restricted/i.test(line)) return false;
-      if (/^Confidential\s+[–-]\s+Oracle\s+(?:Internal|Restricted)/i.test(line)) return false;
+      if (/^Confidential\s*[–-]\s*Oracle\s+(?:Internal|Restricted)/i.test(line)) return false;
+      if (/\bPAGEREF\s+_Toc/i.test(line)) return false;
+      if (/^HYPERLINK\s+\\l\s+"_Toc/i.test(line)) return false;
       if (/^\d+\s+of\s+\d+$/i.test(line)) return false;
       if (/^Open and Closed Issues\. \d+ of \d+$/i.test(line)) return false;
+      if (/^Installation Instructions for .+\s+\d+\s+of\s+\d+$/i.test(line)) return false;
       if (/^\d+$/.test(line)) return false;
       if (/^\d+[\w.-]*\.(?:docx|pdf)$/i.test(line)) return false;
       if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
@@ -27,6 +30,8 @@ export function cleanIm090Text(text: string) {
 
 export function operationalIm090Text(text: string) {
   const cleaned = cleanIm090Text(text);
+  const bodyStart = bodyInstallationStart(cleaned);
+  if (bodyStart >= 0) return cleaned.split("\n").slice(bodyStart).join("\n").trim();
   const marker = cleaned.match(/2\s+Installation Instructions\b[\s\S]*?\n2\.1\s+Environment Information/i);
   if (marker?.index !== undefined) return cleaned.slice(marker.index).trim();
   const looseMarker =
@@ -39,16 +44,28 @@ export function operationalIm090Text(text: string) {
 export function actionPlanLinesFromIm090(text: string) {
   const cleaned = cleanIm090Text(text);
   const lines = cleaned.split("\n").filter(Boolean);
+  const bodyStart = bodyInstallationStart(cleaned);
+  if (bodyStart >= 0) return lines.slice(bodyStart);
   const start = lines.findIndex((line) => /^2\s+Installation Instructions\b/i.test(line) && !line.includes("..."));
   return start >= 0 ? lines.slice(start) : lines;
 }
 
 function isTableOfContentsLine(line: string) {
   if (!line) return false;
+  if (/\bPAGEREF\s+_Toc/i.test(line)) return true;
   if (line.includes("...") || line.includes("___")) return true;
   const heading =
-    "(?:Overview Installation|Pre-?Installation Steps|OUT_[A-Z0-9_]+|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configuration of Connections|Importation of Lookups\\.? Only if it is necessary\\.?|Activate integration|Configure and start scheduler|Appendix Lookups|Open and Closed Issues|Open Issues|Closed Issues)";
+    "(?:Document Control|Change Record|Reviewers|Installation Instructions(?: for [A-Z0-9_ -]+)?|Overview Installation|Environment Information\\.?|Installation artifacts|Pre-?Installation Steps|OUT_[A-Z0-9_]+|IN_[A-Z0-9_]+|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configuration of Connections|Importation of Lookups\\.? Only if it is necessary\\.?|Activate integration|Configure and start scheduler|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Open and Closed Issues\\.?|Open Issues\\.?|Closed Issues\\.?)";
   return new RegExp(`^\\d+(?:\\.\\d+)*\\s+${heading}\\s+\\d+$`, "i").test(line.trim());
+}
+
+function bodyInstallationStart(cleaned: string) {
+  const lines = cleaned.split("\n").filter(Boolean);
+  return lines.findIndex((line, index) => {
+    if (!/^Installation Instructions(?:\s+for\b|\s*$)/i.test(line) || isTableOfContentsLine(line)) return false;
+    const lookAhead = lines.slice(index + 1, index + 8).join("\n");
+    return /\bEnvironment Information\.?\b/i.test(lookAhead) || /\bInstallation artifacts\b/i.test(lookAhead);
+  });
 }
 
 function findHeadingLine(lines: string[], pattern: RegExp, from = 0) {
@@ -63,14 +80,14 @@ function findNextMajorHeading(lines: string[], from: number) {
 function isMajorIm090Heading(line: string) {
   if (!line || isTableOfContentsLine(line)) return false;
   if (/^\d+(?:\.\d+)*\s+(?:IN|OUT|LAC|LACL|LACLS|ICWC|ICWE|GB)[A-Z0-9_-]*(?:_[A-Z0-9_-]+)+\b/i.test(line)) return true;
-  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configure and start scheduler|Appendix Lookups|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
+  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configure and start scheduler|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
   return new RegExp(`^\\d+(?:\\.\\d+)*\\s+${heading}\\.?$`, "i").test(line) ||
     new RegExp(`^${heading}\\.?$`, "i").test(line);
 }
 
 export function normalizeManualSection(lines: string[], options: { dedupe?: boolean } = {}) {
   const cleaned = lines
-    .map((line) => line.replace(/\s+/g, " ").trim())
+    .map((line) => line.replace(/\s+/g, " ").replace(/^\d{6,}(?=[A-Za-z])/, "").trim())
     .filter((line) => line && !line.includes("................................................................"));
   const normalized = options.dedupe === false
     ? cleaned

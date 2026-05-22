@@ -24,6 +24,44 @@ function databaseObjectNames(text: string) {
   return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
 }
 
+function databaseUserNames(text: string) {
+  const matches = Array.from(text.matchAll(/\bALTER\s+USER\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]);
+  return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
+}
+
+function uniqueValues(values: string[]) {
+  const byKey = new Map<string, string>();
+  for (const value of values) {
+    const clean = value.replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    byKey.set(clean.toUpperCase(), clean);
+  }
+  return Array.from(byKey.values());
+}
+
+function sqlScriptNames(text: string) {
+  return uniqueValues(text.match(/\b[A-Z0-9_.$#-]+\.sql\b/gi) ?? []);
+}
+
+function databaseComponentSchema(text: string) {
+  return text.match(/\bsqlplus\s+([A-Z0-9_$#.-]+)@/i)?.[1] ??
+    text.match(/\bOWNER\s*=\s*'([A-Z0-9_$#.-]+)'/i)?.[1] ??
+    text.match(/\bschema\s+([A-Z0-9_$#.-]+)/i)?.[1] ??
+    "";
+}
+
+function databaseValidationObjects(text: string) {
+  const objectList = Array.from(text.matchAll(/'([A-Z0-9_$#.-]+)'/gi))
+    .map((match) => match[1])
+    .filter((name) => /^GB_/i.test(name));
+  return uniqueValues(objectList);
+}
+
+function hasDatabaseComponentInstall(text: string) {
+  return /\bDATABASE COMPONENTS\b|\bCreate database components\b|\bExecute Next Scripts\b/i.test(text) &&
+    sqlScriptNames(text).length > 0;
+}
+
 export function databaseProfileCandidates(text: string) {
   const profileMatches = [
     ...Array.from(text.matchAll(/\bPROFILE\s*=\s*['"]?([A-Z0-9_$#.-]+)['"]?/gi)).map((match) => match[1]),
@@ -39,7 +77,7 @@ export function databaseProfileCandidates(text: string) {
 function classifyDatabaseOperation(text: string) {
   const normalized = text.toUpperCase();
   const isProfilePasswordLifeTime = /\bALTER\s+PROFILE\b[\s\S]*\bPASSWORD_LIFE_TIME\b|\bPASSWORD[_\s-]*LIFE[_\s-]*TIME\b[\s\S]*\b(?:PROFILE|SCHEMA|SCHEMAS)\b/.test(normalized);
-  const isPassword = /\bALTER\s+USER\b[\s\S]*\bIDENTIFIED\s+BY\b|\bPASSWORD\b/.test(normalized);
+  const isPassword = /\bALTER\s+USER\b[\s\S]*\bIDENTIFIED\s+BY\b/.test(normalized);
   const isPurge = /\b(?:DELETE\s+FROM|TRUNCATE\s+TABLE|DROP\s+TABLE|PURGE)\b/.test(normalized);
   const isDml = /\b(?:UPDATE|DELETE\s+FROM|INSERT\s+INTO|MERGE\s+INTO)\b/.test(normalized);
   const isCreate = /\bCREATE\s+(?:PROFILE|USER|TABLE|VIEW|INDEX|SEQUENCE|ROLE|SYNONYM)\b/.test(normalized);
@@ -51,6 +89,108 @@ function classifyDatabaseOperation(text: string) {
   if (isDml) return { kind: "dml", restoreMentioned };
   if (isCreate) return { kind: "create", restoreMentioned };
   return { kind: "general", restoreMentioned };
+}
+
+function validationQuery(schema: string, objects: string[]) {
+  const owner = schema || "<SCHEMA_NAME>";
+  const objectPredicate = objects.length
+    ? objects.map((objectName, index) => `${index === 0 ? "" : "                   "}'${objectName}'`).join(",\n")
+    : "'<OBJECT_NAME>'";
+  return `SELECT OWNER,
+       OBJECT_NAME,
+       OBJECT_TYPE,
+       STATUS,
+       LAST_DDL_TIME
+FROM ALL_OBJECTS
+WHERE OWNER = '${owner}'
+  AND OBJECT_NAME IN (${objectPredicate})
+ORDER BY OBJECT_TYPE DESC;`;
+}
+
+function buildDatabaseComponentsPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const scripts = sqlScriptNames(text);
+  const schema = databaseComponentSchema(text) || "<SCHEMA_NAME>";
+  const objects = databaseValidationObjects(text).filter((objectName) => objectName.toUpperCase() !== schema.toUpperCase());
+  const query = validationQuery(schema, objects);
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm target database environment, PDB access, and approved maintenance window.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target schema/user:\n- ${schema}`,
+        "Confirm the execution account has privileges to connect to the target PDB and execute the provided scripts.",
+        "Confirm all SQL scripts are available before execution.",
+        "Set the SQL session to UTF-8 before connecting.",
+        "Do not capture or expose database password values."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Capture current database object status before executing the scripts.",
+        "Execute:",
+        query,
+        "If existing objects are returned, coordinate backup/export requirements with the DBA or request owner before continuing.",
+        "Capture pre-change evidence and attach it to the RFC."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "Set UTF-8 in the bash session:",
+        "export NLS_LANG=AMERICAN_AMERICA.AL32UTF8",
+        `Connect to the target PDB using SQL*Plus or the approved SQL tool as:\n- ${schema}@PDBTRAN`,
+        "Execute the SQL scripts in the following order:",
+        scripts.map((scriptName, index) => `${index + 1}. ${scriptName}`).join("\n"),
+        "Capture the execution output for each script.",
+        "If any script returns an Oracle error, stop execution immediately, capture the error, and escalate to DBA/request owner before continuing."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this database component installation."
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate database objects after script execution.",
+        "Execute:",
+        query,
+        "Expected result:",
+        "- All objects created or modified by the scripts must be returned.",
+        "- STATUS must be VALID for the package and database objects.",
+        "- Any INVALID object must be captured and escalated before closing the RFC."
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If execution or validation fails, stop the change and capture the Oracle error.",
+        "Do not continue with remaining scripts unless the DBA/request owner approves it.",
+        "If rollback is required, restore the previous database objects from the approved backup/export or execute the DBA-approved rollback script.",
+        "Escalate to DBA/request owner before retrying."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach pre-change object status evidence.",
+        "Attach SQL script execution output for each script.",
+        "Attach final object status validation.",
+        "Attach error evidence and rollback evidence if applicable.",
+        "Do not attach credential/password evidence."
+      ].join("\n")
+    }
+  ];
 }
 
 function databaseBackupGuidance(kind: string, restoreMentioned: boolean) {
@@ -249,9 +389,11 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
+  if (hasDatabaseComponentInstall(text)) return buildDatabaseComponentsPlan(text, selectedEnvironment);
 
   const sql = prepareManualPhaseContent(text, selectedEnvironment);
   const objects = databaseObjectNames(text);
+  const users = databaseUserNames(text);
   const operation = classifyDatabaseOperation(text);
   const backupGuidance = databaseBackupGuidance(operation.kind, operation.restoreMentioned);
   const validationGuidance = databaseValidationGuidance(operation.kind, objects);
@@ -263,7 +405,10 @@ export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string):
       content: [
         "Confirm target database environment, server, access, and approved maintenance window.",
         "Confirm the execution user has privileges to run the requested SQL.",
-        objects.length ? `Database object(s):\n${asBullets(objects)}` : ""
+        objects.length ? `Database object(s):\n${asBullets(objects)}` : "",
+        operation.kind === "password" && users.length
+          ? `Target database user(s):\n${asBullets(users)}`
+          : ""
       ].filter(Boolean).join("\n\n")
     },
     {
@@ -303,8 +448,9 @@ export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string):
       content: [
         "Attach SQL execution output.",
         "Attach validation query result.",
+        operation.kind === "password" ? "Do not attach password evidence." : "",
         "Share final result with the customer."
-      ].join("\n")
+      ].filter(Boolean).join("\n")
     }
   ];
 }

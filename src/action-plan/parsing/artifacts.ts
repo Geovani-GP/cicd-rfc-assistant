@@ -19,7 +19,7 @@ export function cleanArtifactCandidate(value: string) {
 function isLikelyArtifactName(value: string) {
   const clean = cleanArtifactCandidate(value);
   if (!clean || /^https?:\/\//i.test(clean)) return false;
-  if (/\.(?:iar|par|xml|csv)\b/i.test(clean)) return true;
+  if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)\b/i.test(clean)) return true;
   if (/^[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}$/i.test(clean)) return true;
   if (clean.length < 10) return false;
   if (/^(stop schedule|start schedule|confirm|release|test|prod|development|regression|pre-prod|home|schedule)$/i.test(clean)) {
@@ -71,13 +71,17 @@ function cleanArtifactFileName(value: string) {
 
 function extractArtifactFileNames(value: string) {
   const matches: string[] = [];
-  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv))\b/gi;
+  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))\b/gi;
   for (const match of value.matchAll(pattern)) {
     const candidate = match[1];
+    if (!/^[A-Z0-9]/.test(candidate)) continue;
     const extensionMatch = candidate.match(/\.([^.]+)$/);
     const baseName = extensionMatch ? candidate.slice(0, -extensionMatch[0].length) : candidate;
-    if (/[a-z]/.test(baseName)) continue;
-    if (!/[_.-]/.test(baseName)) continue;
+    const extension = extensionMatch?.[1]?.toLowerCase() ?? "";
+    if (baseName.length > 140) continue;
+    if (extension !== "wsdl" && extension !== "zip" && /[a-z]/.test(baseName)) continue;
+    if (extension !== "wsdl" && extension !== "csv" && !/[_.-]/.test(baseName)) continue;
+    if (extension === "csv" && !/[_.-]/.test(baseName) && !/^[A-Z0-9]{5,}$/.test(baseName)) continue;
     matches.push(candidate);
   }
   return matches;
@@ -87,7 +91,7 @@ function extractArtifactFileNamesFromLine(value: string) {
   const exact = extractArtifactFileNames(value);
   if (exact.length) return exact;
   const trimmed = value.trim();
-  const wholeToken = trimmed.match(/^([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|csv))$/);
+  const wholeToken = trimmed.match(/^([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))$/);
   if (!wholeToken) return [];
   return [wholeToken[1]];
 }
@@ -109,7 +113,12 @@ export function artifactLinesFromText(value: string) {
 }
 
 export function installableArtifactNames(text: string) {
-  return Array.from(new Map(extractArtifactFileNames(text).map((item) => [normalizeEnvironmentName(item), item])).values());
+  const compactText = text.replace(/\s+/g, "");
+  const artifacts = [...extractArtifactFileNames(text), ...extractArtifactFileNames(compactText)]
+    .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
+    .map(cleanArtifactFileName)
+    .filter(Boolean);
+  return Array.from(new Map(artifacts.map((item) => [normalizeEnvironmentName(item), item])).values());
 }
 
 function extractWrappedTechnicalNames(text: string) {
