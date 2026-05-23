@@ -126,13 +126,13 @@ Recommended converter manifest shape:
 
 Training progress is tracked by product using real RFC/IM090 examples reviewed during development. The counts below are working estimates, not formal coverage guarantees.
 
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 
 | Product | Training files used | Unique cases | Coverage estimate | Current status |
 | --- | ---: | ---: | --- | --- |
 | OIC | 15 | 14 | 80-85% | Strongest coverage. Handles standard installs, multi-IAR plans, CSV/lookups, WSDL, ZIP libraries, connection declarations, scheduled integrations, scheduler stop plus integration disablement, deactivation-vs-installation distinction, credential-line filtering, wrapped artifact names, and noisy PDF/DOCX extraction. |
 | ODI Studio | 3 | 3 | 60-65% | Covers topology password updates for REST/Oracle Data Servers, ODI component import with SQL, backup/export, variables, mappings, datastores, and scenario regeneration. |
-| Oracle Database | 3 | 2 | 60-65% | Covers focused `PASSWORD_LIFE_TIME` profile extension plans and database component installation with ordered SQL scripts, schema/PDB connection, object status validation, rollback, and evidence. |
+| Oracle Database | 4 | 3 | 65-70% | Covers focused `PASSWORD_LIFE_TIME` profile extension plans, database user password resets, and database component installation with ordered SQL scripts, schema/PDB connection, object status validation, rollback, and evidence. |
 | OSB | 2 | 2 | 45-50% | Covers OSB export packages, pipelines, proxy services, business services, and service accounts. |
 | MFT | 0 | 0 | 30% | Parser structure exists, but more real documents are needed. |
 | SOA | 0 | 0 | Initial | Product option exists; training data still pending. |
@@ -140,6 +140,9 @@ Last updated: 2026-05-21
 
 Current tracked training set:
 
+- Template reference library:
+  - `/Users/geovanigomez/Documents/Templates` reviewed as operational reference patterns.
+  - First integrated patterns: DB reset/unlock/update/truncate/script with restore point, OIC reset password/tracing/cert/agent, ODI add user/password encryption, OSB deployment/patching, MFT users/directories, and WLS add user/reset password/rolling bounce.
 - OIC:
   - `GB_IM090_INT764_OIC3.docx`
   - `GB_IM090_ICWC-WMS-982.OUT_WMS_TO_WMS_GBTRANSFERDEV.v1.0.pdf`
@@ -161,6 +164,7 @@ Current tracked training set:
 - Oracle Database:
   - `PASSWORD_LIFE_TIME` extension action plan examples for application schemas
   - `GB_IM090_ICWE-CDM-CAP-006.OUT_CDM_TO_MC1_EXPORT_CUSTOMERS_UY_DB_v1.0.pdf`
+  - RFC `4-B0037KJ` overview for database user password reset on `GBDBTRANBZR1TE`
 - OSB:
   - `GB_IM090_ConfigurationInstructionsICWC-CX-529.OUT_RTM_TO_CDM_SYNCH_CUSTOMERS_OSB.pdf`
   - `SubmitExtractJobOICTech.jar`
@@ -191,6 +195,7 @@ Training review passes:
 | ODI Studio | `Step document for password.docx` | 2 | Oracle physical architecture Data Server password update, `GB_EDI_OUT_STG`, `OracleDIAgent`, and secure password handling validated. |
 | Oracle Database | `PASSWORD_LIFE_TIME` extension examples | 3 | Simple profile-change Action Plan pattern validated against team feedback. |
 | Oracle Database | `GB_IM090_ICWE-CDM-CAP-006.OUT_CDM_TO_MC1_EXPORT_CUSTOMERS_UY_DB_v1.0.pdf` | 2 | DB component install, SQL order, schema/PDB, object validation, and credential filtering validated. |
+| Oracle Database | RFC `4-B0037KJ` database user password reset | 2 | Natural-language reset request, target users, PDBTRAN connection, `ALTER USER`, secure password sharing, and no-password-evidence handling validated. |
 | OSB | `GB_IM090_ConfigurationInstructionsICWC-CX-529.OUT_RTM_TO_CDM_SYNCH_CUSTOMERS_OSB.pdf` | 2 | OSB project/package/resource extraction validated. |
 | OSB | `SubmitExtractJobOICTech.jar` | 2 | OSB JAR inspection for pipeline, proxy service, business service, and service account validated. |
 | JAVA | RFC overview for `R5-GBJAVABZR1TE-POM User password reset` | 2 | WebLogic Admin Console password reset, realm/user extraction, inconsistent user warning, and no-password-evidence handling validated. |

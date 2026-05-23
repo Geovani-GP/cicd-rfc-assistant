@@ -39,6 +39,18 @@ function hasOicScheduledJobDisableInstructions(text: string) {
     /\b(?:IN|OUT)_[A-Z0-9_]+\b/i.test(text);
 }
 
+function hasOicResetPasswordInstructions(text: string) {
+  return /\bTemplate reference:\s*OIC\/IDCS reset password\b|\bIdentity Cloud Service\b[\s\S]*\bReset Password\b|\bOIC\b[\s\S]*\breset password\b/i.test(text);
+}
+
+function hasOicTracingInstructions(text: string) {
+  return /\bTemplate reference:\s*OIC (?:enable|disable) tracing\b|\bActions?\s*>\s*Tracing\b|\bEnable Tracing\b|\bInclude Payload\b/i.test(text);
+}
+
+function isOicDisableTracing(text: string) {
+  return /\bTemplate reference:\s*OIC disable tracing\b|\bdisable\b[\s\S]*\btracing\b|\buncheck\s+"?Enable Tracing"?/i.test(text);
+}
+
 function uniqueValues(values: string[]) {
   const byKey = new Map<string, string>();
   for (const value of values) {
@@ -391,7 +403,155 @@ function buildOicDeactivationPlan(text: string, selectedEnvironment: string): Ma
   ];
 }
 
+function oicUserCandidates(text: string) {
+  return uniqueValues([
+    ...Array.from(text.matchAll(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi)).map((match) => match[0]),
+    ...Array.from(text.matchAll(/\buser(?: name| email)?\s*[:=]\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi)).map((match) => match[1])
+  ]);
+}
+
+function buildOicResetPasswordPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const users = oicUserCandidates(text);
+  const userBlock = users.length ? asBullets(users) : "- <OIC_USER_EMAIL>";
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm access to Identity Cloud Service / OCI Identity for the target OIC environment.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target user(s):\n${userBlock}`,
+        "Confirm RFC/CTS approval before execution.",
+        "Do not capture or expose password values in screenshots, logs, or RFC evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Current User Validation",
+      content: [
+        "Open Identity Cloud Service / OCI Identity Users.",
+        `Search and validate the requested user(s):\n${userBlock}`,
+        "Capture current user status before reset.",
+        "If a user does not exist, document it as \"No action performed.\""
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Password Reset",
+      content: [
+        "For each existing user, open the user detail page.",
+        "Click Reset Password.",
+        "Confirm the password reset action.",
+        "Validate the console displays the reset confirmation.",
+        "Repeat only for the requested users."
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable."
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate the password reset confirmation was completed for each requested user.",
+        "Confirm the requester/user receives the reset notification or approved reset communication.",
+        "Do not capture password values."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: "If reset fails, capture the console error and escalate to the identity/OIC owner before retrying. Do not attempt unapproved manual password handling."
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach user search/status evidence.",
+        "Attach reset confirmation evidence.",
+        "Attach no-action evidence for missing users.",
+        "Do not attach password values."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildOicTracingPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const integrations = oicIntegrationCandidates(text);
+  const integrationBlock = integrations.length ? asBullets(integrations) : "- <INTEGRATION_NAME>";
+  const disable = isOicDisableTracing(text);
+  const action = disable ? "Disable" : "Enable";
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm OIC access for the target environment.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target integration(s):\n${integrationBlock}`,
+        "Confirm RFC/CTS approval before execution.",
+        disable ? "Confirm tracing must be disabled for the listed integrations." : "Confirm tracing/payload capture is approved for the target environment before enabling it."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Current Tracing Status Validation",
+      content: [
+        "Login to the Oracle Integration console.",
+        "Go to Integrations.",
+        `Search each target integration:\n${integrationBlock}`,
+        "Capture current tracing status before applying changes."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: `${action} Tracing`,
+      content: [
+        "Open the Actions menu for the target integration in Active status.",
+        "Click Tracing.",
+        disable ? "Uncheck Enable Tracing." : "Check Enable Tracing.",
+        disable ? "" : "Check Include Payload only if approved for the environment.",
+        "Click Save.",
+        "Repeat for each listed integration.",
+        "Capture the save confirmation."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for tracing configuration."
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Reopen the Tracing configuration for each target integration.",
+        disable ? "Validate Enable Tracing is unchecked." : "Validate Enable Tracing is checked and Include Payload matches the approved request.",
+        "Confirm no unexpected OIC errors are displayed."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: `If validation fails, restore the previous tracing setting captured before the change and escalate to the OIC owner before retrying.`
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach pre-change tracing status.",
+        "Attach save confirmation.",
+        "Attach final tracing status for each integration."
+      ].join("\n")
+    }
+  ];
+}
+
 export function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
+  if (hasOicResetPasswordInstructions(text)) return buildOicResetPasswordPlan(text, selectedEnvironment);
+  if (hasOicTracingInstructions(text)) return buildOicTracingPlan(text, selectedEnvironment);
   if (hasOicScheduledJobDisableInstructions(text)) return buildOicScheduledJobDisablePlan(text, selectedEnvironment);
   if (hasOicDeactivationInstructions(text)) return buildOicDeactivationPlan(text, selectedEnvironment);
   const operational = operationalIm090Text(text);

@@ -3341,12 +3341,14 @@ h2 {
 
 .action-plan-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
   gap: 14px;
 }
 
 .action-method-toggle {
   display: grid;
+  grid-column: span 2;
   gap: 8px;
   min-width: 0;
 }
@@ -3393,16 +3395,30 @@ h2 {
   color: #ffffff;
 }
 
+.action-rfc-field,
+.action-product-field,
+.action-instance-field {
+  grid-column: span 2;
+}
+
+.action-template-field {
+  grid-column: span 4;
+}
+
+.action-environment-field {
+  grid-column: span 2;
+}
+
 .action-repo-field {
-  grid-column: 4 / span 2;
+  grid-column: span 4;
 }
 
 .action-document-field {
-  grid-column: 1 / span 2;
+  grid-column: span 4;
 }
 
 .action-activity-field {
-  grid-column: 3 / span 2;
+  grid-column: span 6;
 }
 
 .pipeline-grid {
@@ -3755,7 +3771,7 @@ textarea:focus {
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  grid-column: 5;
+  grid-column: span 2;
   min-width: 0;
 }
 
@@ -3783,6 +3799,20 @@ textarea:focus {
   align-items: center;
   gap: 10px;
   min-height: 38px;
+}
+
+.action-template-field .action-document-picker {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.action-document-field .action-document-picker {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.action-template-field .action-document-picker button {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .action-document-picker button {
@@ -4659,6 +4689,11 @@ textarea:focus {
   }
 
   .action-repo-field,
+  .action-rfc-field,
+  .action-product-field,
+  .action-template-field,
+  .action-environment-field,
+  .action-instance-field,
   .action-document-field,
   .action-activity-field,
   .action-plan-generate-field {

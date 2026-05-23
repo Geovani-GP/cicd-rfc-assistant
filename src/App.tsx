@@ -126,6 +126,7 @@ const executionDraftStorageKey = "rfcExecutionDraft";
 const pendingWorkStorageKey = "pendingWorkSnapshots";
 const actionMethodStorageKey = "actionPlanMethod";
 const executionModeStorageKey = "rfcExecutionMode";
+const customTemplatesStorageKey = "customActionTemplates";
 const maxActionDocumentTextLength = 120000;
 
 function createClientId(prefix: string) {
@@ -191,10 +192,56 @@ function readPendingWorkSnapshots(): PendingWorkSnapshot[] {
   }
 }
 
+function readCustomActionTemplates(): CustomActionTemplate[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(customTemplatesStorageKey) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is CustomActionTemplate =>
+      typeof item?.id === "string" &&
+      item.id.startsWith("custom:") &&
+      typeof item.name === "string" &&
+      typeof item.product === "string" &&
+      typeof item.content === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
 type StepId = "actionPlan" | "package" | "review" | "pipeline";
 type PipelinePhase = "DEV" | "REG" | "TEST" | "PROD";
 type ExecutionMode = "general" | "cicd";
 type ActionMethod = "cicd" | "manual";
+type ActionTemplateId =
+  | "auto"
+  | "db-reset-password"
+  | "db-unlock-user"
+  | "db-update-row"
+  | "db-truncate-table"
+  | "db-script-restore-point"
+  | "oic-reset-password"
+  | "oic-tracing-enable"
+  | "oic-tracing-disable"
+  | "oic-cert-renewal"
+  | "oic-install-agent"
+  | "odi-add-user"
+  | "odi-encrypt-password"
+  | "osb-deployment"
+  | "osb-patching"
+  | "mft-users-dir"
+  | "wls-add-user"
+  | "wls-reset-password"
+  | "wls-rolling-bounce"
+  | `custom:${string}`;
+type CustomActionTemplate = {
+  id: ActionTemplateId;
+  name: string;
+  product: string;
+  category: string;
+  content: string;
+  active: boolean;
+  createdAt: string;
+};
 type Lang = "es" | "en" | "pt";
 type EvidenceItem = EvidenceImage & {
   id: string;
@@ -270,6 +317,7 @@ type PendingWorkSnapshot = {
     rfc: string;
     actionProduct: string;
     actionMethod: ActionMethod;
+    actionTemplateId?: ActionTemplateId;
     actionEnvironment: string;
     actionInstance: string;
     actionActivity: string;
@@ -1469,6 +1517,17 @@ const actionCopy = {
     body: "Crea el plan del RFC con la plantilla CI/CD y los datos capturados antes de preparar el paquete.",
     product: "Producto",
     selectProduct: "Seleccionar producto",
+    templateReference: "Template de referencia",
+    selectTemplate: "Auto detect",
+    templateHint: "Opcional. Fuerza un patron cuando el RFC es ambiguo; Auto detect usa el convertidor normal.",
+    addTemplate: "Agregar template",
+    customTemplateTitle: "Agregar template personalizado",
+    templateName: "Nombre del template",
+    templateCategory: "Categoria",
+    templateContent: "Contenido / referencia",
+    saveTemplate: "Guardar template",
+    templateSaved: "Template personalizado guardado.",
+    templateRequired: "Captura nombre, producto y contenido del template.",
     method: "Metodo",
     methodManual: "Manual",
     repository: "Repositorio",
@@ -1521,6 +1580,17 @@ const actionCopy = {
     body: "Create the RFC plan with the CI/CD template and the captured data before preparing the package.",
     product: "Product",
     selectProduct: "Select product",
+    templateReference: "Template reference",
+    selectTemplate: "Auto detect",
+    templateHint: "Optional. Forces a pattern when the RFC is ambiguous; Auto detect uses normal conversion.",
+    addTemplate: "Add template",
+    customTemplateTitle: "Add custom template",
+    templateName: "Template name",
+    templateCategory: "Category",
+    templateContent: "Content / reference",
+    saveTemplate: "Save template",
+    templateSaved: "Custom template saved.",
+    templateRequired: "Enter template name, product, and content.",
     method: "Method",
     methodManual: "Manual",
     repository: "Repository",
@@ -1573,6 +1643,17 @@ const actionCopy = {
     body: "Crie o plano do RFC com o template CI/CD e os dados capturados antes de preparar o pacote.",
     product: "Produto",
     selectProduct: "Selecionar produto",
+    templateReference: "Template de referencia",
+    selectTemplate: "Auto detect",
+    templateHint: "Opcional. Forca um padrao quando o RFC e ambiguo; Auto detect usa a conversao normal.",
+    addTemplate: "Adicionar template",
+    customTemplateTitle: "Adicionar template personalizado",
+    templateName: "Nome do template",
+    templateCategory: "Categoria",
+    templateContent: "Conteudo / referencia",
+    saveTemplate: "Salvar template",
+    templateSaved: "Template personalizado salvo.",
+    templateRequired: "Informe nome, produto e conteudo do template.",
     method: "Metodo",
     methodManual: "Manual",
     repository: "Repositorio",
@@ -1623,6 +1704,38 @@ const actionCopy = {
 } as const;
 
 const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql"];
+type ActionTemplateOption = { id: ActionTemplateId; product?: string; label: string; hint: string; custom?: boolean };
+
+const actionTemplateOptions: ActionTemplateOption[] = [
+  { id: "auto", label: "Auto detect", hint: "" },
+  { id: "db-reset-password", product: "Base de datos", label: "DB - Reset Password", hint: "Template reference: Oracle Database reset password for users. Validate PDBTRAN, query DBA_USERS, execute ALTER USER IDENTIFIED BY ACCOUNT UNLOCK, validate status OPEN, check invalid objects, and share password only through secure channel." },
+  { id: "db-unlock-user", product: "Base de datos", label: "DB - Unlock User", hint: "Template reference: Oracle Database unlock user. Validate PDBTRAN, query DBA_USERS account status, execute ALTER USER ACCOUNT UNLOCK, validate status, check invalid objects, and attach evidence without credentials." },
+  { id: "db-update-row", product: "Base de datos", label: "DB - Update Row / Datafix", hint: "Template reference: Oracle Database datafix/update row. Validate backup or restore point, switch to target PDB, create table backup when applicable, execute UPDATE/DELETE script, commit only after expected row count, validate, and capture evidence." },
+  { id: "db-truncate-table", product: "Base de datos", label: "DB - Truncate Table", hint: "Template reference: Oracle Database truncate table. Verify RMAN backup, create restore point, switch to target PDB, create backup table, validate backup count, execute TRUNCATE TABLE, validate row count, and capture evidence." },
+  { id: "db-script-restore-point", product: "Base de datos", label: "DB - Script with Restore Point", hint: "Template reference: Oracle Database script execution with restore point. Verify backups, create restore point, switch to target PDB, check invalid objects, execute scripts in order, validate invalid objects, and release evidence." },
+  { id: "oic-reset-password", product: "OIC", label: "OIC - Reset Password", hint: "Template reference: OIC/IDCS reset password. Open Identity Cloud Service Users, search target user/email, click Reset Password, confirm reset, validate confirmation, and do not capture password values." },
+  { id: "oic-tracing-enable", product: "OIC", label: "OIC - Enable Tracing", hint: "Template reference: OIC enable tracing. Login to OIC console, search each integration, open Actions > Tracing, enable tracing and include payload only when approved for the environment, save, repeat for all integrations, and capture final status." },
+  { id: "oic-tracing-disable", product: "OIC", label: "OIC - Disable Tracing", hint: "Template reference: OIC disable tracing. Login to OIC console, search each live integration, open Actions > Tracing, uncheck Enable Tracing, save, repeat for all integrations, and capture final status." },
+  { id: "oic-cert-renewal", product: "OIC", label: "OIC - Certificate Renewal", hint: "Template reference: OIC certificate renewal. Download approved certificate package, login to OIC, upload trust certificate under Settings > Certificates, upload Visual Builder certificate when applicable, validate alias and expiry, and capture evidence." },
+  { id: "oic-install-agent", product: "OIC", label: "OIC3 - Install Agent", hint: "Template reference: OIC connectivity agent installation. Create agent group in OIC, download installer/config, upload to DB hosts, create agent directory, configure InstallerProfile.cfg, start connectivityagent.jar, validate nohup output, validate connected agent in OIC, and capture evidence." },
+  { id: "odi-add-user", product: "ODI Studio", label: "ODI Studio - Add User", hint: "Template reference: ODI Studio add user. Login to ODI Studio, open Security tab, create users, set password and initials, configure expiration, assign profiles CONNECT/OPERATOR/REPOSITORY_EXPLORER as requested, save, test user, and release evidence." },
+  { id: "odi-encrypt-password", product: "ODI Studio", label: "ODI Studio - Encrypt Password", hint: "Template reference: ODI Studio password encryption. Login to ODI Studio, create dummy package, drag SFTP Get/Put tool, enter plain password only in secure session, copy encrypted value from command, and avoid storing plain password in evidence." },
+  { id: "osb-deployment", product: "OSB", label: "OSB - Deployment", hint: "Template reference: OSB deployment. Login to Service Bus console, export/backup current project, create session, import config JAR, review conflicts, execute customization file if provided, activate session with RFC description, and capture validation evidence." },
+  { id: "osb-patching", product: "OSB", label: "OSB - Patching", hint: "Template reference: OSB patching. Backup middleware and oraInventory per node, upload/unzip patch, set ORACLE_HOME, run OPatch inventory/prereq, apply patch, validate inventory, restart managed servers in order, and capture evidence." },
+  { id: "mft-users-dir", product: "MFT", label: "MFT - Users / Directories", hint: "Template reference: MFT users and directories. Validate/create WebLogic MFT users, create required ftp_root directories by SSH, configure User Access permissions in MFT console, save, validate access, and share credentials only through secure channel." },
+  { id: "wls-add-user", product: "JAVA", label: "WLS - Add User", hint: "Template reference: WebLogic add user. Login to WebLogic Console, go to Security Realms > myrealm > Users and Groups, create user, assign requested parent groups, save, validate user, and share credentials securely." },
+  { id: "wls-reset-password", product: "JAVA", label: "WLS - Reset Password", hint: "Template reference: WebLogic reset password. Login to WebLogic Console, open Security Realms > myrealm > Users and Groups, search target user, open Passwords tab, set and confirm new password, save, validate, and do not expose password values." },
+  { id: "wls-rolling-bounce", product: "JAVA", label: "WLS - Rolling Bounce", hint: "Template reference: WebLogic rolling bounce. Set monitoring blackout, login to WebLogic Console, restart managed servers one by one in the requested order, wait for each server to return RUNNING before continuing, unset blackout, and capture evidence." }
+];
+
+function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options = actionTemplateOptions) {
+  const option = options.find((item) => item.id === templateId);
+  return !option?.product || option.product === product;
+}
+
+function actionTemplateHint(templateId: ActionTemplateId, options = actionTemplateOptions) {
+  return options.find((item) => item.id === templateId)?.hint ?? "";
+}
 
 function readLe16(view: DataView, offset: number) {
   return view.getUint16(offset, true);
@@ -2109,6 +2222,13 @@ export function App() {
   const [rfc, setRfc] = useState(initialExecutionDraft?.rfc ?? "");
   const [actionProduct, setActionProduct] = useState("");
   const [actionMethod, setActionMethod] = useState<ActionMethod>(readActionMethod);
+  const [actionTemplateId, setActionTemplateId] = useState<ActionTemplateId>("auto");
+  const [customActionTemplates, setCustomActionTemplates] = useState<CustomActionTemplate[]>(readCustomActionTemplates);
+  const [customTemplateOpen, setCustomTemplateOpen] = useState(false);
+  const [customTemplateName, setCustomTemplateName] = useState("");
+  const [customTemplateProduct, setCustomTemplateProduct] = useState("Base de datos");
+  const [customTemplateCategory, setCustomTemplateCategory] = useState("");
+  const [customTemplateContent, setCustomTemplateContent] = useState("");
   const [actionEnvironment, setActionEnvironment] = useState("");
   const [availableDocumentEnvironments, setAvailableDocumentEnvironments] = useState<string[]>([]);
   const [actionInstance, setActionInstance] = useState("");
@@ -2291,6 +2411,30 @@ export function App() {
       [item.rfc, item.phase, item.kind, item.path].some((value) => value.toLowerCase().includes(query))
     );
   }, [executionHistory, historySearch]);
+  const customTemplateOptions = useMemo<ActionTemplateOption[]>(
+    () => customActionTemplates
+      .filter((template) => template.active !== false)
+      .map((template) => ({
+        id: template.id,
+        product: template.product,
+        label: `Custom - ${template.name}`,
+        hint: [
+          `Custom template reference: ${template.name}`,
+          template.category ? `Category: ${template.category}` : "",
+          template.content
+        ].filter(Boolean).join("\n\n"),
+        custom: true
+      })),
+    [customActionTemplates]
+  );
+  const allActionTemplateOptions = useMemo<ActionTemplateOption[]>(
+    () => [...actionTemplateOptions, ...customTemplateOptions],
+    [customTemplateOptions]
+  );
+  const visibleActionTemplateOptions = useMemo(
+    () => allActionTemplateOptions.filter((option) => actionTemplateMatchesProduct(option.id, actionProduct, allActionTemplateOptions)),
+    [actionProduct, allActionTemplateOptions]
+  );
   const historyTotalPages = Math.max(1, Math.ceil(filteredExecutionHistory.length / historyPageSize));
   const visibleExecutionHistory = filteredExecutionHistory.slice(
     (historyPage - 1) * historyPageSize,
@@ -2357,6 +2501,7 @@ export function App() {
     const hasMeaningfulWork = Boolean(
       repoPath ||
       actionProduct ||
+      actionTemplateId !== "auto" ||
       actionEnvironment ||
       actionInstance ||
       actionActivity.trim() ||
@@ -2425,6 +2570,7 @@ export function App() {
         rfc: currentRfc,
         actionProduct,
         actionMethod,
+        actionTemplateId,
         actionEnvironment,
         actionInstance,
         actionActivity,
@@ -2459,7 +2605,7 @@ export function App() {
         pipelineStepFailures
       }
     };
-  }, [a.confirmed, actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionPlanConfirmed, actionPlanConfirmedAt, actionProduct, artifactCount, artifactText, devTargetEnvironment, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, manualInstructions, manualPhaseDisabledKeys, manualPhases, manualSourceText, mode, outputFolder, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, regTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, targetEnvironment, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  }, [a.confirmed, actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionPlanConfirmed, actionPlanConfirmedAt, actionProduct, actionTemplateId, artifactCount, artifactText, devTargetEnvironment, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, manualInstructions, manualPhaseDisabledKeys, manualPhases, manualSourceText, mode, outputFolder, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, regTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, targetEnvironment, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
   const pendingWorkItems = useMemo(() => pendingWorkSnapshots.filter((item) => {
     const draft = item.draft;
     if (!draft) return true;
@@ -2689,13 +2835,14 @@ export function App() {
 
   function manualDetectionSourceText() {
     const sourceText = actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
+    const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
     if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC") {
       const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
-      return [actionActivity, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
+      return [templateHint, actionActivity, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
         .filter((value) => value.trim())
         .join("\n\n");
     }
-    return sourceText;
+    return [templateHint, sourceText].filter((value) => value.trim()).join("\n\n");
   }
 
   function actionDocumentArtifactNames() {
@@ -3188,6 +3335,7 @@ export function App() {
     setRfc("");
     setRepoPath("");
     setActionProduct("");
+    setActionTemplateId("auto");
     setActionEnvironment("");
     setAvailableDocumentEnvironments([]);
     setActionInstance("");
@@ -3257,6 +3405,37 @@ export function App() {
     setMessage(action === "update" ? t.converterUpdated : t.converterRolledBack);
   }
 
+  function saveCustomTemplate() {
+    const name = customTemplateName.trim();
+    const product = customTemplateProduct.trim();
+    const content = customTemplateContent.trim();
+    if (!name || !product || !content) {
+      setMessage(a.templateRequired);
+      return;
+    }
+    const template: CustomActionTemplate = {
+      id: `custom:${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+      name,
+      product,
+      category: customTemplateCategory.trim(),
+      content,
+      active: true,
+      createdAt: new Date().toISOString()
+    };
+    setCustomActionTemplates((current) => {
+      const next = [template, ...current].slice(0, 100);
+      localStorage.setItem(customTemplatesStorageKey, JSON.stringify(next));
+      return next;
+    });
+    setActionProduct(product);
+    setActionTemplateId(template.id);
+    setCustomTemplateName("");
+    setCustomTemplateCategory("");
+    setCustomTemplateContent("");
+    setCustomTemplateOpen(false);
+    setMessage(a.templateSaved);
+  }
+
   function startNewWork() {
     if (currentPendingWorkSnapshot) {
       const shouldSave = window.confirm(t.savePendingFirstConfirm);
@@ -3292,6 +3471,7 @@ export function App() {
       setRfc(draft.rfc);
       setActionProduct(draft.actionProduct);
       setActionMethod(draft.actionMethod);
+      setActionTemplateId(draft.actionTemplateId ?? "auto");
       setActionEnvironment(draft.actionEnvironment);
       setActionInstance(draft.actionInstance);
       setActionActivity(draft.actionActivity);
@@ -4056,6 +4236,7 @@ export function App() {
   function resetActionPlanFields() {
     setRfc("");
     setActionProduct("");
+    setActionTemplateId("auto");
     setActionEnvironment("");
     setActionInstance("");
     setActionActivity("");
@@ -5098,13 +5279,20 @@ export function App() {
                   Modo: {actionMethod === "manual" ? a.methodManual : a.methodCicd}
                 </small>
               </div>
-              <label>
+              <label className="action-rfc-field">
                 RFC
                 <input placeholder="4-B002S34" value={rfc} onChange={(event) => setRfc(event.target.value)} />
               </label>
-              <label>
+              <label className="action-product-field">
                 {a.product}
-                <select value={actionProduct} onChange={(event) => setActionProduct(event.target.value)}>
+                <select
+                  value={actionProduct}
+                  onChange={(event) => {
+                    const nextProduct = event.target.value;
+                    setActionProduct(nextProduct);
+                    setActionTemplateId((current) => actionTemplateMatchesProduct(current, nextProduct, allActionTemplateOptions) ? current : "auto");
+                  }}
+                >
                   <option value="" disabled>
                     {a.selectProduct}
                   </option>
@@ -5117,6 +5305,28 @@ export function App() {
                   <option value="OSB">OSB</option>
                 </select>
               </label>
+              {actionMethod === "manual" && (
+                <label className="action-template-field">
+                  {a.templateReference}
+                  <div className="action-document-picker">
+                    <select value={actionTemplateId} onChange={(event) => setActionTemplateId(event.target.value as ActionTemplateId)}>
+                      {visibleActionTemplateOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.id === "auto" ? a.selectTemplate : option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="secondary compact" onClick={() => {
+                      setCustomTemplateProduct(actionProduct || "Base de datos");
+                      setCustomTemplateOpen(true);
+                    }}>
+                      <Plus size={15} />
+                      {a.addTemplate}
+                    </button>
+                  </div>
+                  <small>{a.templateHint}</small>
+                </label>
+              )}
               {actionMethod === "cicd" && (
                 <label className="action-repo-field">
                   {a.repository}
@@ -5132,7 +5342,7 @@ export function App() {
                   </select>
                 </label>
               )}
-              <label>
+              <label className="action-environment-field">
                 {a.environment}
                 <select value={actionEnvironment} onChange={(event) => handleActionEnvironmentChange(event.target.value)}>
                   <option value="" disabled>
@@ -5157,7 +5367,7 @@ export function App() {
                     ))}
                 </select>
               </label>
-              <label>
+              <label className="action-instance-field">
                 {a.instance}
                 <input value={actionInstance} onChange={(event) => setActionInstance(event.target.value)} />
               </label>
@@ -5176,15 +5386,6 @@ export function App() {
                       {actionDocumentProcessing ? a.processingDocument : a.loadDocument}
                     </button>
                     <span>{actionDocumentProcessing ? a.processingDocument : actionSourceDocument?.name ?? a.noDocument}</span>
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={!manualPhases.length}
-                      onClick={reviewManualPhases}
-                      title={a.reviewManual}
-                    >
-                      {a.reviewManual}
-                    </button>
                   </div>
                 </label>
               )}
@@ -5196,18 +5397,38 @@ export function App() {
                   onChange={(event) => setActionActivity(event.target.value)}
                 />
               </label>
-              <div className="action-plan-generate-field">
-                <button className="action-plan-generate" onClick={generateActionPlan} title={a.generate}>
-                  <FileText size={16} />
-                  {a.generate}
-                </button>
-              </div>
+              {actionMethod === "cicd" && (
+                <div className="action-plan-generate-field">
+                  <button className="action-plan-generate" onClick={generateActionPlan} title={a.generate}>
+                    <FileText size={16} />
+                    {a.generate}
+                  </button>
+                </div>
+              )}
             </div>
 
             {actionMethod === "manual" && (
-              <label className="artifact-input">
-                {a.manualInstructions}
+              <div className="artifact-input">
+                <div className="artifact-input-head">
+                  <span>{a.manualInstructions}</span>
+                  <div className="inline-actions compact-actions">
+                    <button
+                      type="button"
+                      className="secondary compact"
+                      disabled={!manualPhases.length}
+                      onClick={reviewManualPhases}
+                      title={a.reviewManual}
+                    >
+                      {a.reviewManual}
+                    </button>
+                    <button className="action-plan-generate" onClick={generateActionPlan} title={a.generate}>
+                      <FileText size={16} />
+                      {a.generate}
+                    </button>
+                  </div>
+                </div>
                 <textarea
+                  aria-label={a.manualInstructions}
                   value={manualInstructions}
                   onChange={(event) => {
                     setManualInstructions(event.target.value);
@@ -5216,7 +5437,7 @@ export function App() {
                   }}
                   placeholder={a.manualInstructionsHint}
                 />
-              </label>
+              </div>
             )}
             {actionMethod === "manual" && (
               <input
@@ -6031,6 +6252,64 @@ export function App() {
                   );
                 })}
               </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {customTemplateOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setCustomTemplateOpen(false)}>
+          <section className="workspace-modal action-artifact-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2>{a.customTemplateTitle}</h2>
+                <p>{a.templateHint}</p>
+              </div>
+              <button className="icon-close" onClick={() => setCustomTemplateOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-grid">
+              <label>
+                {a.templateName}
+                <input value={customTemplateName} onChange={(event) => setCustomTemplateName(event.target.value)} placeholder="DB - Reset password regional" />
+              </label>
+              <label>
+                {a.product}
+                <select value={customTemplateProduct} onChange={(event) => setCustomTemplateProduct(event.target.value)}>
+                  <option value="OIC">OIC</option>
+                  <option value="MFT">MFT</option>
+                  <option value="Base de datos">Base de datos</option>
+                  <option value="SOA">SOA</option>
+                  <option value="JAVA">JAVA</option>
+                  <option value="ODI Studio">ODI Studio</option>
+                  <option value="OSB">OSB</option>
+                </select>
+              </label>
+              <label>
+                {a.templateCategory}
+                <input value={customTemplateCategory} onChange={(event) => setCustomTemplateCategory(event.target.value)} placeholder="Reset password / Deployment / Patching" />
+              </label>
+            </div>
+
+            <label className="artifact-input">
+              {a.templateContent}
+              <textarea
+                value={customTemplateContent}
+                onChange={(event) => setCustomTemplateContent(event.target.value)}
+                placeholder="Pega aqui el template o los pasos base. La app lo usara como referencia manual, no como regla automatica."
+              />
+            </label>
+
+            <div className="workspace-actions modal-actions">
+              <button className="secondary" onClick={() => setCustomTemplateOpen(false)}>
+                {a.clear}
+              </button>
+              <button className="primary" onClick={saveCustomTemplate}>
+                <Plus size={16} />
+                {a.saveTemplate}
+              </button>
             </div>
           </section>
         </div>

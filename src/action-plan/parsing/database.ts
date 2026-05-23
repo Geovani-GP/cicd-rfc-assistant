@@ -13,8 +13,14 @@ function hasProfilePasswordLifeTimeRequest(text: string) {
     );
 }
 
+function hasDatabasePasswordResetRequest(text: string) {
+  return /\b(?:RESET|CHANGE|UPDATE)\s+(?:PASS|PASSWORD)\b|\bPASSWORD\s+RESET\b/i.test(text) &&
+    /\b(?:USER|USERS|DBA_USERS|ACCOUNT\s+UNLOCK|ALTER\s+USER)\b/i.test(text) &&
+    /\bGB_[A-Z0-9_$#.-]+\b/i.test(text);
+}
+
 export function hasDatabaseInstructions(text: string) {
-  return hasSqlInstructions(text) || hasProfilePasswordLifeTimeRequest(text);
+  return hasSqlInstructions(text) || hasProfilePasswordLifeTimeRequest(text) || hasDatabasePasswordResetRequest(text);
 }
 
 function databaseObjectNames(text: string) {
@@ -25,7 +31,10 @@ function databaseObjectNames(text: string) {
 }
 
 function databaseUserNames(text: string) {
-  const matches = Array.from(text.matchAll(/\bALTER\s+USER\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]);
+  const matches = [
+    ...Array.from(text.matchAll(/\bALTER\s+USER\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\bGB_[A-Z0-9_$#.-]+\b/gi)).map((match) => match[0])
+  ];
   return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
 }
 
@@ -60,6 +69,16 @@ function databaseValidationObjects(text: string) {
 function hasDatabaseComponentInstall(text: string) {
   return /\bDATABASE COMPONENTS\b|\bCreate database components\b|\bExecute Next Scripts\b/i.test(text) &&
     sqlScriptNames(text).length > 0;
+}
+
+function databaseTargetName(text: string) {
+  return text.match(/\bGBDB[A-Z0-9_$#.-]+\b/i)?.[0] ?? "";
+}
+
+function passwordRecipient(text: string) {
+  return text.match(/\bsend\s+the\s+new\s+password\s+for\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})/i)?.[1]?.trim() ??
+    text.match(/\bshare\s+password\s+with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})/i)?.[1]?.trim() ??
+    "<AUTHORIZED_RECIPIENT>";
 }
 
 export function databaseProfileCandidates(text: string) {
@@ -188,6 +207,117 @@ function buildDatabaseComponentsPlan(text: string, selectedEnvironment: string):
         "Attach final object status validation.",
         "Attach error evidence and rollback evidence if applicable.",
         "Do not attach credential/password evidence."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildDatabasePasswordResetPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const users = databaseUserNames(text);
+  const userList = users.length ? asBullets(users) : "- <DATABASE_USER>";
+  const targetDatabase = databaseTargetName(text) || "<DATABASE_SERVER>";
+  const recipient = passwordRecipient(text);
+  const userPredicate = users.length
+    ? users.map((user, index) => `${index === 0 ? "" : "                   "}'${user}'`).join(",\n")
+    : "'<DATABASE_USER>'";
+  const validationQuery = `SELECT username,
+       account_status,
+       profile
+FROM dba_users
+WHERE username IN (${userPredicate})
+ORDER BY username;`;
+  const resetStatements = users.length
+    ? users.map((user) => `ALTER USER ${user}
+IDENTIFIED BY "<NEW_SECURE_PASSWORD>"
+ACCOUNT UNLOCK;`).join("\n\n")
+    : `ALTER USER <DATABASE_USER>
+IDENTIFIED BY "<NEW_SECURE_PASSWORD>"
+ACCOUNT UNLOCK;`;
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm target database environment, access, and approved maintenance window.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target database/server:\n- ${targetDatabase}`,
+        "Confirm CTS/RFC approval before execution.",
+        "Confirm the execution account has privileges to query DBA_USERS and execute ALTER USER.",
+        `Requested database user(s):\n${userList}`,
+        "Confirm the new password will be provided and shared only through the approved secure channel.",
+        "Do not document password values in the Action Plan, execution output, screenshots, or RFC evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Current User Status Validation",
+      content: [
+        "Connect to the DB server as oracle user.",
+        "Connect to the database using SQL*Plus or the approved SQL execution tool.",
+        "Change to PDBTRAN.",
+        "SQL> alter session set container=PDBTRAN;",
+        "Verify connection.",
+        "SQL> show con_name;",
+        "Validate requested users exist and capture current account status.",
+        "Execute:",
+        validationQuery,
+        "Expected handling:",
+        "- If a user does not exist, do not perform any action for that user.",
+        "- Capture current account status before the reset."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Password Reset",
+      content: [
+        "Execute only for existing users validated in the previous step.",
+        resetStatements,
+        "Capture the execution output without exposing the password value.",
+        "If ALTER USER returns an Oracle error:",
+        "- Stop execution immediately.",
+        "- Do not continue with additional users.",
+        "- Capture the Oracle error message.",
+        "- Escalate to DBA or request owner for review."
+      ].join("\n\n")
+    },
+    {
+      id: "validation",
+      title: "Post-Reset Validation",
+      content: [
+        "Validate final account status.",
+        "Execute:",
+        validationQuery,
+        "Expected result:",
+        "- Existing users reset during this RFC must display account status as OPEN.",
+        "- Missing users must be documented as \"No action performed.\"",
+        "Check invalid objects.",
+        "SQL> select count(*) from user_objects where status='INVALID';",
+        "SQL> show errors;"
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency Plan",
+      content: [
+        "If validation fails, stop execution and capture the Oracle error message.",
+        "If authentication fails after the reset, follow the approved credential reset process again with DBA/request owner approval.",
+        "Do not attempt to restore or expose previous password values.",
+        "Escalate to DBA or request owner before retrying."
+      ].join("\n\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Current DBA_USERS validation result.",
+        "2. ALTER USER execution output, if executed.",
+        "3. Final DBA_USERS validation result.",
+        "4. Invalid object check result.",
+        "5. Evidence for no-action scenarios when a user does not exist.",
+        `Share the new password with ${recipient} through the approved secure channel.`,
+        "Do not attach or expose the password value in the RFC evidence."
       ].join("\n")
     }
   ];
@@ -390,6 +520,7 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
   if (hasDatabaseComponentInstall(text)) return buildDatabaseComponentsPlan(text, selectedEnvironment);
+  if (hasDatabasePasswordResetRequest(text)) return buildDatabasePasswordResetPlan(text, selectedEnvironment);
 
   const sql = prepareManualPhaseContent(text, selectedEnvironment);
   const objects = databaseObjectNames(text);
