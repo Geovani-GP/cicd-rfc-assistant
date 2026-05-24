@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "knowledgeVersion": "2026.05.24-01",
+  "source": "embedded",
+  "minAppVersion": "0.1.0",
+  "products": [
+    {
+      "id": "oic",
+      "name": "OIC",
+      "version": "2026.05.19-04",
+      "previous": "2026.05.18-03",
+      "modules": ["manual-action-plan", "artifact-detection", "environment-detection"]
+    },
+    {
+      "id": "mft",
+      "name": "MFT",
+      "version": "2026.05.18-02",
+      "previous": "2026.05.15-01",
+      "modules": ["manual-action-plan", "folder-access"]
+    },
+    {
+      "id": "database",
+      "name": "Oracle Database",
+      "version": "2026.05.19-02",
+      "previous": "2026.05.19-01",
+      "modules": ["manual-action-plan", "sql-safety"]
+    },
+    {
+      "id": "odi",
+      "name": "ODI Studio",
+      "version": "2026.05.19-00",
+      "previous": "2026.05.19-00",
+      "modules": ["manual-action-plan", "topology", "password-encryption"]
+    },
+    {
+      "id": "osb",
+      "name": "OSB",
+      "version": "2026.05.19-00",
+      "previous": "2026.05.19-00",
+      "modules": ["manual-action-plan", "deployment", "patching"]
+    },
+    {
+      "id": "soa",
+      "name": "SOA",
+      "version": "2026.05.19-00",
+      "previous": "2026.05.19-00",
+      "modules": ["manual-action-plan"]
+    },
+    {
+      "id": "java",
+      "name": "JAVA",
+      "version": "2026.05.19-00",
+      "previous": "2026.05.19-00",
+      "modules": ["manual-action-plan", "weblogic"]
+    }
+  ]
+}

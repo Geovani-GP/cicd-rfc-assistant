@@ -67,6 +67,10 @@ import {
   manualPlanMetadataForProduct
 } from "./action-plan/parsing/products";
 import type { ManualActionPhase } from "./action-plan/parsing/types";
+import {
+  embeddedActionTemplateOptions,
+  embeddedConverterTechnologies
+} from "./knowledge";
 import type {
   ActionSourceDocument,
   ArtifactInspection,
@@ -86,13 +90,7 @@ const desktopApi = window.cicd;
 const releaseBranch = "release";
 const pipelinePhases: PipelinePhase[] = ["DEV", "REG", "TEST", "PROD"];
 const actionPlanEnvironments = ["DEV", "REG", "TEST", "PROD"];
-const converterTechnologies = [
-  { id: "oic", name: "OIC", version: "2026.05.19-04", previous: "2026.05.18-03" },
-  { id: "mft", name: "MFT", version: "2026.05.18-02", previous: "2026.05.15-01" },
-  { id: "database", name: "Oracle Database", version: "2026.05.19-02", previous: "2026.05.19-01" },
-  { id: "soa", name: "SOA", version: "2026.05.19-00", previous: "2026.05.19-00" },
-  { id: "java", name: "JAVA", version: "2026.05.19-00", previous: "2026.05.19-00" }
-];
+const converterTechnologies = embeddedConverterTechnologies;
 const defaultCustomTheme = {
   colorA: "#d9c4ff",
   colorB: "#8fe8ff",
@@ -1746,27 +1744,7 @@ const actionCopy = {
 const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql"];
 type ActionTemplateOption = { id: ActionTemplateId; product?: string; label: string; hint: string; custom?: boolean };
 
-const actionTemplateOptions: ActionTemplateOption[] = [
-  { id: "auto", label: "Auto detect", hint: "" },
-  { id: "db-reset-password", product: "Base de datos", label: "DB - Reset Password", hint: "Template reference: Oracle Database reset password for users. Validate PDBTRAN, query DBA_USERS, execute ALTER USER IDENTIFIED BY ACCOUNT UNLOCK, validate status OPEN, check invalid objects, and share password only through secure channel." },
-  { id: "db-unlock-user", product: "Base de datos", label: "DB - Unlock User", hint: "Template reference: Oracle Database unlock user. Validate PDBTRAN, query DBA_USERS account status, execute ALTER USER ACCOUNT UNLOCK, validate status, check invalid objects, and attach evidence without credentials." },
-  { id: "db-update-row", product: "Base de datos", label: "DB - Update Row / Datafix", hint: "Template reference: Oracle Database datafix/update row. Validate backup or restore point, switch to target PDB, create table backup when applicable, execute UPDATE/DELETE script, commit only after expected row count, validate, and capture evidence." },
-  { id: "db-truncate-table", product: "Base de datos", label: "DB - Truncate Table", hint: "Template reference: Oracle Database truncate table. Verify RMAN backup, create restore point, switch to target PDB, create backup table, validate backup count, execute TRUNCATE TABLE, validate row count, and capture evidence." },
-  { id: "db-script-restore-point", product: "Base de datos", label: "DB - Script with Restore Point", hint: "Template reference: Oracle Database script execution with restore point. Verify backups, create restore point, switch to target PDB, check invalid objects, execute scripts in order, validate invalid objects, and release evidence." },
-  { id: "oic-reset-password", product: "OIC", label: "OIC - Reset Password", hint: "Template reference: OIC/IDCS reset password. Open Identity Cloud Service Users, search target user/email, click Reset Password, confirm reset, validate confirmation, and do not capture password values." },
-  { id: "oic-tracing-enable", product: "OIC", label: "OIC - Enable Tracing", hint: "Template reference: OIC enable tracing. Login to OIC console, search each integration, open Actions > Tracing, enable tracing and include payload only when approved for the environment, save, repeat for all integrations, and capture final status." },
-  { id: "oic-tracing-disable", product: "OIC", label: "OIC - Disable Tracing", hint: "Template reference: OIC disable tracing. Login to OIC console, search each live integration, open Actions > Tracing, uncheck Enable Tracing, save, repeat for all integrations, and capture final status." },
-  { id: "oic-cert-renewal", product: "OIC", label: "OIC - Certificate Renewal", hint: "Template reference: OIC certificate renewal. Download approved certificate package, login to OIC, upload trust certificate under Settings > Certificates, upload Visual Builder certificate when applicable, validate alias and expiry, and capture evidence." },
-  { id: "oic-install-agent", product: "OIC", label: "OIC3 - Install Agent", hint: "Template reference: OIC connectivity agent installation. Create agent group in OIC, download installer/config, upload to DB hosts, create agent directory, configure InstallerProfile.cfg, start connectivityagent.jar, validate nohup output, validate connected agent in OIC, and capture evidence." },
-  { id: "odi-add-user", product: "ODI Studio", label: "ODI Studio - Add User", hint: "Template reference: ODI Studio add user. Login to ODI Studio, open Security tab, create users, set password and initials, configure expiration, assign profiles CONNECT/OPERATOR/REPOSITORY_EXPLORER as requested, save, test user, and release evidence." },
-  { id: "odi-encrypt-password", product: "ODI Studio", label: "ODI Studio - Encrypt Password", hint: "Template reference: ODI Studio password encryption. Login to ODI Studio, create dummy package, drag SFTP Get/Put tool, enter plain password only in secure session, copy encrypted value from command, and avoid storing plain password in evidence." },
-  { id: "osb-deployment", product: "OSB", label: "OSB - Deployment", hint: "Template reference: OSB deployment. Login to Service Bus console, export/backup current project, create session, import config JAR, review conflicts, execute customization file if provided, activate session with RFC description, and capture validation evidence." },
-  { id: "osb-patching", product: "OSB", label: "OSB - Patching", hint: "Template reference: OSB patching. Backup middleware and oraInventory per node, upload/unzip patch, set ORACLE_HOME, run OPatch inventory/prereq, apply patch, validate inventory, restart managed servers in order, and capture evidence." },
-  { id: "mft-users-dir", product: "MFT", label: "MFT - Users / Directories", hint: "Template reference: MFT users and directories. Validate/create WebLogic MFT users, create required ftp_root directories by SSH, configure User Access permissions in MFT console, save, validate access, and share credentials only through secure channel." },
-  { id: "wls-add-user", product: "JAVA", label: "WLS - Add User", hint: "Template reference: WebLogic add user. Login to WebLogic Console, go to Security Realms > myrealm > Users and Groups, create user, assign requested parent groups, save, validate user, and share credentials securely." },
-  { id: "wls-reset-password", product: "JAVA", label: "WLS - Reset Password", hint: "Template reference: WebLogic reset password. Login to WebLogic Console, open Security Realms > myrealm > Users and Groups, search target user, open Passwords tab, set and confirm new password, save, validate, and do not expose password values." },
-  { id: "wls-rolling-bounce", product: "JAVA", label: "WLS - Rolling Bounce", hint: "Template reference: WebLogic rolling bounce. Set monitoring blackout, login to WebLogic Console, restart managed servers one by one in the requested order, wait for each server to return RUNNING before continuing, unset blackout, and capture evidence." }
-];
+const actionTemplateOptions = embeddedActionTemplateOptions as ActionTemplateOption[];
 
 function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options = actionTemplateOptions) {
   const option = options.find((item) => item.id === templateId);
