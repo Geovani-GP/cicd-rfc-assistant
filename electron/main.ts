@@ -495,9 +495,6 @@ function evidenceLabels(language: EvidenceExportPayload["documentLanguage"]) {
       environment: "Ambiente",
       execution: "Ejecucion RFC",
       phase: "Fase",
-      preparedBy: "Preparado por",
-      email: "Correo",
-      phone: "Telefono",
       message: "Mensaje RFC",
       steps: "Evidencia por paso"
     };
@@ -511,9 +508,6 @@ function evidenceLabels(language: EvidenceExportPayload["documentLanguage"]) {
       environment: "Ambiente",
       execution: "Execucao RFC",
       phase: "Fase",
-      preparedBy: "Preparado por",
-      email: "Email",
-      phone: "Telefone",
       message: "Mensagem RFC",
       steps: "Evidencia por passo"
     };
@@ -526,9 +520,6 @@ function evidenceLabels(language: EvidenceExportPayload["documentLanguage"]) {
     environment: "Environment",
     execution: "RFC Execution",
     phase: "Phase",
-    preparedBy: "Prepared by",
-    email: "Email",
-    phone: "Phone",
     message: "RFC message",
     steps: "Step Evidence"
   };
@@ -546,9 +537,6 @@ function buildEvidenceHtml(payload: EvidenceExportPayload) {
     [labels.rfc, payload.rfc],
     [labels.environment, payload.environment],
     [labels.phase, payload.phase],
-    [labels.preparedBy, payload.preparedBy ?? ""],
-    [labels.email, payload.preparedByEmail ?? ""],
-    [labels.phone, payload.preparedByPhone ?? ""],
     ["Pipeline", payload.pipeline],
     ["Run", payload.run],
     ["URL", payload.runUrl]
@@ -570,9 +558,6 @@ function buildEvidenceDocx(payload: EvidenceExportPayload) {
     paragraph(labels.classification, "Subtitle"),
     labeledParagraph(labels.rfc, payload.rfc),
     labeledParagraph(labels.environment, payload.environment),
-    labeledParagraph(labels.preparedBy, payload.preparedBy ?? ""),
-    labeledParagraph(labels.email, payload.preparedByEmail ?? ""),
-    labeledParagraph(labels.phone, payload.preparedByPhone ?? ""),
     pageBreak(),
     paragraph(labels.execution, "Title"),
     labeledParagraph(labels.phase, payload.phase),

@@ -289,6 +289,7 @@ export function environmentSectionFromDocument(text: string) {
   const lines = actionPlanLinesFromIm090(text);
   return sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Environment Information\b/i, /^Environment Information\b/i], 0) ||
     sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Overview Installation\b/i, /^Overview Installation\b/i], 0) ||
+    inlineEnvironmentSection(operational) ||
     looseSectionByHeadings(operational, ["2.1 Environment Information", "Environment Information"], [
       "Installation artifacts",
       "Pre installation steps",
@@ -300,6 +301,21 @@ export function environmentSectionFromDocument(text: string) {
       "Pre-Installation Steps",
       "Installation Steps"
     ]);
+}
+
+function inlineEnvironmentSection(text: string) {
+  const lines = cleanIm090Text(text).split("\n").map((line) => line.trim()).filter(Boolean);
+  const starts = lines
+    .map((line, index) => (/^Environment Name:/i.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  if (!starts.length) return "";
+  const endCandidates = [
+    ...lines
+      .map((line, index) => index > starts[0] && /^\d+(?:\.\d+)*\s+(?:Installation notes|Installation artifacts|Pre[- ]Installation Steps|Installation Steps|Open and Closed Issues)\b/i.test(line) ? index : -1)
+      .filter((index) => index >= 0),
+    lines.length
+  ];
+  return ["2.1 Environment Information", ...lines.slice(starts[0], Math.min(...endCandidates))].join("\n");
 }
 
 export function selectedEnvironmentMissingFromDocument(text: string, environment: string) {

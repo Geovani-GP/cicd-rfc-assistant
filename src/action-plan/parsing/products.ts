@@ -2,7 +2,7 @@ import { buildDatabaseSqlPlan, hasDatabaseInstructions } from "./database";
 import { buildJavaWeblogicPlan, hasJavaWeblogicInstructions, javaConfigurationItems } from "./java";
 import { buildMftConfigurationPlan, hasMftInstructions, mftConfigurationItems, mftManualPlanMetadata } from "./mft";
 import { buildOdiTopologyPlan, hasOdiInstructions, odiConfigurationItems } from "./odi";
-import { buildManualPhasesFromDocument } from "./oic";
+import { buildManualPhasesFromDocument, oicConfigurationItems } from "./oic";
 import { buildOsbConfigurationPlan, hasOsbInstructions, osbConfigurationItems } from "./osb";
 import type { ManualActionPhase } from "./types";
 
@@ -36,6 +36,7 @@ export function buildManualPhasesForProduct(productName: string, text: string, e
 }
 
 export function configurationItemsForProduct(productName: string, text: string) {
+  if (productName === "OIC") return oicConfigurationItems(text);
   if (isMftManualPlan(productName, text)) return mftConfigurationItems(text);
   if (isOdiManualPlan(productName, text)) return odiConfigurationItems(text);
   if (isOsbManualPlan(productName, text)) return osbConfigurationItems(text);

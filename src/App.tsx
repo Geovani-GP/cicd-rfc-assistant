@@ -2930,7 +2930,7 @@ export function App() {
       ? `${documentText}\n\nRFC complementary instructions:\n${editedText}`
       : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
-    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC") {
+    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT") {
       const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
       return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
@@ -3009,6 +3009,10 @@ export function App() {
   }
 
   function actionArtifactComparisonRows() {
+    const sourceText = manualDetectionSourceText();
+    if (actionProduct === "OIC" && configurationItemsForProduct(actionProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
+      return [];
+    }
     const documentItems = actionDocumentArtifactNames();
     const loadedItems = actionLoadedArtifactItems();
     const matchedKeys = new Set<string>();
@@ -3357,18 +3361,14 @@ export function App() {
         ? executionSteps
         : documentCopy.pipeline.steps.map((title) => ({ title, detail: "" }));
     const exportStepLimit = failedPipelineStepIndex >= 0 ? failedPipelineStepIndex + 1 : documentSteps.length;
-    const registeredProfileName = profileName.trim() && profileName.trim() !== defaultProfile.name ? profileName.trim() : "";
-    const registeredProfileEmail = profileEmail.trim();
-    const registeredProfilePhone = profilePhone.trim();
-    const hasRegisteredProfile = Boolean(registeredProfileName || registeredProfileEmail || registeredProfilePhone);
     return {
       rfc,
       phase: trackingEnvironment,
       documentLanguage: documentLang,
       outputDirectory: outputFolder.trim() || undefined,
-      preparedBy: hasRegisteredProfile ? registeredProfileName : "",
-      preparedByEmail: hasRegisteredProfile ? registeredProfileEmail : "",
-      preparedByPhone: hasRegisteredProfile ? registeredProfilePhone : "",
+      preparedBy: "",
+      preparedByEmail: "",
+      preparedByPhone: "",
       environment: targetEnvironment,
       pipeline: executionMode === "cicd" ? pipelineDisplayName : "",
       run: executionMode === "cicd" ? pipelineRunValue.trim() : "",
@@ -4173,6 +4173,7 @@ export function App() {
         )
       : enteredInstallableArtifacts;
     const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
+    const oicConfigurationItems = actionProduct === "OIC" ? configurationItemsForProduct(actionProduct, sourceText) : [];
     const isOdiPlan = isOdiManualPlan(actionProduct, sourceText);
     const isOsbPlan = isOsbManualPlan(actionProduct, sourceText);
     const isJavaPlan = isJavaManualPlan(actionProduct, sourceText);
@@ -4189,12 +4190,16 @@ export function App() {
           ? configurationItemsForProduct(actionProduct, sourceText)
         : databaseItems.length
           ? databaseItems
+        : oicConfigurationItems.length
+          ? oicConfigurationItems
         : sourceInstallableArtifacts.length
           ? sourceInstallableArtifacts
           : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
     const artifacts = enteredArtifacts.length
       ? databaseItems.length
         ? databaseItems
+        : oicConfigurationItems.length
+          ? oicConfigurationItems
         : isOdiPlan
           ? configurationItemsForProduct(actionProduct, sourceText)
         : isOsbPlan
@@ -4208,8 +4213,8 @@ export function App() {
           : enteredArtifacts
       : detectedArtifacts;
     const isMftPlan = isMftManualPlan(actionProduct, sourceText);
-    const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan ? "Configuration item(s)" : "Artifact(s) / component(s)";
-    const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
+    const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "Configuration item(s)" : "Artifact(s) / component(s)";
+    const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const validationBlock = actionArtifactValidationBlock();
     const productName = isJavaPlan
@@ -4219,7 +4224,8 @@ export function App() {
       : actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = actionEnvironment.trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
-    const activityName = actionActivity.trim() || (isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
+    const isMftFolderAccessPlan = isMftPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
+    const activityName = actionActivity.trim() || (isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
     const rfcNumber = rfc.trim();
     const sourceDocumentName = actionSourceDocument?.name ?? (
       sourceText.trim()
@@ -5566,28 +5572,6 @@ export function App() {
                   <option value="OSB">OSB</option>
                 </select>
               </label>
-              {actionMethod === "manual" && (
-                <label className="action-template-field">
-                  {a.templateReference}
-                  <div className="action-document-picker">
-                    <select value={actionTemplateId} onChange={(event) => setActionTemplateId(event.target.value as ActionTemplateId)}>
-                      {visibleActionTemplateOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.id === "auto" ? a.selectTemplate : option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button type="button" className="secondary compact" onClick={() => {
-                      setCustomTemplateProduct(actionProduct || "Base de datos");
-                      setCustomTemplateOpen(true);
-                    }}>
-                      <Plus size={15} />
-                      {a.addTemplate}
-                    </button>
-                  </div>
-                  <small>{a.templateHint}</small>
-                </label>
-              )}
               {actionMethod === "cicd" && (
                 <label className="action-repo-field">
                   {a.repository}
@@ -5629,9 +5613,27 @@ export function App() {
                 </select>
               </label>
               <label className="action-instance-field">
-                {a.instance}
-                <input value={actionInstance} onChange={(event) => setActionInstance(event.target.value)} />
+                  {a.instance}
+                  <input value={actionInstance} onChange={(event) => setActionInstance(event.target.value)} />
               </label>
+              <label className="action-activity-field">
+                {a.activity}
+                <input
+                  placeholder="Deploy Lookup / Install Integration"
+                  value={actionActivity}
+                  onChange={(event) => setActionActivity(event.target.value)}
+                />
+              </label>
+              {actionMethod === "manual" && (
+                <label className="action-scope-field">
+                  {a.scopeNotes}
+                  <textarea
+                    value={actionScopeNotes}
+                    onChange={(event) => setActionScopeNotes(event.target.value)}
+                    placeholder={a.scopeNotesHint}
+                  />
+                </label>
+              )}
               {actionMethod === "manual" && (
                 <label className="action-document-field">
                   {a.sourceDocument}
@@ -5656,22 +5658,26 @@ export function App() {
                   </div>
                 </label>
               )}
-              <label className="action-activity-field">
-                {a.activity}
-                <input
-                  placeholder="Deploy Lookup / Install Integration"
-                  value={actionActivity}
-                  onChange={(event) => setActionActivity(event.target.value)}
-                />
-              </label>
               {actionMethod === "manual" && (
-                <label className="action-scope-field">
-                  {a.scopeNotes}
-                  <textarea
-                    value={actionScopeNotes}
-                    onChange={(event) => setActionScopeNotes(event.target.value)}
-                    placeholder={a.scopeNotesHint}
-                  />
+                <label className="action-template-field">
+                  {a.templateReference}
+                  <div className="action-document-picker">
+                    <select value={actionTemplateId} onChange={(event) => setActionTemplateId(event.target.value as ActionTemplateId)}>
+                      {visibleActionTemplateOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.id === "auto" ? a.selectTemplate : option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="secondary compact" onClick={() => {
+                      setCustomTemplateProduct(actionProduct || "Base de datos");
+                      setCustomTemplateOpen(true);
+                    }}>
+                      <Plus size={15} />
+                      {a.addTemplate}
+                    </button>
+                  </div>
+                  <small>{a.templateHint}</small>
                 </label>
               )}
               {actionMethod === "cicd" && (

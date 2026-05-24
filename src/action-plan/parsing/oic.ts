@@ -36,6 +36,18 @@ function oicScheduleContentIsNotApplicable(content: string) {
     !/\bevery\s+\d+|\bstart schedule\b|\bstart running\b|\bfrequency\b/i.test(content);
 }
 
+function hasOicConnectionOnlyInstructions(text: string) {
+  return /\bConnections?>\s*OIC\b|R\d-?OIC\s*CONNECTIONS|Configuration\s*Instructions\s*connectors|Configuration\s*Steps/i.test(text) &&
+    /\bConnection\s*Name\s*:|\bSearch\s*for\s*[“"]?[A-Z0-9_]{6,}[”"]?\s*connection/i.test(text) &&
+    !/\bInstallation artifacts\b|\.iar\b|\bImport button\b|\bActivate\b[\s\S]{0,40}\bintegration\b/i.test(text);
+}
+
+function hasOicLookupOnlyInstructions(text: string) {
+  return /\bLookups?>\s*OIC\b|\bImport\s+Lookups?\b|\bInstallation Instructions for Import Lookups?\b|\bExport General Lookup\b|\bImport General Lookup\b/i.test(text) &&
+    /\blookups?\b[\s\S]{0,160}\b(?:Export CSV|Import and Replace|Import button|Choose File)\b|\b(?:Export CSV|Import and Replace)\b[\s\S]{0,160}\blookups?\b/i.test(text) &&
+    !/\bInstallation artifacts\b|\.iar\b|\bActivate\b[\s\S]{0,40}\bintegration\b/i.test(text);
+}
+
 function oicInstallationFallback(
   scope: ReturnType<typeof oicScopeOverrides>,
   metadata: ReturnType<typeof oicDetectedMetadata>,
@@ -83,6 +95,45 @@ function environmentNameFromContent(content: string) {
 
 function serviceEnvironmentFromContent(content: string) {
   return content.match(/\b(?:IC|OIC) Service Environment:\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
+}
+
+function environmentBlocksFromDocument(text: string) {
+  const section = environmentSectionFromDocument(text);
+  if (!section) return [];
+  const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
+  const starts = lines
+    .map((line, index) => (/^Environment Name:/i.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  return starts.map((start, index) => {
+    const end = index + 1 < starts.length ? starts[index + 1] : lines.length;
+    return lines.slice(start, end).join("\n");
+  });
+}
+
+function strictEnvironmentBlockFromDocument(text: string, selectedEnvironment: string) {
+  const aliases = strictEnvironmentAliases(selectedEnvironment);
+  if (!aliases.length) return "";
+  for (const block of environmentBlocksFromDocument(text)) {
+    const name = normalizeEnvironmentName(environmentNameFromContent(block));
+    if (aliases.includes(name)) return block;
+  }
+  return "";
+}
+
+function environmentBlockForTargetInstance(text: string) {
+  const targetInstance = targetInstanceFromText(text);
+  if (!targetInstance) return "";
+  const target = normalizeEnvironmentName(targetInstance);
+  return environmentBlocksFromDocument(text).find((block) => normalizeEnvironmentName(serviceEnvironmentFromContent(block)) === target) ?? "";
+}
+
+function environmentValue(content: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return content.match(new RegExp(`\\b${escaped}:\\s*(\\S+)`, "i"))?.[1]?.trim() ?? "";
+}
+
+function cleanFusionHost(value: string) {
+  return value.replace(/\/fscmUI\/faces\/FuseWelcome\/?$/i, "").replace(/\/+$/, "");
 }
 
 function strictEnvironmentAliases(environment: string) {
@@ -258,6 +309,484 @@ function connectionConfigurationNotes(text: string, connections: string[]) {
   if (hasUsernamePasswordToken) notes.push("Security policy: Username Password Token.");
   notes.push("Use the credentials provided through the approved secure channel. Do not document password values.");
   return notes.join("\n\n");
+}
+
+function connectionReferenceDetails(
+  connection: string,
+  text: string,
+  selectedEnvironment: string,
+  scope: ReturnType<typeof oicScopeOverrides>
+) {
+  const key = connection.toUpperCase();
+  const targetInstance = targetInstanceFromText(text);
+  const targetLabel = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target environment";
+  const environmentBlock = strictEnvironmentBlockFromDocument(text, selectedEnvironment);
+  const targetPending = `<${targetLabel} target URL/WSDL/host to be provided or confirmed before RFS>`;
+  const oicUrl = environmentValue(environmentBlock, "OIC Admin Console");
+  const erpHost = cleanFusionHost(environmentValue(environmentBlock, "ERP Host"));
+  const oecHost = cleanFusionHost(environmentValue(environmentBlock, "OEC Host"));
+  const cdmHost = cleanFusionHost(environmentValue(environmentBlock, "CDM Host"));
+  const credentials = scope.requiresOnlineCredentialSession
+    ? "A secure session with Daniela Gomez is required for username/password."
+    : "Use the approved secure channel for username/password.";
+  const status = "Validate first; configure only if missing or test fails.";
+
+  let type = "Confirm adapter type from the imported integration.";
+  let endpoint = targetPending;
+  let security = "Confirm security policy from the imported connection.";
+
+  if (/\bOIC\b.*\bSERVICE\b.*\bAPI\b|\bOIC_SERVICE_REST_API\b/.test(key)) {
+    type = "REST API Base URL";
+    endpoint = oicUrl || targetPending;
+    security = "Basic Authentication";
+  } else if (/\bREST\b.*\bAPI\b/.test(key)) {
+    type = "REST API Base URL";
+    endpoint = /OEC/.test(key) ? oecHost || targetPending : targetPending;
+    security = "Basic Authentication";
+  } else if (/\bREPORT\b.*\bSERVICE\b.*\bSOAP\b/.test(key)) {
+    type = "SOAP / ReportService WSDL";
+    const host = /OEC/.test(key) ? oecHost : erpHost || oecHost || cdmHost;
+    endpoint = host ? `${host}/xmlpserver/services/v2/ReportService?wsdl` : targetPending;
+    security = "No Security Policy";
+  } else if (/\bCDM\b/.test(key)) {
+    type = "ERP Adapter / ERP Services Catalog WSDL URL";
+    endpoint = cdmHost || targetPending;
+    security = "Username Password Token";
+  } else if (/\bOEC\b.*\bAPI\b|\bAPI_OEC_ADAPTER\b/.test(key)) {
+    type = "OEC/OSC Services Catalog WSDL URL";
+    endpoint = oecHost || targetPending;
+    security = "Username Password Token";
+  }
+
+  return [
+    `- ${connection}`,
+    `  Status: ${status}`,
+    `  Type: ${type}`,
+    `  Target URL/WSDL/Host: ${endpoint}`,
+    `  Security: ${security}`,
+    `  Credentials: ${credentials}`
+  ].join("\n");
+}
+
+function connectionReferenceBlock(
+  text: string,
+  selectedEnvironment: string,
+  connections: string[],
+  scope: ReturnType<typeof oicScopeOverrides>
+) {
+  if (!connections.length) return "";
+  const targetInstance = targetInstanceFromText(text);
+  const targetLabel = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target environment";
+  return [
+    "Connection configuration details required before RFS/execution:",
+    `Requester/Oracle Consulting must provide or confirm the non-sensitive connection data for ${targetLabel} before execution. Do not use IM090 URLs from another environment as executable target values.`,
+    connections.map((connection) => connectionReferenceDetails(connection, text, selectedEnvironment, scope)).join("\n\n")
+  ].join("\n\n");
+}
+
+type OicConnectionDetail = {
+  name: string;
+  identifier?: string;
+  properties: Array<{ label: string; value: string }>;
+  security?: string;
+  username?: string;
+  accessType?: string;
+  selectedAgentGroup?: string;
+};
+
+function cleanOicConnectionValue(value: string) {
+  const clean = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^https?:\/\//i.test(clean) || /\.[A-Za-z]{2,}\b/.test(clean)) {
+    return clean.replace(/\s+/g, "").replace(/\?WSDL$/i, "?WSDL");
+  }
+  return clean
+    .replace(/^Publicgateway$/i, "Public gateway")
+    .replace(/^Connectivityagent$/i, "Connectivity agent")
+    .replace(/^FTPServerAccessPolicy$/i, "FTP Server Access Policy")
+    .replace(/^UsernamePasswordToken$/i, "Username Password Token")
+    .replace(/^BasicAuthentication$/i, "Basic Authentication");
+}
+
+function valueBetween(content: string, label: string, nextLabels: string[]) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*");
+  const next = nextLabels.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*")).join("|");
+  const match = content.match(new RegExp(`${escapedLabel}\\s*:?\\s*([\\s\\S]*?)(?=${next}|$)`, "i"));
+  return cleanOicConnectionValue(match?.[1] ?? "");
+}
+
+function oicSectionLines(section: string) {
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function valueFromOicConnectionLine(section: string, labels: string[]) {
+  const lines = oicSectionLines(section);
+  for (const line of lines) {
+    for (const label of labels) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+      const match = line.match(new RegExp(`^${escaped}\\s*:?\\s+(.+)$`, "i"));
+      if (match?.[1]) return cleanOicConnectionValue(match[1]);
+    }
+  }
+  return "";
+}
+
+function usernameFromOicConnectionSection(section: string) {
+  const lines = oicSectionLines(section);
+  for (const line of lines) {
+    const match = line.match(/^Username\s*:?\s+(.+)$/i);
+    const value = cleanOicConnectionValue(match?.[1] ?? "");
+    if (value && !/\b(?:password|policy|authentication|token|for this information)\b/i.test(value)) return value;
+  }
+  const securityIndex = lines.findIndex((line) => /^Security policy\b/i.test(line));
+  if (securityIndex >= 0) {
+    for (const line of lines.slice(securityIndex + 1)) {
+      if (/^(?:Password|Access type|Selected agent group|Connection|Click|In case)\b/i.test(line)) break;
+      const value = cleanOicConnectionValue(line);
+      if (value && !/\b(?:password|policy|authentication|token|for this information)\b/i.test(value)) return value;
+    }
+  }
+  return "";
+}
+
+function oicConnectionDetails(text: string): OicConnectionDetail[] {
+  const sections: string[] = [];
+  const starts = Array.from(text.matchAll(/Connection\s*Name\s*:/gi)).map((match) => match.index ?? -1).filter((index) => index >= 0);
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    const end = index + 1 < starts.length ? starts[index + 1] : text.length;
+    sections.push(text.slice(start, end));
+  }
+  if (!sections.length) {
+    const searched = Array.from(text.matchAll(/\bSearch\s*for\s*[“"]?\s*([A-Z0-9_ .-]{6,}?)\s*[”"]?\s*connection/gi)).map((match) => match[1]);
+    return uniqueValues(searched).map((name) => ({ name, properties: [] }));
+  }
+
+  const details = sections.flatMap((section) => {
+    const name = cleanOicConnectionValue(section.match(/Connection\s*Name\s*:\s*([A-Z0-9_ .-]+?)(?=\s*Identifier\s*:)/i)?.[1] ?? "");
+    if (!name) return [];
+    const identifier = section.match(/Identifier\s*:\s*([A-Z0-9_]+?)(?=\s*Connection\s*properties\s*Value|\s*ConnectionpropertiesValue)/i)?.[1];
+    const propertyLabels = [
+      "FTP Server Host Address",
+      "FTPServerHostAddress",
+      "FTP Server Port",
+      "FTPServerPort",
+      "SFTP Connection",
+      "SFTPConnection",
+      "Host",
+      "Port",
+      "Service Name",
+      "ServiceName",
+      "WSDL URL",
+      "WSDLURL"
+    ];
+    const boundaryLabels = [
+      ...propertyLabels,
+      "Connection Security Value",
+      "ConnectionSecurityValue",
+      "Security policy",
+      "Securitypolicy",
+      "Username",
+      "Password",
+      "Access type",
+      "Accesstype",
+      "Selected agent group",
+      "Selectedagentgroup",
+      "4.Click",
+      "2.2."
+    ];
+    const ftpHost = valueFromOicConnectionLine(section, ["FTP Server Host Address", "FTPServerHostAddress"]) ||
+      valueBetween(section, "FTP Server Host Address", boundaryLabels) ||
+      valueBetween(section, "FTPServerHostAddress", boundaryLabels);
+    const ftpPort = valueFromOicConnectionLine(section, ["FTP Server Port", "FTPServerPort"]) ||
+      valueBetween(section, "FTP Server Port", boundaryLabels) ||
+      valueBetween(section, "FTPServerPort", boundaryLabels);
+    const sftp = valueFromOicConnectionLine(section, ["SFTP Connection", "SFTPConnection"]) ||
+      valueBetween(section, "SFTP Connection", boundaryLabels) ||
+      valueBetween(section, "SFTPConnection", boundaryLabels);
+    const host = ftpHost ? "" : valueFromOicConnectionLine(section, ["Host"]);
+    const port = ftpPort ? "" : valueFromOicConnectionLine(section, ["Port"]);
+    const serviceName = valueFromOicConnectionLine(section, ["Service Name", "ServiceName"]) ||
+      valueBetween(section, "Service Name", boundaryLabels) ||
+      valueBetween(section, "ServiceName", boundaryLabels);
+    const wsdlUrl = valueFromOicConnectionLine(section, ["WSDL URL", "WSDLURL"]) ||
+      valueBetween(section, "WSDL URL", boundaryLabels) ||
+      valueBetween(section, "WSDLURL", boundaryLabels);
+    const properties = [
+      ["FTP Server Host Address", ftpHost],
+      ["FTP Server Port", ftpPort],
+      ["SFTP Connection", sftp],
+      ["Host", host],
+      ["Port", port],
+      ["Service Name", serviceName],
+      ["WSDL URL", wsdlUrl]
+    ]
+      .filter(([, value]) => value)
+      .filter(([label, value], index, list) => list.findIndex(([otherLabel, otherValue]) => otherLabel === label && otherValue === value) === index)
+      .map(([label, value]) => ({ label, value }));
+    const security =
+      /\bFTP\s*Server\s*Access\s*Policy\b/i.test(section)
+        ? "FTP Server Access Policy"
+        : /\bUsername\s*Password\s*Token\b/i.test(section)
+          ? "Username Password Token"
+          : /\bBasic\s*Authentication\b/i.test(section)
+            ? "Basic Authentication"
+            : valueBetween(section, "Security policy", boundaryLabels) || valueBetween(section, "Securitypolicy", boundaryLabels);
+    const username = usernameFromOicConnectionSection(section);
+    const accessType = valueFromOicConnectionLine(section, ["Access type", "Accesstype"]) ||
+      valueBetween(section, "Access type", boundaryLabels) ||
+      valueBetween(section, "Accesstype", boundaryLabels);
+    const selectedAgentGroup = valueFromOicConnectionLine(section, ["Selected agent group", "Selectedagentgroup"]) ||
+      valueBetween(section, "Selected agent group", boundaryLabels) ||
+      valueBetween(section, "Selectedagentgroup", boundaryLabels);
+    return [{ name, identifier, properties, security, username, accessType, selectedAgentGroup }];
+  });
+  return Array.from(new Map(details.map((detail) => [detail.name.toUpperCase(), detail])).values());
+}
+
+function oicLookupNames(text: string) {
+  const bulletLookups = Array.from(
+    text.matchAll(/^[\s•*-]+([A-Z][A-Z0-9_]{5,})(?:\s*$|\s+|\.)/gim)
+  ).map((match) => match[1]);
+  const searchedLookups = Array.from(
+    text.matchAll(/\bSearch\s+([A-Z][A-Z0-9_]{5,})\b/gim)
+  ).map((match) => match[1]);
+  const quotedLookups = Array.from(
+    text.matchAll(/[“"]([A-Z][A-Z0-9_]{5,})\s*[”"]/g)
+  ).map((match) => match[1]);
+  const csvLookups = Array.from(
+    text.matchAll(/\b([A-Z][A-Z0-9_]{5,})\.CSV\b/gi)
+  ).map((match) => match[1]);
+  return uniqueValues([...bulletLookups, ...searchedLookups, ...quotedLookups, ...csvLookups])
+    .filter((value) => /_/.test(value))
+    .filter((value) => !/\b(?:GBOIC|OIC|ERP|CSV|IM090)\b/i.test(value));
+}
+
+export function oicConfigurationItems(text: string) {
+  if (hasOicLookupOnlyInstructions(text)) return oicLookupNames(text).map((lookup) => `Lookup: ${lookup}`);
+  if (!hasOicConnectionOnlyInstructions(text)) return [];
+  return oicConnectionDetails(text).map((connection) => `Connection: ${connection.name}`);
+}
+
+function oicAdminConsoleUrlForTarget(text: string, selectedEnvironment: string) {
+  const environmentBlock = environmentBlockForTargetInstance(text) || strictEnvironmentBlockFromDocument(text, selectedEnvironment);
+  const match = environmentBlock.match(/OIC\s*Admin\s*Console\s*:?\s*(https?:\/\/\S+)/i) ||
+    text.match(/OIC\s*Admin\s*Console\s*:?\s*(https?:\/\/\S+)/i);
+  return cleanOicConnectionValue(match?.[1] ?? "");
+}
+
+function buildOicLookupOnlyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const lookups = oicLookupNames(text);
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target OIC environment";
+  const oicUrl = oicAdminConsoleUrlForTarget(text, selectedEnvironment) || "<Target OIC Admin Console URL to be confirmed>";
+  const lookupList = lookups.length ? asBullets(lookups) : "- Confirm lookup names listed in the IM090.";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        `Validate access to the target OIC environment before starting: ${target}.`,
+        `OIC Admin Console: ${oicUrl}`,
+        "Confirm the lookup CSV file(s) are attached to the RFC or available in the approved installation package before execution.",
+        "Do not use lookup files from a different environment unless explicitly confirmed by the RFC owner.",
+        "",
+        "Lookups to backup/import:",
+        lookupList
+      ].join("\n")
+    },
+    {
+      id: "backup",
+      title: "Backup",
+      content: [
+        "Before importing, export a CSV backup of the current lookup value(s) in the target OIC environment.",
+        lookupList,
+        "Attach the backup file(s) or backup evidence to the RFC.",
+        "If a lookup does not exist before import, document that backup was not applicable for that lookup."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Import Steps",
+      content: [
+        "1. Login to the target Oracle Cloud Integration Admin Console.",
+        "2. Navigate to Design > Integrations > Lookups.",
+        lookups.map((lookup, index) => [
+          `${3 + index}. Backup and import lookup: ${lookup}`,
+          "   - Search for the lookup by name.",
+          "   - If it exists, export it as CSV and keep the backup evidence.",
+          "   - Click Import.",
+          `   - Choose the approved CSV file for ${lookup}.`,
+          "   - Click Import.",
+          "   - If OIC prompts that the lookup already exists, click Import and Replace only after the backup is captured.",
+          "   - Confirm the import success message."
+        ].join("\n")).join("\n\n") || "3. Backup and import each lookup listed in the IM090.",
+        `${3 + lookups.length}. Confirm all requested lookups were imported successfully.`
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for OIC lookup import.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate all requested OIC lookups after import.",
+        "",
+        lookupList,
+        "",
+        "For each lookup, confirm:",
+        "- The lookup exists in the target OIC environment.",
+        "- The imported values are visible and saved correctly.",
+        "- No import errors are present."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If a lookup import fails, stop execution and capture the error details.",
+        "If a replacement causes incorrect values, restore the previous lookup using the exported CSV backup.",
+        "Escalate to the OIC technical owner/requester before retrying with a different lookup file."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- Target OIC environment.",
+        "- Pre-change lookup search/status.",
+        "- Lookup CSV backup/export, when applicable.",
+        "- Import and Replace confirmation, when applicable.",
+        "- Successful import message.",
+        "- Final lookup validation.",
+        "",
+        "Share final execution result with the RFC requester/customer."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildOicConnectionOnlyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const connections = oicConnectionDetails(text);
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target OIC environment";
+  const oicUrl = oicAdminConsoleUrlForTarget(text, selectedEnvironment) || "<Target OIC Admin Console URL to be confirmed>";
+  const connectionList = connections.length ? asBullets(connections.map((connection) => connection.name)) : "- Confirm OIC connections listed in the IM090.";
+  const details = connections.map((connection) => [
+    `- ${connection.name}`,
+    connection.identifier ? `  Identifier: ${connection.identifier}` : "",
+    connection.properties.length ? connection.properties.map((property) => `  ${property.label}: ${property.value}`).join("\n") : "  Connection properties: confirm from IM090/imported connection.",
+    connection.security ? `  Security: ${connection.security}` : "",
+    connection.username ? `  Username: ${connection.username}` : "",
+    connection.accessType ? `  Access type: ${connection.accessType}` : "",
+    connection.selectedAgentGroup ? `  Selected agent group: ${connection.selectedAgentGroup}` : "",
+    "  Credentials: provide through approved secure channel; do not document password values."
+  ].filter(Boolean).join("\n")).join("\n\n");
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        `Validate access to the target OIC environment before starting: ${target}.`,
+        `OIC Admin Console: ${oicUrl}`,
+        "Requester/Oracle Consulting must provide or confirm all connection endpoint values and credentials for the target environment before RFS/execution.",
+        "Do not use connection values from a different environment unless explicitly confirmed by the RFC owner.",
+        "Do not capture or expose password values in the Action Plan or RFC evidence.",
+        "",
+        "Connections to configure/test:",
+        connectionList,
+        "",
+        "Connection configuration reference:",
+        details || "- Confirm connection details from the IM090."
+      ].join("\n")
+    },
+    {
+      id: "backup",
+      title: "Backup",
+      content: [
+        "Before changing each connection, capture evidence of its current configuration and test status.",
+        "If a connection is already configured and tests successfully, document that no change was required.",
+        "If a connection is missing or fails validation, capture the current error/status before updating it."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Configuration Steps",
+      content: [
+        "1. Login to the target Oracle Cloud Integration Admin Console.",
+        "2. Navigate to Design > Integrations > Connections.",
+        connections.map((connection, index) => [
+          `${3 + index}. Configure and validate connection: ${connection.name}`,
+          "   - Search for the connection by name.",
+          "   - Open/Edit the connection.",
+          "   - Validate or update the non-sensitive connection properties listed in the prerequisites.",
+          "   - Enter credentials only through the approved secure session/channel.",
+          "   - Click Test and confirm the result reaches 100%.",
+          "   - If the test fails, correct the configuration using the approved values and test again.",
+          "   - Click Save after successful test.",
+          "   - Capture configuration/test evidence without exposing password values."
+        ].join("\n")).join("\n\n") || "3. Configure and validate each OIC connection listed in the IM090.",
+        `${3 + connections.length}. Confirm all requested connections are saved and test successfully.`
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for OIC connection configuration.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate all requested OIC connections after configuration.",
+        "",
+        connectionList,
+        "",
+        "For each connection, confirm:",
+        "- Test result is successful / 100%.",
+        "- Endpoint/host/port/WSDL values match the target environment.",
+        "- Access type and agent group, when applicable, match the IM090/approved values.",
+        "- No password values are visible in evidence."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If any connection cannot be configured or tested successfully, stop execution and capture the error details.",
+        "Restore prior values using the backup evidence if a change causes a regression.",
+        "Escalate to the OIC technical owner/requester before retrying with different endpoint, agent, or credential values."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- Target OIC environment.",
+        "- Current/pre-change connection status.",
+        "- Updated connection properties, excluding passwords.",
+        "- Successful Test result for each connection.",
+        "- Save confirmation.",
+        "- Final validation summary.",
+        "",
+        "Share final execution result with the RFC requester/customer."
+      ].join("\n")
+    }
+  ];
 }
 
 function oicScheduledIntegrationCandidates(text: string) {
@@ -678,6 +1207,8 @@ function buildOicTracingPlan(text: string, selectedEnvironment: string): ManualA
 }
 
 export function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
+  if (hasOicLookupOnlyInstructions(text)) return buildOicLookupOnlyPlan(text, selectedEnvironment);
+  if (hasOicConnectionOnlyInstructions(text)) return buildOicConnectionOnlyPlan(text, selectedEnvironment);
   if (hasOicResetPasswordInstructions(text)) return buildOicResetPasswordPlan(text, selectedEnvironment);
   if (hasOicTracingInstructions(text)) return buildOicTracingPlan(text, selectedEnvironment);
   if (hasOicScheduledJobDisableInstructions(text)) return buildOicScheduledJobDisablePlan(text, selectedEnvironment);
@@ -686,6 +1217,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   const operational = operationalIm090Text(text);
   const metadata = oicDetectedMetadata(text);
   const connectionNotes = connectionConfigurationNotes(text, metadata.connections);
+  const connectionReference = connectionReferenceBlock(text, selectedEnvironment, metadata.connections, scope);
   const lines = actionPlanLinesFromIm090(text);
   const startAt = 0;
   const artifactSection = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation artifacts\b/i, /^Installation artifacts\b/i], startAt);
@@ -753,8 +1285,9 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         asBullets(artifacts),
         detectedBlock("Integrations detected", metadata.integrations),
         detectedBlock("Connections detected", metadata.connections),
+        connectionReference,
         scope.ignoreLookups ? "" : detectedBlock("DVM/lookups detected", metadata.dvms),
-        scope.requiresOnlineCredentialSession ? "Execution requires an online session with the RFC owner and Daniela Gomez to provide/validate credentials through the approved secure channel." : "",
+        scope.requiresOnlineCredentialSession && !connectionReference ? "Execution requires an online session with the RFC owner and Daniela Gomez to provide/validate credentials through the approved secure channel." : "",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         preInstallClean
       ].filter(Boolean).join("\n\n"))
