@@ -1,4 +1,4 @@
-import { extractArtifactNames, installableArtifactNames } from "./artifacts";
+import { extractArtifactNames, installableArtifactNames, preferCanonicalOicIarArtifacts } from "./artifacts";
 import {
   actionPlanLinesFromIm090,
   asBullets,
@@ -6,24 +6,121 @@ import {
   filterEnvironmentSection,
   hasNumberedInstructionSteps,
   looseSectionByHeadings,
+  normalizeEnvironmentName,
   operationalIm090Text,
   prepareManualPhaseContent,
   sectionByAnyHeading
 } from "./common";
 import type { ManualActionPhase } from "./types";
 
-function oicBackupFallback() {
+function oicBackupFallback(ignoreLookups = false, integrations: string[] = []) {
+  const integrationLine = integrations.length
+    ? `If ${integrations.join(" or ")} already exists, export the current integration before deactivating or deleting it.`
+    : "If the target integration already exists, export the current integration before deactivating or deleting it.";
   return [
     "Before installing, search for the existing integration in the target OIC environment.",
-    "If OUT_<INTEGRATION_NAME> or the target integration already exists, export the current integration before deactivating or deleting it.",
-    "Export or capture current lookup values before replacing or updating lookup content.",
+    integrationLine,
+    ignoreLookups ? "" : "Export or capture current lookup values before replacing or updating lookup content.",
     "Attach backup files or backup evidence to the RFC.",
     "If backup is not applicable, document the reason in the RFC evidence."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function oicScheduleFallback() {
   return "Not applicable for this integration unless a schedule is explicitly required by the IM090.";
+}
+
+function oicScheduleContentIsNotApplicable(content: string) {
+  if (!content.trim()) return true;
+  return /\bN\/A\b|\bnot applicable\b/i.test(content) &&
+    !/\bevery\s+\d+|\bstart schedule\b|\bstart running\b|\bfrequency\b/i.test(content);
+}
+
+function oicInstallationFallback(
+  scope: ReturnType<typeof oicScopeOverrides>,
+  metadata: ReturnType<typeof oicDetectedMetadata>,
+  artifacts: string[],
+  selectedEnvironment: string,
+  text: string
+) {
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ");
+  const indentNestedBullets = (value: string) => value.replace(/\n-/g, "\n   -");
+  const lines: string[] = [
+    target ? `Login to the Oracle Cloud Integration Admin Console for ${target}.` : "Login to the target Oracle Cloud Integration Admin Console.",
+    "Go to Integrations.",
+    metadata.integrations.length ? `Search for ${metadata.integrations.join(" or ")}.` : "Search for the target integration.",
+    "If the same integration/version already exists, export a backup, deactivate it, and delete it.",
+    artifacts.length ? `Import the artifact(s):\n${asBullets(artifacts)}` : "Import the integration artifact from the IM090 package.",
+    metadata.connections.length
+      ? `${scope.commonConnectionsMayExist ? "Validate" : "Configure and validate"} the required connection(s):\n${asBullets(metadata.connections)}`
+      : "",
+    scope.commonConnectionsMayExist ? "Configure only missing or failing connections using credentials provided through the approved secure channel." : "",
+    scope.ignoreLookups ? "Do not execute lookup import/configuration steps." : "",
+    scope.ignoreDashboard ? "Do not execute Dashboard / Visual Builder validation steps." : "",
+    metadata.integrations.length ? `Activate ${metadata.integrations.join(" and ")}.` : "Activate the imported integration.",
+    "Refresh activation status until the integration is active."
+  ];
+  return lines.filter(Boolean).map((line, index) => `${index + 1}. ${indentNestedBullets(line)}`).join("\n");
+}
+
+function oicScopeOverrides(text: string) {
+  return {
+    ignoreDashboard: /\b(?:ignore|exclude|do not (?:install|validate|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\b(?:dashboard|visual builder)\b|\b(?:dashboard|visual builder)\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
+    ignoreLookups: /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
+    commonConnectionsMayExist: /\bconnections?\b[\s\S]{0,160}\b(?:common use|already configured|could be already configured|ignore them if that's the case)\b/i.test(text),
+    requiresOnlineCredentialSession: /\b(?:credentials?|passwords?)\b[\s\S]{0,180}\b(?:Daniela Gomez|session|secure channel|owner)\b|\bDaniela Gomez\b/i.test(text)
+  };
+}
+
+function targetInstanceFromText(text: string) {
+  return text.match(/\bTarget instance:\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
+}
+
+function environmentNameFromContent(content: string) {
+  return content.match(/\bEnvironment Name:\s*([A-Z0-9 _-]+?)(?:\s+(?:IC|OIC) Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/i)?.[1]?.trim() ?? "";
+}
+
+function serviceEnvironmentFromContent(content: string) {
+  return content.match(/\b(?:IC|OIC) Service Environment:\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
+}
+
+function strictEnvironmentAliases(environment: string) {
+  const selected = normalizeEnvironmentName(environment);
+  if (selected === "REG") return ["REG", "REGRESSION"];
+  if (selected === "TEST") return ["TEST"];
+  if (selected === "PREPROD" || selected === "TE") return ["PREPROD", "TE"];
+  if (selected === "PROD" || selected === "PRODUCTION" || selected === "PR") return ["PROD", "PRODUCTION", "PR"];
+  if (selected === "DEV" || selected === "DEVELOPMENT") return ["DEV", "DEVELOPMENT"];
+  return selected ? [selected] : [];
+}
+
+function hasStrictEnvironmentData(environmentSection: string, selectedEnvironment: string) {
+  const strictAliases = strictEnvironmentAliases(selectedEnvironment);
+  if (!environmentSection || !strictAliases.length) return false;
+  const environmentNames = Array.from(environmentSection.matchAll(/\bEnvironment Name:\s*([A-Z0-9 _-]+?)(?:\s+(?:IC|OIC) Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/gi))
+    .map((match) => normalizeEnvironmentName(match[1] ?? ""));
+  return environmentNames.some((name) => strictAliases.includes(name));
+}
+
+function oicEnvironmentExecutionContext(environmentContent: string, environmentContentRaw: string, selectedEnvironment: string, text: string) {
+  const selected = normalizeEnvironmentName(selectedEnvironment);
+  const referenceEnvironment = environmentNameFromContent(environmentContent);
+  const referenceInstance = serviceEnvironmentFromContent(environmentContent);
+  const targetInstance = targetInstanceFromText(text);
+  const reference = normalizeEnvironmentName(referenceEnvironment);
+  if (selected && reference && !hasStrictEnvironmentData(environmentContentRaw, selectedEnvironment)) {
+    return [
+      `Target environment: ${selectedEnvironment}.`,
+      targetInstance ? `Target instance: ${targetInstance}.` : `Target instance: confirm the ${selectedEnvironment} instance from the RFC before execution.`,
+      `IM090 reference section: ${referenceEnvironment}${referenceInstance ? ` / ${referenceInstance}` : ""} (non-production reference only).`,
+      `The IM090 does not include connection data for ${selectedEnvironment}. Use the referenced IM090 section only as procedural guidance and validate final URLs, credentials, and access against the RFC target environment before execution.`,
+      referenceInstance && targetInstance && normalizeEnvironmentName(referenceInstance) !== normalizeEnvironmentName(targetInstance)
+        ? `Do not use ${referenceInstance} as the execution target unless the RFC owner explicitly confirms it.`
+        : ""
+    ].filter(Boolean).join("\n");
+  }
+  return environmentContent;
 }
 
 function hasOicDeactivationInstructions(text: string) {
@@ -44,7 +141,12 @@ function hasOicResetPasswordInstructions(text: string) {
 }
 
 function hasOicTracingInstructions(text: string) {
-  return /\bTemplate reference:\s*OIC (?:enable|disable) tracing\b|\bActions?\s*>\s*Tracing\b|\bEnable Tracing\b|\bInclude Payload\b/i.test(text);
+  if (/\bTemplate reference:\s*OIC (?:enable|disable) tracing\b/i.test(text)) return true;
+  const hasInstallationScope = /\bInstallation artifacts\b|\.iar\b|\.csv\b|\bClick on Import button\b|\bChoose file button to browse file to be imported\b/i.test(text);
+  const hasExplicitTracingChange =
+    /\bActions?\s*>\s*Tracing\b|\bCurrent Tracing Status\b|\bTracing configuration\b|\b(?:enable|disable)\s+tracing\s+(?:for|on)\b|\buncheck\s+"?Enable Tracing"?/i.test(text);
+  if (hasInstallationScope && !hasExplicitTracingChange) return false;
+  return hasExplicitTracingChange;
 }
 
 function isOicDisableTracing(text: string) {
@@ -59,6 +161,16 @@ function uniqueValues(values: string[]) {
     byKey.set(clean.toUpperCase(), clean);
   }
   return Array.from(byKey.values());
+}
+
+function removePartialIntegrationNames(values: string[]) {
+  return uniqueValues(values).filter((value) => {
+    const key = value.toUpperCase();
+    return !values.some((other) => {
+      const otherKey = other.toUpperCase();
+      return otherKey !== key && otherKey.startsWith(key) && otherKey.length - key.length >= 3;
+    });
+  });
 }
 
 function linesMatching(text: string, pattern: RegExp) {
@@ -148,25 +260,41 @@ function connectionConfigurationNotes(text: string, connections: string[]) {
   return notes.join("\n\n");
 }
 
+function oicScheduledIntegrationCandidates(text: string) {
+  const scheduled = Array.from(
+    text.matchAll(/\b(?:schedule|scheduled)\s+(?:the\s+)?([A-Z][A-Z0-9_]{6,})\b/gi)
+  ).map((match) => match[1]);
+  const frequency = text.match(/\bfrequency\s+is\s+every\s+([A-Za-z0-9 _-]+?)(?:\.|\n|$)/i)?.[1]?.trim();
+  return uniqueValues(scheduled)
+    .filter((value) => /_/.test(value) && !/\b(?:INTEGRATION|SCHEDULED)\b/i.test(value))
+    .map((value) => frequency ? `${value} - every ${frequency}` : value);
+}
+
 function oicDetectedMetadata(text: string) {
-  const integrations = uniqueValues(
-    text
-      .split(/\r?\n/)
-      .flatMap((line) => {
-        const metadata = line.match(/^Integration:\s*([^|]+)(?:\|([^|]+))?(?:\|([^|]+))?/i);
-        if (!metadata) return [];
-        const code = metadata[1]?.trim();
-        const name = metadata[2]?.trim();
-        return [code, name].filter(Boolean);
-      })
-  );
+  const integrationMetadata = text
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const metadata = line.match(/^Integration:\s*([^|]+)(?:\|([^|]+))?(?:\|([^|]+))?/i);
+      if (!metadata) return [];
+      const code = metadata[1]?.trim();
+      const name = metadata[2]?.trim();
+      return [code, name].filter(Boolean);
+    });
+  const namedIntegrations = Array.from(text.matchAll(/^\s*Name\s+((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gim)).map((match) => match[1]);
+  const repeatedIntegrations = Array.from(text.matchAll(/\bRepeat the steps for the\s+([A-Z][A-Z0-9_]{6,})\s+integration\b/gi)).map((match) => match[1]);
+  const scheduledIntegrations = oicScheduledIntegrationCandidates(text).map((value) => value.split(/\s+-\s+/)[0]);
+  const referencedIntegrations = Array.from(text.matchAll(/\b(?:refer to|Search for|Integration name)\s+((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1]);
+  const integrations = removePartialIntegrationNames([...integrationMetadata, ...namedIntegrations, ...referencedIntegrations])
+    .concat(repeatedIntegrations, scheduledIntegrations)
+    .filter((value) => !/^IN_LGFDATA_TO_WMS$/i.test(value))
+    .filter((value) => /^(?:IN|OUT|SYNC)_[A-Z0-9_]+$/i.test(value));
   const connections = uniqueValues([
     ...linesMatching(text, /^connection:\s*([A-Z0-9_ .-]+)/i),
     ...connectionCandidatesFromText(text)
   ]);
   const dvms = linesMatching(text, /^dvm:\s*([A-Z0-9_ .-]+)/i);
-  const schedules = linesMatching(text, /^schedule:\s*([A-Z0-9_ .-]+)/i);
-  return { integrations, connections, dvms, schedules };
+  const schedules = uniqueValues([...linesMatching(text, /^schedule:\s*([A-Z0-9_ .-]+)/i), ...oicScheduledIntegrationCandidates(text)]);
+  return { integrations: uniqueValues(integrations), connections, dvms, schedules };
 }
 
 function detectedBlock(title: string, values: string[]) {
@@ -554,6 +682,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   if (hasOicTracingInstructions(text)) return buildOicTracingPlan(text, selectedEnvironment);
   if (hasOicScheduledJobDisableInstructions(text)) return buildOicScheduledJobDisablePlan(text, selectedEnvironment);
   if (hasOicDeactivationInstructions(text)) return buildOicDeactivationPlan(text, selectedEnvironment);
+  const scope = oicScopeOverrides(text);
   const operational = operationalIm090Text(text);
   const metadata = oicDetectedMetadata(text);
   const connectionNotes = connectionConfigurationNotes(text, metadata.connections);
@@ -566,25 +695,31 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
     "Installation Steps"
   ]);
   const artifactDetectionText = [artifactContent, operational].filter(Boolean).join("\n");
-  const installableArtifacts = sortOicArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
+  const installableArtifacts = sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
     ...installableArtifactNames(artifactDetectionText),
     ...installableArtifactNames(text),
     ...libraryZipArtifacts(text)
-  ])));
-  const artifacts = installableArtifacts.length
+  ]))));
+  const artifacts = (installableArtifacts.length
     ? installableArtifacts
-    : extractArtifactNames(artifactContent || operational, { includeComponentNames: true });
+    : extractArtifactNames(artifactContent || operational, { includeComponentNames: true }))
+    .filter((artifact) => !scope.ignoreLookups || !/\.csv$/i.test(artifact));
   const preInstall = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Pre[- ]Installation Steps\b/i, /^Pre[- ]Installation Steps\b/i], startAt, { dedupe: false });
   const backupIntegration = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Get a backup integration\b/i, /^Get a backup integration\b/i], startAt);
   const backupLookups = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Get a backup lookups?\b/i, /^Get a backup lookups?\b/i], startAt);
   const installation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Installation Steps\b/i, /^Installation Steps\b/i], startAt);
-  const schedule = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Schedule activation\b/i, /^\d+(?:\.\d+)*\s+Configure and start scheduler\b/i, /^Schedule activation\b/i, /^Configure and start scheduler\b/i], startAt);
+  const schedule = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Schedule activation\b/i, /^\d+(?:\.\d+)*\s+Configure and start scheduler\b/i, /^\d+(?:\.\d+)*\s+Scheduled(?: an)? Integration\b/i, /^Schedule activation\b/i, /^Configure and start scheduler\b/i, /^Scheduled(?: an)? Integration\b/i], startAt);
   const validation = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Verification Checklist\b/i, /^Verification Checklist\b/i], startAt);
   const returnPoint = sectionByAnyHeading(lines, [/^\d+(?:\.\d+)*\s+Return Point\b/i, /^Return Point\b/i], startAt);
   const environmentContentRaw = environmentSectionFromDocument(text);
-  const environmentContent = filterEnvironmentSection(environmentContentRaw, selectedEnvironment);
+  const environmentContent = oicEnvironmentExecutionContext(
+    filterEnvironmentSection(environmentContentRaw, selectedEnvironment),
+    environmentContentRaw,
+    selectedEnvironment,
+    text
+  );
   const preInstallContent = preInstall || looseSectionByHeadings(operational, ["Pre installation steps", "Pre-Installation Steps"], ["Get a backup integration", "Installation Steps", "2 OUT_"], { dedupe: false });
-  const backupContent = [backupIntegration, backupLookups].filter(Boolean).join("\n\n") ||
+  const backupContent = [backupIntegration, scope.ignoreLookups ? "" : backupLookups].filter(Boolean).join("\n\n") ||
     looseSectionByHeadings(operational, ["Get a backup integration"], ["Installation Steps"]);
   const installationContent = installation || looseSectionByHeadings(operational, ["Installation Steps"], [
     "Configure and start scheduler",
@@ -593,16 +728,21 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
     "Return Point"
   ]);
   const directInstructionContent = !installationContent && hasNumberedInstructionSteps(operational) ? operational : "";
-  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation", "Configure and start scheduler"], [
+  const scheduleContent = schedule || looseSectionByHeadings(operational, ["Schedule activation", "Configure and start scheduler", "Scheduled Integration", "Scheduled an Integration"], [
     "Verification Checklist",
     "Return Point"
   ]);
+  const scheduleNotApplicable = !metadata.schedules.length && oicScheduleContentIsNotApplicable(scheduleContent);
   const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
   const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
   const prepareContent = (content: string) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content), selectedEnvironment);
   const preInstallClean = /^pre$/i.test(preInstallContent.trim()) ? "" : preInstallContent;
+  const useScopedInstallation = scope.ignoreDashboard || scope.ignoreLookups;
+  const scopedInstallationContent = useScopedInstallation
+    ? oicInstallationFallback(scope, metadata, artifacts, selectedEnvironment, text)
+    : directInstructionContent || installationContent || "Execute the manual installation steps described in the IM090.";
 
-  return [
+  const phases: ManualActionPhase[] = [
     {
       id: "prerequisites",
       title: "Prerequisites",
@@ -613,7 +753,8 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         asBullets(artifacts),
         detectedBlock("Integrations detected", metadata.integrations),
         detectedBlock("Connections detected", metadata.connections),
-        detectedBlock("DVM/lookups detected", metadata.dvms),
+        scope.ignoreLookups ? "" : detectedBlock("DVM/lookups detected", metadata.dvms),
+        scope.requiresOnlineCredentialSession ? "Execution requires an online session with the RFC owner and Daniela Gomez to provide/validate credentials through the approved secure channel." : "",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         preInstallClean
       ].filter(Boolean).join("\n\n"))
@@ -621,28 +762,37 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
     {
       id: "backup",
       title: "Backup",
-      content: prepareContent(backupContent || oicBackupFallback())
+      content: prepareContent(backupContent || oicBackupFallback(scope.ignoreLookups, metadata.integrations))
     },
     {
       id: "installation",
       title: "Installation Steps",
       content: prepareContent([
-        directInstructionContent || installationContent || "Execute the manual installation steps described in the IM090.",
-        metadata.integrations.length ? `Import/validate the following integration artifact(s):\n${asBullets(metadata.integrations)}` : "",
-        metadata.connections.length ? `Configure and test the required connection(s):\n${asBullets(metadata.connections)}` : "",
-        connectionNotes,
-        metadata.dvms.length ? `Validate or update the required DVM/lookup value(s):\n${asBullets(metadata.dvms)}\nDo not document password values.` : "",
-        metadata.integrations.length ? "Activate the imported integration(s) after connections and DVM/lookups are configured." : ""
+        scopedInstallationContent,
+        !useScopedInstallation && metadata.integrations.length ? `Import/validate the following integration artifact(s):\n${asBullets(metadata.integrations)}` : "",
+        !useScopedInstallation && metadata.connections.length
+          ? scope.commonConnectionsMayExist
+            ? `Validate/configure the required connection(s) only if they are not already configured or if test fails:\n${asBullets(metadata.connections)}`
+            : `Configure and test the required connection(s):\n${asBullets(metadata.connections)}`
+          : "",
+        useScopedInstallation ? "" : connectionNotes,
+        !scope.ignoreLookups && metadata.dvms.length ? `Validate or update the required DVM/lookup value(s):\n${asBullets(metadata.dvms)}\nDo not document password values.` : "",
+        !useScopedInstallation && metadata.integrations.length ? `Activate the imported integration(s) after connections${scope.ignoreLookups ? "" : " and DVM/lookups"} are configured.` : ""
       ].filter(Boolean).join("\n\n"))
     },
     {
       id: "schedule",
       title: "Schedule Activation",
       content: prepareContent([
-        scheduleContent || (metadata.schedules.length ? "Configure and start the required schedules only after successful activation." : oicScheduleFallback()),
+        metadata.schedules.length
+          ? "Configure and start the required schedule(s) only after successful activation."
+          : scheduleNotApplicable
+            ? oicScheduleFallback()
+            : scheduleContent || oicScheduleFallback(),
         detectedBlock("Schedules detected", metadata.schedules),
         metadata.schedules.length ? "Capture schedule activation evidence." : ""
-      ].filter(Boolean).join("\n\n"))
+      ].filter(Boolean).join("\n\n")),
+      defaultIncluded: Boolean(metadata.schedules.length || (!scheduleNotApplicable && scheduleContent.trim()))
     },
     {
       id: "validation",
@@ -651,7 +801,9 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors.",
         metadata.integrations.length ? "Validate all imported integrations are active." : "",
         metadata.connections.length ? "Validate all required connections show a successful test." : "",
-        metadata.dvms.length ? "Validate DVM/lookup values are saved correctly without exposing passwords." : "",
+        !scope.ignoreLookups && metadata.dvms.length ? "Validate DVM/lookup values are saved correctly without exposing passwords." : "",
+        scope.ignoreDashboard ? "Confirm Dashboard / Visual Builder validation or installation was not executed as requested in the RFC." : "",
+        scope.ignoreLookups ? "Confirm lookup import/configuration was not executed as requested in the RFC." : "",
         metadata.schedules.length ? "Validate required schedules are active." : ""
       ].filter(Boolean).join("\n\n"))
     },
@@ -665,10 +817,25 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
       title: "Evidence",
       content: prepareContent([
         "Capture evidence for each relevant installation step.",
-        "Attach the IM090 PDF to the RFC.",
+        "Verify the source IM090 PDF is already available in the RFC; attach it only if it is missing.",
         "Attach backup evidence to the RFC.",
-        "Attach final validation evidence and share the execution result."
+        "Attach final validation evidence and share the execution result.",
+        scope.ignoreDashboard || scope.ignoreLookups ? "Attach evidence or execution notes for RFC scope exclusions." : ""
       ].join("\n"))
     }
   ];
+
+  if (scope.ignoreDashboard || scope.ignoreLookups || scope.commonConnectionsMayExist) {
+    phases.splice(1, 0, {
+      id: "scope",
+      title: "RFC Scope Adjustments",
+      content: [
+        scope.ignoreDashboard ? "Dashboard / Visual Builder section is excluded by the RFC description. Do not execute Dashboard validation, installation, or modification in this RFC." : "",
+        scope.ignoreLookups ? "Lookup import/configuration is excluded by the RFC description. Do not import, replace, or modify lookup values in this RFC." : "",
+        scope.commonConnectionsMayExist ? "Common-use connections may already be configured. Validate and test them first; change only connections that are missing or failing validation." : ""
+      ].filter(Boolean).join("\n\n")
+    });
+  }
+
+  return phases;
 }

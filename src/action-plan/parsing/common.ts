@@ -1,5 +1,17 @@
-export function cleanIm090Text(text: string) {
+export function repairSpacedPdfText(text: string) {
+  if (!/\b(?:[A-Za-z0-9_]\s+){3,}[A-Za-z0-9_]\b/.test(text)) {
+    return text.replace(/\u0000/g, "");
+  }
   return text
+    .replace(/\u0000/g, "")
+    .replace(/\b(?:[A-Za-z0-9_]\s+){2,}[A-Za-z0-9_]\b/g, (match) => match.replace(/\s+/g, ""))
+    .replace(/\s*([._:/-])\s*/g, "$1")
+    .replace(/([a-z])([A-Z]{2,})\b/g, "$1 $2")
+    .replace(/\b(https?):\s*\/\s*\//gi, "$1://");
+}
+
+export function cleanIm090Text(text: string) {
+  return repairSpacedPdfText(text)
     .replace(/\r/g, "\n")
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())
@@ -19,7 +31,7 @@ export function cleanIm090Text(text: string) {
       if (/^Installation Instructions for .+\s+\d+\s+of\s+\d+$/i.test(line)) return false;
       if (/^\d+$/.test(line)) return false;
       if (/^\d+[\w.-]*\.(?:docx|pdf)$/i.test(line)) return false;
-      if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
+      if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Scheduled(?: an)? Integration|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
       if (/^[A-Za-z]+ \d{1,2}, \d{4}$/i.test(line)) return false;
       return true;
     })
@@ -55,7 +67,7 @@ function isTableOfContentsLine(line: string) {
   if (/\bPAGEREF\s+_Toc/i.test(line)) return true;
   if (line.includes("...") || line.includes("___")) return true;
   const heading =
-    "(?:Document Control|Change Record|Reviewers|Installation Instructions(?: for [A-Z0-9_ -]+)?|Overview Installation|Environment Information\\.?|Installation artifacts|Pre-?Installation Steps|OUT_[A-Z0-9_]+|IN_[A-Z0-9_]+|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configuration of Connections|Importation of Lookups\\.? Only if it is necessary\\.?|Activate integration|Configure and start scheduler|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Open and Closed Issues\\.?|Open Issues\\.?|Closed Issues\\.?)";
+    "(?:Document Control|Change Record|Reviewers|Installation Instructions(?: for [A-Z0-9_ -]+)?|Overview Installation|Environment Information\\.?|Installation artifacts|Pre-?Installation Steps|OUT_[A-Z0-9_]+|IN_[A-Z0-9_]+|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configuration of Connections|Importation of Lookups\\.? Only if it is necessary\\.?|Activate integration|Configure and start scheduler|Scheduled(?: an)? Integration|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Open and Closed Issues\\.?|Open Issues\\.?|Closed Issues\\.?)";
   return new RegExp(`^\\d+(?:\\.\\d+)*\\s+${heading}\\s+\\d+$`, "i").test(line.trim());
 }
 
@@ -80,14 +92,18 @@ function findNextMajorHeading(lines: string[], from: number) {
 function isMajorIm090Heading(line: string) {
   if (!line || isTableOfContentsLine(line)) return false;
   if (/^\d+(?:\.\d+)*\s+(?:IN|OUT|LAC|LACL|LACLS|ICWC|ICWE|GB)[A-Z0-9_-]*(?:_[A-Z0-9_-]+)+\b/i.test(line)) return true;
-  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configure and start scheduler|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
+  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configure and start scheduler|Scheduled(?: an)? Integration|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
   return new RegExp(`^\\d+(?:\\.\\d+)*\\s+${heading}\\.?$`, "i").test(line) ||
     new RegExp(`^${heading}\\.?$`, "i").test(line);
 }
 
 export function normalizeManualSection(lines: string[], options: { dedupe?: boolean } = {}) {
   const cleaned = lines
-    .map((line) => line.replace(/\s+/g, " ").replace(/^\d{6,}(?=[A-Za-z])/, "").trim())
+    .map((line) => {
+      const nestedBulletIndent = line.match(/^(\s+)-\s+/)?.[1] ?? "";
+      const normalized = line.replace(/\s+/g, " ").replace(/^\d{6,}(?=[A-Za-z])/, "").trim();
+      return nestedBulletIndent ? `${nestedBulletIndent}${normalized}` : normalized;
+    })
     .filter((line) => line && !line.includes("................................................................"));
   const normalized = options.dedupe === false
     ? cleaned
@@ -143,6 +159,7 @@ export function environmentAliases(environment: string) {
   const value = normalizeEnvironmentName(environment);
   if (!value) return [];
   if (value === "DEV" || value === "DEVELOPMENT") return ["DEV", "DEVELOPMENT"];
+  if (value === "REG") return ["REG", "REGRESSION", "PREPROD", "TE"];
   if (value === "TEST") return ["TEST", "PREPROD", "TE", "REGRESSION"];
   if (value === "REGRESSION") return ["REGRESSION", "TEST", "PREPROD", "TE"];
   if (value === "PREPROD" || value === "TE") return ["PREPROD", "TE"];
@@ -155,7 +172,7 @@ export function normalizeEnvironmentName(value: string) {
 }
 
 function environmentNameFromLine(line: string) {
-  const match = line.match(/^Environment Name:\s*(.+?)(?:\s+IC Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/i);
+  const match = line.match(/^Environment Name:\s*(.+?)(?:\s+(?:IC|OIC) Service Environment:|\s+OIC Admin Console:|\s+ERP Host:|$)/i);
   return match?.[1]?.trim() ?? "";
 }
 

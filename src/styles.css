@@ -3421,6 +3421,14 @@ h2 {
   grid-column: span 6;
 }
 
+.action-scope-field {
+  grid-column: span 6;
+}
+
+.action-scope-field textarea {
+  min-height: 78px;
+}
+
 .pipeline-grid {
   display: grid;
   grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.5fr) minmax(180px, 0.7fr);
@@ -4695,6 +4703,7 @@ textarea:focus {
   .action-environment-field,
   .action-instance-field,
   .action-document-field,
+  .action-scope-field,
   .action-activity-field,
   .action-plan-generate-field {
     grid-column: auto;

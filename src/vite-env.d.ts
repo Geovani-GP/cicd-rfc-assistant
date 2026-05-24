@@ -29,6 +29,14 @@ export type ActionSourceDocument = {
   kind: "docx" | "pdf" | "sql";
   text: string;
   warning?: string;
+  ignoredDocuments?: Array<{
+    path: string;
+    name: string;
+    kind: "docx" | "pdf" | "sql";
+    textLength: number;
+    warning?: string;
+    reason: string;
+  }>;
 };
 
 export type DraftSummary = {

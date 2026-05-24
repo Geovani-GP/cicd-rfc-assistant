@@ -1,5 +1,6 @@
 export type ManualActionPhase = {
-  id: "prerequisites" | "backup" | "preAnalysis" | "installation" | "schedule" | "validation" | "returnPoint" | "evidence";
+  id: "prerequisites" | "scope" | "backup" | "preAnalysis" | "installation" | "schedule" | "validation" | "returnPoint" | "evidence";
   title: string;
   content: string;
+  defaultIncluded?: boolean;
 };

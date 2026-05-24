@@ -1,3 +1,5 @@
+import { repairSpacedPdfText } from "./common";
+
 function normalizeEnvironmentName(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -6,6 +8,12 @@ function quotedValues(value: string) {
   return Array.from(value.matchAll(/["“]([^"”]+)["”]/g))
     .map((match) => match[1].trim())
     .filter((item) => item && !/^https?:\/\//i.test(item));
+}
+
+function repairSplitArtifactFileNames(text: string) {
+  return text
+    .replace(/\b(ICWC-CX-\d+_)\s+(\d{4}_\d{2}\.\d{2}\.\d{4}\.iar)\b/gi, "$1$2")
+    .replace(/\b([A-Z][A-Z0-9-]+_)\s+(\d{4}_\d{2}\.\d{2}\.\d{4}\.iar)\b/gi, "$1$2");
 }
 
 export function cleanArtifactCandidate(value: string) {
@@ -31,8 +39,9 @@ function isLikelyArtifactName(value: string) {
 }
 
 export function extractArtifactNames(text: string, options: { includeComponentNames?: boolean } = {}) {
-  const normalMatches = extractArtifactFileNames(text);
-  const compactText = text.replace(/\s+/g, "");
+  const repairedText = repairSplitArtifactFileNames(repairSpacedPdfText(text));
+  const normalMatches = extractArtifactFileNames(repairedText);
+  const compactText = repairedText.replace(/\s+/g, "");
   const compactMatches = extractArtifactFileNames(compactText);
   const fileArtifacts = [...normalMatches, ...compactMatches]
     .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
@@ -41,11 +50,11 @@ export function extractArtifactNames(text: string, options: { includeComponentNa
   if (!options.includeComponentNames || fileArtifacts.length) {
     return Array.from(new Map(fileArtifacts.map((artifact) => [artifact.toLowerCase(), artifact])).values());
   }
-  const technicalMatches = text.match(/\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b/g) ?? [];
-  const wrappedTechnicalMatches = extractWrappedTechnicalNames(text);
-  const quotedMatches = quotedValues(text).filter(isLikelyArtifactName);
+  const technicalMatches = repairedText.match(/\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b/g) ?? [];
+  const wrappedTechnicalMatches = extractWrappedTechnicalNames(repairedText);
+  const quotedMatches = quotedValues(repairedText).filter(isLikelyArtifactName);
   const contextualMatches = Array.from(
-    text.matchAll(/\b(?:integration|artifact|component|lookup|package|project)\b[^A-Z0-9\n]{0,24}["“]?([A-Z0-9][A-Z0-9_ .-]{5,90})["”]?/gi)
+    repairedText.matchAll(/\b(?:integration|artifact|component|lookup|package|project)\b[^A-Z0-9\n]{0,24}["“]?([A-Z0-9][A-Z0-9_ .-]{5,90})["”]?/gi)
   )
     .map((match) => match[1])
     .filter(isLikelyArtifactName);
@@ -71,7 +80,7 @@ function cleanArtifactFileName(value: string) {
 
 function extractArtifactFileNames(value: string) {
   const matches: string[] = [];
-  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))\b/gi;
+  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+?\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))(?=$|[^A-Z0-9_.-]|[A-Z]{2,}_)/gi;
   for (const match of value.matchAll(pattern)) {
     const candidate = match[1];
     if (!/^[A-Z0-9]/.test(candidate)) continue;
@@ -113,12 +122,24 @@ export function artifactLinesFromText(value: string) {
 }
 
 export function installableArtifactNames(text: string) {
-  const compactText = text.replace(/\s+/g, "");
-  const artifacts = [...extractArtifactFileNames(text), ...extractArtifactFileNames(compactText)]
+  const repairedText = repairSplitArtifactFileNames(repairSpacedPdfText(text));
+  const compactText = repairedText.replace(/\s+/g, "");
+  const artifacts = [...extractArtifactFileNames(repairedText), ...extractArtifactFileNames(compactText)]
     .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
     .map(cleanArtifactFileName)
     .filter(Boolean);
   return Array.from(new Map(artifacts.map((item) => [normalizeEnvironmentName(item), item])).values());
+}
+
+export function preferCanonicalOicIarArtifacts(items: string[]) {
+  const hasCanonicalIar = items.some((item) => /^C2C_[A-Z0-9_]+_\d{2}\.\d{2}\.\d{4}\.iar$/i.test(item));
+  return items.filter((item) => {
+    if (hasCanonicalIar && /^ICWC-CX-\d+_[A-Z0-9_]+_\d{2}\.\d{2}\.\d{4}\.iar$/i.test(item)) return false;
+    if (/^\d{4}_\d{2}\.\d{2}\.\d{4}\.iar$/i.test(item)) {
+      return !items.some((other) => other !== item && other.toLowerCase().endsWith(`_${item.toLowerCase()}`));
+    }
+    return true;
+  });
 }
 
 function extractWrappedTechnicalNames(text: string) {

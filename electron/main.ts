@@ -32,6 +32,14 @@ type ActionSourceDocument = {
   kind: "docx" | "pdf" | "sql";
   text: string;
   warning?: string;
+  ignoredDocuments?: Array<{
+    path: string;
+    name: string;
+    kind: "docx" | "pdf" | "sql";
+    textLength: number;
+    warning?: string;
+    reason: string;
+  }>;
 };
 
 type ZipEntry = {
@@ -1221,13 +1229,7 @@ ipcMain.handle("select-files", async (_event, extensions: string[]) => {
     .map((path) => ({ path, name: basename(path), kind: classifyFile(path) }));
 });
 
-ipcMain.handle("select-action-document", async (): Promise<ActionSourceDocument | null> => {
-  const result = await dialog.showOpenDialog({
-    properties: ["openFile"],
-    filters: [{ name: "IM090 / installation document / SQL", extensions: ["docx", "pdf", "sql"] }]
-  });
-  if (result.canceled || !result.filePaths[0]) return null;
-  const filePath = result.filePaths[0];
+async function readActionSourceDocument(filePath: string): Promise<ActionSourceDocument> {
   const ext = extname(filePath).toLowerCase();
   if (ext === ".docx") {
     const text = extractDocxText(await readFile(filePath));
@@ -1258,6 +1260,38 @@ ipcMain.handle("select-action-document", async (): Promise<ActionSourceDocument 
       ? "PDF cargado como referencia, pero no contiene suficiente texto operativo. Si las instrucciones estan en capturas, revisa el Action Plan o agrega detalles manuales antes de confirmar."
       : undefined
   };
+}
+
+function isDashboardSourceDocument(document: ActionSourceDocument) {
+  return /\bdashboard\b|visual builder|cloud integration dashboard/i.test(`${document.name}\n${document.text.slice(0, 5000)}`);
+}
+
+function preferOperationalActionDocument(documents: ActionSourceDocument[]) {
+  const selected = documents.find((document) => !isDashboardSourceDocument(document)) ?? documents[0];
+  if (!selected) return null;
+  const ignoredDocuments = documents
+    .filter((document) => document !== selected)
+    .map((document) => ({
+      path: document.path,
+      name: document.name,
+      kind: document.kind,
+      textLength: document.text.length,
+      warning: document.warning,
+      reason: isDashboardSourceDocument(document)
+        ? "Dashboard / Visual Builder document ignored while selecting the primary operational IM090."
+        : "Additional document not selected as the primary operational IM090."
+    }));
+  return ignoredDocuments.length ? { ...selected, ignoredDocuments } : selected;
+}
+
+ipcMain.handle("select-action-document", async (): Promise<ActionSourceDocument | null> => {
+  const result = await dialog.showOpenDialog({
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "IM090 / installation document / SQL", extensions: ["docx", "pdf", "sql"] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const documents = await Promise.all(result.filePaths.map(readActionSourceDocument));
+  return preferOperationalActionDocument(documents);
 });
 
 ipcMain.handle("select-evidence-images", async () => {

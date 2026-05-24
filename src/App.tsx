@@ -37,7 +37,8 @@ import type { CSSProperties } from "react";
 import {
   artifactLinesFromText,
   extractArtifactNames,
-  installableArtifactNames
+  installableArtifactNames,
+  preferCanonicalOicIarArtifacts
 } from "./action-plan/parsing/artifacts";
 import {
   actionPlanLinesFromIm090,
@@ -49,6 +50,7 @@ import {
   looseSectionByHeadings,
   normalizeEnvironmentName,
   operationalIm090Text,
+  repairSpacedPdfText,
   sectionByAnyHeading,
   selectedEnvironmentMissingFromDocument
 } from "./action-plan/parsing/common";
@@ -321,6 +323,7 @@ type PendingWorkSnapshot = {
     actionEnvironment: string;
     actionInstance: string;
     actionActivity: string;
+    actionScopeNotes?: string;
     artifactText: string;
     actionPlan: string;
     actionPlanConfirmed: boolean;
@@ -420,6 +423,25 @@ const cicdExecutionSteps: PipelineExecutionStep[] = [
 function manualPhaseKey(phase: ManualActionPhase | undefined, index: number) {
   return `${phase?.id || phase?.title || "phase"}-${index}`;
 }
+
+function manualPhaseDisabledKeysForDefaults(phases: ManualActionPhase[]) {
+  return phases
+    .map((phase, index) => (phase.defaultIncluded === false ? manualPhaseKey(phase, index) : ""))
+    .filter(Boolean);
+}
+
+function oicManualScopeIgnoresLookups(text: string) {
+  return /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text);
+}
+
+function stableTextHash(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+  }
+  return hash.toString(36);
+}
+
 type InstantTooltip = {
   text: string;
   x: number;
@@ -1536,6 +1558,8 @@ const actionCopy = {
     selectEnvironment: "Seleccionar ambiente",
     instance: "Instancia",
     activity: "Actividad / resumen RFC",
+    scopeNotes: "Notas / alcance RFC",
+    scopeNotesHint: "Pega aqui la descripcion del RFC o instrucciones especiales. Ejemplo: ignore Dashboard section and lookups import.",
     artifacts: "Artefactos",
     artifactsHint: "Un artefacto por linea. Ejemplo: GB_AR_HCR_LKP.csv, package.par o integration.iar",
     inspectArtifacts: "Inspeccionar artefactos",
@@ -1568,6 +1592,10 @@ const actionCopy = {
     generate: "Generar plan",
     clear: "Limpiar Action Plan",
     copy: "Copiar",
+    supportOutput: "Copiar salida soporte",
+    supportTitle: "Salida para soporte",
+    supportBody: "Comparte este bloque cuando necesites revisar una conversion sin enviar capturas.",
+    supportCopied: "Salida de soporte copiada al portapapeles.",
     confirm: "Confirmar Action Plan",
     confirmed: "Action Plan confirmado",
     confirmedSaved: "Action Plan confirmado y guardado en:",
@@ -1599,6 +1627,8 @@ const actionCopy = {
     selectEnvironment: "Select environment",
     instance: "Instance",
     activity: "Activity / RFC summary",
+    scopeNotes: "RFC notes / scope",
+    scopeNotesHint: "Paste the RFC description or special handling instructions. Example: ignore Dashboard section and lookups import.",
     artifacts: "Artifacts",
     artifactsHint: "One artifact per line. Example: GB_AR_HCR_LKP.csv, package.par, or integration.iar",
     inspectArtifacts: "Inspect artifacts",
@@ -1631,6 +1661,10 @@ const actionCopy = {
     generate: "Generate plan",
     clear: "Clear Action Plan",
     copy: "Copy",
+    supportOutput: "Copy support output",
+    supportTitle: "Support output",
+    supportBody: "Share this block when a conversion needs review without screenshots.",
+    supportCopied: "Support output copied to clipboard.",
     confirm: "Confirm Action Plan",
     confirmed: "Action Plan confirmed",
     confirmedSaved: "Action Plan confirmed and saved at:",
@@ -1662,6 +1696,8 @@ const actionCopy = {
     selectEnvironment: "Selecionar ambiente",
     instance: "Instancia",
     activity: "Atividade / resumo RFC",
+    scopeNotes: "Notas / escopo RFC",
+    scopeNotesHint: "Cole aqui a descricao do RFC ou instrucoes especiais. Exemplo: ignore Dashboard section and lookups import.",
     artifacts: "Artefatos",
     artifactsHint: "Um artefato por linha. Exemplo: GB_AR_HCR_LKP.csv, package.par ou integration.iar",
     inspectArtifacts: "Inspecionar artefatos",
@@ -1694,6 +1730,10 @@ const actionCopy = {
     generate: "Gerar plano",
     clear: "Limpar Action Plan",
     copy: "Copiar",
+    supportOutput: "Copiar saida suporte",
+    supportTitle: "Saida para suporte",
+    supportBody: "Compartilhe este bloco quando precisar revisar uma conversao sem capturas.",
+    supportCopied: "Saida de suporte copiada para a area de transferencia.",
     confirm: "Confirmar Action Plan",
     confirmed: "Action Plan confirmado",
     confirmedSaved: "Action Plan confirmado e salvo em:",
@@ -1871,6 +1911,22 @@ function extractPdfTextOperators(content: string) {
     .trim();
 }
 
+function isPdfBinaryResourceStream(dictionary: string) {
+  return /\/Subtype\s*\/Image\b/i.test(dictionary) ||
+    /\/FontFile\d?\b/i.test(dictionary) ||
+    (/\/ColorSpace\b/i.test(dictionary) && /\/BitsPerComponent\b/i.test(dictionary));
+}
+
+function isUsefulPdfTextChunk(text: string) {
+  const repaired = repairSpacedPdfText(text);
+  if (!/[A-Za-z0-9_]{3,}/.test(repaired)) return false;
+  if (/(?:IMSIM|HLRHLR|1-\*){12,}/.test(repaired)) return false;
+  if (/\b(?:Environment Name|Installation artifacts|Installation Steps|Connection|Lookup|\.iar|\.csv)\b/i.test(repaired)) return true;
+  const sample = repaired.slice(0, 2000);
+  const printable = sample.replace(/[^\x09\x0a\x0d\x20-\x7e]/g, "").length;
+  return printable / Math.max(sample.length, 1) > 0.45;
+}
+
 async function inflatePdfBytes(bytes: Uint8Array) {
   try {
     return await decompressBytes(bytes, "deflate");
@@ -1893,21 +1949,26 @@ async function extractPdfTextFromBrowserFile(file: File) {
     else if (binary[dataStart] === "\n" || binary[dataStart] === "\r") dataStart += 1;
     const endIndex = binary.indexOf("endstream", dataStart);
     if (endIndex < 0) break;
-    const dictionary = binary.slice(Math.max(0, streamIndex - 1000), streamIndex);
+    const dictionaryStart = Math.max(0, binary.lastIndexOf("<<", streamIndex));
+    const dictionary = binary.slice(dictionaryStart, streamIndex);
+    if (isPdfBinaryResourceStream(dictionary)) {
+      offset = endIndex + "endstream".length;
+      continue;
+    }
     const raw = bytes.subarray(dataStart, endIndex);
     try {
       const data = /\/FlateDecode\b/.test(dictionary) ? await inflatePdfBytes(raw) : raw;
       const text = extractPdfTextOperators(decoder.decode(data));
-      if (text) chunks.push(text);
+      if (text && isUsefulPdfTextChunk(text)) chunks.push(text);
     } catch {
       // Ignore non-text streams.
     }
     offset = endIndex + "endstream".length;
   }
-  return Array.from(new Set(chunks))
+  return repairSpacedPdfText(Array.from(new Set(chunks))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
-    .slice(0, maxActionDocumentTextLength);
+    .slice(0, maxActionDocumentTextLength));
 }
 
 async function buildBrowserActionDocument(file: File): Promise<ActionSourceDocument> {
@@ -1938,6 +1999,28 @@ async function buildBrowserActionDocument(file: File): Promise<ActionSourceDocum
     text,
     warning: text ? undefined : "PDF cargado como referencia. No se detecto texto seleccionable; puede requerir OCR si es escaneado."
   };
+}
+
+function isDashboardSourceDocument(document: ActionSourceDocument) {
+  return /\bdashboard\b|visual builder|cloud integration dashboard/i.test(`${document.name}\n${document.text.slice(0, 5000)}`);
+}
+
+function preferOperationalActionDocument(documents: ActionSourceDocument[]) {
+  const selected = documents.find((document) => !isDashboardSourceDocument(document)) ?? documents[0];
+  if (!selected) return null;
+  const ignoredDocuments = documents
+    .filter((document) => document !== selected)
+    .map((document) => ({
+      path: document.path,
+      name: document.name,
+      kind: document.kind,
+      textLength: document.text.length,
+      warning: document.warning,
+      reason: isDashboardSourceDocument(document)
+        ? "Dashboard / Visual Builder document ignored while selecting the primary operational IM090."
+        : "Additional document not selected as the primary operational IM090."
+    }));
+  return ignoredDocuments.length ? { ...selected, ignoredDocuments } : selected;
 }
 
 function regionFromRepo(name: string) {
@@ -2233,6 +2316,7 @@ export function App() {
   const [availableDocumentEnvironments, setAvailableDocumentEnvironments] = useState<string[]>([]);
   const [actionInstance, setActionInstance] = useState("");
   const [actionActivity, setActionActivity] = useState("");
+  const [actionScopeNotes, setActionScopeNotes] = useState("");
   const [artifactText, setArtifactText] = useState("");
   const [actionSourceDocument, setActionSourceDocument] = useState<ActionSourceDocument | null>(null);
   const [manualInstructions, setManualInstructions] = useState("");
@@ -2241,9 +2325,12 @@ export function App() {
   const [manualPhaseIndex, setManualPhaseIndex] = useState(0);
   const [manualPhases, setManualPhases] = useState<ManualActionPhase[]>([]);
   const [manualPhaseDisabledKeys, setManualPhaseDisabledKeys] = useState<string[]>([]);
+  const [manualPhaseSourceKey, setManualPhaseSourceKey] = useState("");
   const [actionPlan, setActionPlan] = useState("");
   const [actionPlanConfirmed, setActionPlanConfirmed] = useState(false);
   const [actionPlanConfirmedAt, setActionPlanConfirmedAt] = useState("");
+  const [supportOutputOpen, setSupportOutputOpen] = useState(false);
+  const [supportOutputText, setSupportOutputText] = useState("");
   const [riceFolderPath, setRiceFolderPath] = useState("");
   const [mode, setMode] = useState<"ADHOC" | "FULL">("ADHOC");
   const [files, setFiles] = useState<SelectedFile[]>([]);
@@ -2505,6 +2592,7 @@ export function App() {
       actionEnvironment ||
       actionInstance ||
       actionActivity.trim() ||
+      actionScopeNotes.trim() ||
       artifactText.trim() ||
       actionPlan.trim() ||
       manualInstructions.trim() ||
@@ -2574,6 +2662,7 @@ export function App() {
         actionEnvironment,
         actionInstance,
         actionActivity,
+        actionScopeNotes,
         artifactText,
         actionPlan,
         actionPlanConfirmed,
@@ -2605,7 +2694,7 @@ export function App() {
         pipelineStepFailures
       }
     };
-  }, [a.confirmed, actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionPlanConfirmed, actionPlanConfirmedAt, actionProduct, actionTemplateId, artifactCount, artifactText, devTargetEnvironment, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, manualInstructions, manualPhaseDisabledKeys, manualPhases, manualSourceText, mode, outputFolder, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, regTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, targetEnvironment, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
+  }, [a.confirmed, actionActivity, actionEnvironment, actionInstance, actionMethod, actionPlan, actionPlanConfirmed, actionPlanConfirmedAt, actionProduct, actionScopeNotes, actionTemplateId, artifactCount, artifactText, devTargetEnvironment, evidenceItems.length, executionMode, executionSteps, executionStepsConfirmed, files, manualInstructions, manualPhaseDisabledKeys, manualPhases, manualSourceText, mode, outputFolder, pipelineActionPlan, pipelineExecutionPhase, pipelineStepComments, pipelineStepFailures, pipelineStepIndex, prodPipelineName, prodPipelineRun, prodPipelineRunUrl, prodTargetEnvironment, regTargetEnvironment, repoPath, rfc, riceFolderPath, selectedRepo?.name, t.caseFile.artifacts, t.caseFile.environment, t.caseFile.pending, t.caseFile.repo, t.evidence.title, t.pipeline.checklist, t.steps.actionPlan, t.steps.pipeline, targetEnvironment, testPipelineName, testPipelineRun, testPipelineRunUrl, testTargetEnvironment]);
   const pendingWorkItems = useMemo(() => pendingWorkSnapshots.filter((item) => {
     const draft = item.draft;
     if (!draft) return true;
@@ -2615,6 +2704,7 @@ export function App() {
       draft.actionEnvironment ||
       draft.actionInstance ||
       draft.actionActivity.trim() ||
+      draft.actionScopeNotes?.trim() ||
       draft.artifactText.trim() ||
       draft.actionPlan.trim() ||
       draft.manualInstructions.trim() ||
@@ -2738,7 +2828,7 @@ export function App() {
   );
   const actionArtifactRows = useMemo(
     () => actionArtifactComparisonRows(),
-    [actionSourceDocument, artifactText, manualInstructions, manualSourceText, actionArtifactFiles, actionArtifactInspections]
+    [actionSourceDocument, actionScopeNotes, artifactText, manualInstructions, manualSourceText, actionArtifactFiles, actionArtifactInspections]
   );
   const activeStepLog = evidenceLog.filter(
     (entry) => entry.step === activeStep && matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId)
@@ -2834,22 +2924,41 @@ export function App() {
   }
 
   function manualDetectionSourceText() {
-    const sourceText = actionSourceDocument?.text?.trim() || manualSourceText.trim() || manualInstructions.trim();
+    const documentText = actionSourceDocument?.text?.trim() || "";
+    const editedText = manualInstructions.trim();
+    const sourceText = documentText && editedText && editedText !== documentText
+      ? `${documentText}\n\nRFC complementary instructions:\n${editedText}`
+      : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
     if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC") {
       const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
-      return [templateHint, actionActivity, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
+      const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
+      return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
         .filter((value) => value.trim())
         .join("\n\n");
     }
-    return [templateHint, sourceText].filter((value) => value.trim()).join("\n\n");
+    return [templateHint, actionScopeNotes, sourceText].filter((value) => value.trim()).join("\n\n");
+  }
+
+  function manualPhaseSourceKeyFor(text: string, environment = actionEnvironment, product = actionProduct) {
+    return [product || "<product>", environment || "<environment>", text.length, stableTextHash(text)].join("|");
+  }
+
+  function manualPhasesAreCurrent(text = manualDetectionSourceText()) {
+    return Boolean(manualPhases.length && manualPhaseSourceKey === manualPhaseSourceKeyFor(text));
   }
 
   function actionDocumentArtifactNames() {
     const entered = artifactLinesFromText(artifactText);
     const sourceText = manualDetectionSourceText();
-    const enteredInstallable = installableArtifactNames(artifactText);
-    const installableArtifacts = installableArtifactNames(sourceText);
+    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const filterOicLookupArtifacts = (items: string[]) =>
+      ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
+    const filterOicArtifacts = (items: string[]) =>
+      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+    const enteredFiltered = filterOicLookupArtifacts(entered);
+    const enteredInstallable = filterOicArtifacts(installableArtifactNames(artifactText));
+    const installableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
     const combinedInstallable = actionProduct === "OIC"
       ? Array.from(
           new Map(
@@ -2860,15 +2969,15 @@ export function App() {
           ).values()
         )
       : enteredInstallable;
-    const detected = entered.length
+    const detected = enteredFiltered.length
       ? combinedInstallable.length
         ? combinedInstallable
         : !installableArtifacts.length
-          ? entered
+          ? enteredFiltered
           : installableArtifacts
       : installableArtifacts.length
         ? installableArtifacts
-        : extractArtifactNames(sourceText, { includeComponentNames: true });
+        : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
     return Array.from(new Map(detected.map((item) => [normalizeArtifactCompareKey(item), item])).values());
   }
 
@@ -3346,6 +3455,7 @@ export function App() {
     setManualSourceText("");
     setManualPhases([]);
     setManualPhaseDisabledKeys([]);
+    setManualPhaseSourceKey("");
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
     setActionArtifactModalOpen(false);
@@ -3475,6 +3585,7 @@ export function App() {
       setActionEnvironment(draft.actionEnvironment);
       setActionInstance(draft.actionInstance);
       setActionActivity(draft.actionActivity);
+      setActionScopeNotes(draft.actionScopeNotes ?? "");
       setArtifactText(draft.artifactText);
       setActionPlan(draft.actionPlan);
       setActionPlanConfirmed(Boolean(draft.actionPlanConfirmed));
@@ -3483,6 +3594,7 @@ export function App() {
       setManualSourceText(draft.manualSourceText ?? draft.manualInstructions);
       setManualPhases(draft.manualPhases);
       setManualPhaseDisabledKeys(draft.manualPhaseDisabledKeys ?? []);
+      setManualPhaseSourceKey("");
       setManualPhaseIndex(0);
       setRiceFolderPath(draft.riceFolderPath);
       setMode(draft.mode);
@@ -3564,6 +3676,7 @@ export function App() {
         actionEnvironment,
         actionInstance,
         actionActivity,
+        actionScopeNotes,
         artifactText,
         actionSourceDocument,
         actionPlan,
@@ -3919,13 +4032,15 @@ export function App() {
   }
 
   async function handleActionDocumentInput(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!file) return;
+    if (!files.length) return;
     setActionDocumentProcessing(true);
     setMessage(a.processingDocument);
     try {
-      const document = await buildBrowserActionDocument(file);
+      const documents = await Promise.all(files.map(buildBrowserActionDocument));
+      const document = preferOperationalActionDocument(documents);
+      if (!document) return;
       prepareManualDocumentReview(document);
     } catch (error) {
       setMessage((error as Error).message || "No pude leer el documento seleccionado.");
@@ -3940,7 +4055,8 @@ export function App() {
     setAvailableDocumentEnvironments(available);
     const phases = buildManualPhasesForProduct(actionProduct, text, environment);
     setManualPhases(phases);
-    setManualPhaseDisabledKeys([]);
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment));
+    setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     if (selectedEnvironmentMissingFromDocument(text, environment)) {
       setMessage(availableEnvironmentMessage(environment, available));
@@ -3962,7 +4078,8 @@ export function App() {
       setAvailableDocumentEnvironments(available);
       const phases = buildManualPhasesForProduct(actionProduct, text, actionEnvironment);
       setManualPhases(phases);
-      setManualPhaseDisabledKeys([]);
+      setManualPhaseSourceKey(manualPhaseSourceKeyFor(text));
+      setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
       setManualPhaseIndex(0);
       const operational = operationalIm090Text(text);
       const lines = actionPlanLinesFromIm090(text);
@@ -3985,6 +4102,7 @@ export function App() {
       }
     } else {
       setManualPhases([]);
+      setManualPhaseSourceKey("");
       setManualPhaseDisabledKeys([]);
       setAvailableDocumentEnvironments([]);
     }
@@ -4023,7 +4141,8 @@ export function App() {
     const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
-    setManualPhaseDisabledKeys([]);
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(sourceText));
+    setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
     if (!actionEnvironment.trim()) {
@@ -4036,8 +4155,13 @@ export function App() {
   function buildManualActionPlan(phases: ManualActionPhase[]) {
     const sourceText = manualDetectionSourceText();
     const enteredArtifacts = artifactLinesFromText(artifactText);
-    const enteredInstallableArtifacts = installableArtifactNames(artifactText);
-    const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const filterOicLookupArtifacts = (items: string[]) =>
+      ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
+    const filterOicArtifacts = (items: string[]) =>
+      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+    const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
+    const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
     const oicInstallableArtifacts = actionProduct === "OIC"
       ? Array.from(
           new Map(
@@ -4067,7 +4191,7 @@ export function App() {
           ? databaseItems
         : sourceInstallableArtifacts.length
           ? sourceInstallableArtifacts
-          : extractArtifactNames(sourceText, { includeComponentNames: true });
+          : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
     const artifacts = enteredArtifacts.length
       ? databaseItems.length
         ? databaseItems
@@ -4124,15 +4248,19 @@ export function App() {
 
   function acceptManualReview() {
     const sourceText = manualDetectionSourceText();
-    const reviewedPhases = manualPhases.length
+    const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+    const reviewedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
       : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
-    const enabledPhases = selectedManualPhases(reviewedPhases);
+    const disabledKeys = manualPhaseSourceKey === currentSourceKey ? manualPhaseDisabledKeys : manualPhaseDisabledKeysForDefaults(reviewedPhases);
+    const enabledPhases = reviewedPhases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
     if (!enabledPhases.length) {
       setMessage(a.manualSelectOne);
       return;
     }
     setManualPhases(reviewedPhases);
+    setManualPhaseSourceKey(currentSourceKey);
+    setManualPhaseDisabledKeys(disabledKeys);
     setActionPlan(buildManualActionPlan(enabledPhases));
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
@@ -4240,12 +4368,14 @@ export function App() {
     setActionEnvironment("");
     setActionInstance("");
     setActionActivity("");
+    setActionScopeNotes("");
     setArtifactText("");
     setActionSourceDocument(null);
     setManualInstructions("");
     setManualSourceText("");
     setManualPhases([]);
     setManualPhaseDisabledKeys([]);
+    setManualPhaseSourceKey("");
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
     setActionPlan("");
@@ -4424,9 +4554,14 @@ export function App() {
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
     const sourceText = manualDetectionSourceText();
+    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const filterOicLookupArtifacts = (items: string[]) =>
+      ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
+    const filterOicArtifacts = (items: string[]) =>
+      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
     const enteredArtifacts = artifactLinesFromText(artifactText);
-    const enteredInstallableArtifacts = installableArtifactNames(artifactText);
-    const sourceInstallableArtifacts = installableArtifactNames(sourceText);
+    const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
+    const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
     const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
     const detectedManualArtifacts =
       actionMethod === "manual" && !enteredArtifacts.length
@@ -4434,7 +4569,7 @@ export function App() {
           ? configurationItemsForProduct(actionProduct, sourceText)
           : sourceInstallableArtifacts.length
             ? sourceInstallableArtifacts
-            : extractArtifactNames(sourceText, { includeComponentNames: true })
+            : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }))
         : [];
     const artifacts = enteredArtifacts.length
       ? enteredInstallableArtifacts.length
@@ -4457,20 +4592,22 @@ export function App() {
     const manualInstructionText = manualInstructions.trim() || sourceText || "<Installation instructions>";
 
     if (actionMethod === "manual") {
-      if (!actionSourceDocument && sourceText.trim()) {
-        const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
-        setManualPhases(phases);
-        setManualPhaseDisabledKeys([]);
-        setActionPlan(buildManualActionPlan(phases));
-        addLog("Action Plan manual generado desde texto pegado", "actionPlan");
-        return;
-      }
-      if (manualPhases.length) {
-        const enabledPhases = selectedManualPhases();
+      if (sourceText.trim()) {
+        const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+        const phases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
+          ? manualPhases
+          : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+        const disabledKeys = manualPhaseSourceKey === currentSourceKey
+          ? manualPhaseDisabledKeys
+          : manualPhaseDisabledKeysForDefaults(phases);
+        const enabledPhases = phases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
         if (!enabledPhases.length) {
           setMessage(a.manualSelectOne);
           return;
         }
+        setManualPhases(phases);
+        setManualPhaseSourceKey(currentSourceKey);
+        setManualPhaseDisabledKeys(disabledKeys);
         setActionPlan(buildManualActionPlan(enabledPhases));
         addLog("Action Plan manual generado", "actionPlan");
         return;
@@ -4497,6 +4634,130 @@ export function App() {
   async function copyActionPlan() {
     if (!actionPlan) return;
     await navigator.clipboard?.writeText(actionPlan);
+  }
+
+  function redactSupportOutputText(value: string) {
+    return value
+      .replace(/\b((?:new\s+|confirm\s+)?password\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
+      .replace(/\b((?:pwd|pass)\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
+      .replace(/(<[^>\n\r]*password[^>\n\r]*>)(.*?)(<\/[^>\n\r]+>)/gi, "$1<REDACTED>$3");
+  }
+
+  function supportSection(title: string, content: string) {
+    return [`## ${title}`, content.trim() || "<empty>"].join("\n");
+  }
+
+  function buildActionPlanSupportOutput() {
+    const sourceText = manualDetectionSourceText();
+    const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+    const detectedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
+      ? manualPhases
+      : sourceText.trim()
+        ? buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment)
+        : [];
+    const disabledKeys = manualPhaseSourceKey === currentSourceKey && manualPhaseDisabledKeys.length
+      ? manualPhaseDisabledKeys
+      : manualPhaseDisabledKeysForDefaults(detectedPhases);
+    const selectedTemplate = allActionTemplateOptions.find((option) => option.id === actionTemplateId);
+    const phaseText = detectedPhases.map((phase, index) => {
+      const key = manualPhaseKey(phase, index);
+      const status = disabledKeys.includes(key) ? "disabled" : "enabled";
+      return [
+        `### ${index + 1}. ${phase.title} (${phase.id}, ${status})`,
+        phase.content
+      ].join("\n");
+    }).join("\n\n");
+    const sourceDocumentInfo = actionSourceDocument
+      ? [
+          `Name: ${actionSourceDocument.name}`,
+          `Kind: ${actionSourceDocument.kind}`,
+          `Path: ${actionSourceDocument.path || "<browser upload>"}`,
+          `Warning: ${actionSourceDocument.warning || "<none>"}`,
+          `Extracted text length: ${actionSourceDocument.text.length}`,
+          actionSourceDocument.ignoredDocuments?.length
+            ? [
+                "Ignored / auxiliary documents:",
+                ...actionSourceDocument.ignoredDocuments.map((document) =>
+                  `- ${document.name} | ${document.kind} | ${document.path || "<browser upload>"} | Text length: ${document.textLength} | Reason: ${document.reason}`
+                )
+              ].join("\n")
+            : ""
+        ].join("\n")
+      : "<none>";
+    const actionArtifactInfo = actionArtifactFiles.length
+      ? actionArtifactFiles.map((file) => `- ${file.name} | ${file.kind} | ${file.path}`).join("\n")
+      : "<none>";
+    const inspectionInfo = actionArtifactInspections.length
+      ? actionArtifactInspections.map((inspection) => {
+          const projects = inspection.projects.map((project) => [project.code, project.name, project.version, project.type, project.state].filter(Boolean).join(" | "));
+          const components = inspection.components.map((component) => `${component.kind}: ${component.name} (${component.path})`);
+          const internalArtifacts = (inspection.internalArtifacts ?? []).map((item) => {
+            const internalProjects = item.projects.map((project) => [project.code, project.name, project.version, project.type, project.state].filter(Boolean).join(" | "));
+            const internalComponents = item.components.map((component) => `${component.kind}: ${component.name} (${component.path})`);
+            return [
+              `  Internal artifact: ${item.name}`,
+              internalProjects.length ? internalProjects.map((project) => `  - Project: ${project}`).join("\n") : "",
+              internalComponents.length ? internalComponents.map((component) => `  - Component: ${component}`).join("\n") : "",
+              item.error ? `  - Error: ${item.error}` : ""
+            ].filter(Boolean).join("\n");
+          });
+          return [
+            `File: ${inspection.fileName}`,
+            `Kind: ${inspection.kind}`,
+            inspection.error ? `Error: ${inspection.error}` : "",
+            projects.length ? projects.map((project) => `- Project: ${project}`).join("\n") : "",
+            components.length ? components.map((component) => `- Component: ${component}`).join("\n") : "",
+            internalArtifacts.join("\n")
+          ].filter(Boolean).join("\n");
+        }).join("\n\n")
+      : "<none>";
+    const comparisonInfo = actionArtifactRows.length
+      ? actionArtifactRows.map((row) => `- Document: ${row.documentName} | Loaded: ${row.artifactName} | Version: ${row.version} | Status: ${row.status}`).join("\n")
+      : "<none>";
+
+    const metadata = [
+      `Generated at: ${new Date().toISOString()}`,
+      `RFC: ${rfc.trim() || "<empty>"}`,
+      `Method: ${actionMethod}`,
+      `Product: ${actionProduct || "<empty>"}`,
+      `Template: ${selectedTemplate?.label || actionTemplateId}`,
+      `Environment: ${actionEnvironment || "<empty>"}`,
+      `Instance: ${actionInstance || "<empty>"}`,
+      `Activity: ${actionActivity || "<empty>"}`,
+      `Scope notes present: ${actionScopeNotes.trim() ? "yes" : "no"}`,
+      `Action Plan confirmed: ${actionPlanConfirmed ? "yes" : "no"}`,
+      `Action Plan confirmed at: ${actionPlanConfirmedAt || "<empty>"}`,
+      `Available document environments: ${availableDocumentEnvironments.join(", ") || "<none>"}`
+    ].join("\n");
+
+    return redactSupportOutputText([
+      "======================= Codex Support Output =======================",
+      "Purpose: share this block with Codex/support instead of screenshots.",
+      "",
+      supportSection("RFC Metadata", metadata),
+      supportSection("Source Document", sourceDocumentInfo),
+      supportSection("Artifact Text Field", artifactText),
+      supportSection("Loaded Action Artifacts", actionArtifactInfo),
+      supportSection("Artifact Comparison", comparisonInfo),
+      supportSection("Artifact Inspection", inspectionInfo),
+      supportSection("RFC Scope Notes Field", actionScopeNotes),
+      supportSection("Manual Instructions Field", manualInstructions),
+      supportSection("Converter Source Text", sourceText),
+      supportSection("Detected Manual Phases", phaseText),
+      supportSection("Generated Action Plan", actionPlan),
+      "===================================================================="
+    ].join("\n\n"));
+  }
+
+  async function copyActionPlanSupportOutput() {
+    const output = buildActionPlanSupportOutput();
+    setSupportOutputText(output);
+    setSupportOutputOpen(true);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(output);
+      setMessage(a.supportCopied);
+    }
+    addLog("Salida de soporte de Action Plan copiada", "actionPlan");
   }
 
   async function confirmActionPlan() {
@@ -5385,7 +5646,13 @@ export function App() {
                       {actionDocumentProcessing ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
                       {actionDocumentProcessing ? a.processingDocument : a.loadDocument}
                     </button>
-                    <span>{actionDocumentProcessing ? a.processingDocument : actionSourceDocument?.name ?? a.noDocument}</span>
+                    <span>
+                      {actionDocumentProcessing
+                        ? a.processingDocument
+                        : actionSourceDocument
+                          ? `${actionSourceDocument.name}${actionSourceDocument.ignoredDocuments?.length ? ` (+${actionSourceDocument.ignoredDocuments.length} ignored)` : ""}`
+                          : a.noDocument}
+                    </span>
                   </div>
                 </label>
               )}
@@ -5397,6 +5664,16 @@ export function App() {
                   onChange={(event) => setActionActivity(event.target.value)}
                 />
               </label>
+              {actionMethod === "manual" && (
+                <label className="action-scope-field">
+                  {a.scopeNotes}
+                  <textarea
+                    value={actionScopeNotes}
+                    onChange={(event) => setActionScopeNotes(event.target.value)}
+                    placeholder={a.scopeNotesHint}
+                  />
+                </label>
+              )}
               {actionMethod === "cicd" && (
                 <div className="action-plan-generate-field">
                   <button className="action-plan-generate" onClick={generateActionPlan} title={a.generate}>
@@ -5445,6 +5722,7 @@ export function App() {
                 className="hidden-file-input"
                 type="file"
                 accept=".docx,.pdf,.sql"
+                multiple
                 onChange={handleActionDocumentInput}
               />
             )}
@@ -5487,6 +5765,10 @@ export function App() {
                   <button className="secondary" disabled={!actionPlan} onClick={copyActionPlan} title={a.copy}>
                     <Copy size={16} />
                     {a.copy}
+                  </button>
+                  <button className="secondary" onClick={copyActionPlanSupportOutput} title={a.supportOutput}>
+                    <MessageSquareText size={16} />
+                    {a.supportOutput}
                   </button>
                 </div>
               </div>
@@ -6382,6 +6664,47 @@ export function App() {
               <button onClick={acceptManualReview}>
                 <FileText size={16} />
                 {a.acceptReview}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {supportOutputOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setSupportOutputOpen(false)}>
+          <section className="workspace-modal action-artifact-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2>{a.supportTitle}</h2>
+                <p>{a.supportBody}</p>
+              </div>
+              <button className="icon-close" onClick={() => setSupportOutputOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <label className="artifact-input">
+              {a.supportOutput}
+              <textarea
+                className="action-plan-text"
+                value={supportOutputText}
+                onChange={(event) => setSupportOutputText(event.target.value)}
+              />
+            </label>
+
+            <div className="workspace-actions modal-actions">
+              <button className="secondary" onClick={() => setSupportOutputOpen(false)}>
+                {a.clear}
+              </button>
+              <button
+                className="primary"
+                onClick={async () => {
+                  await navigator.clipboard?.writeText(supportOutputText);
+                  setMessage(a.supportCopied);
+                }}
+              >
+                <Copy size={16} />
+                {a.copy}
               </button>
             </div>
           </section>

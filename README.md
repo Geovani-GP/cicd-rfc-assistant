@@ -126,11 +126,11 @@ Recommended converter manifest shape:
 
 Training progress is tracked by product using real RFC/IM090 examples reviewed during development. The counts below are working estimates, not formal coverage guarantees.
 
-Last updated: 2026-05-22
+Last updated: 2026-05-24
 
 | Product | Training files used | Unique cases | Coverage estimate | Current status |
 | --- | ---: | ---: | --- | --- |
-| OIC | 15 | 14 | 80-85% | Strongest coverage. Handles standard installs, multi-IAR plans, CSV/lookups, WSDL, ZIP libraries, connection declarations, scheduled integrations, scheduler stop plus integration disablement, deactivation-vs-installation distinction, credential-line filtering, wrapped artifact names, and noisy PDF/DOCX extraction. |
+| OIC | 17 | 16 | 83-87% | Strongest coverage. Handles standard installs, multi-IAR plans, CSV/lookups, WSDL, ZIP libraries, connection declarations, scheduled integrations, scheduler stop plus integration disablement, deactivation-vs-installation distinction, RFC scope exclusions for Dashboard/lookups, credential-line filtering, wrapped artifact names, letter-spaced PDF text, and noisy PDF/DOCX extraction. |
 | ODI Studio | 3 | 3 | 60-65% | Covers topology password updates for REST/Oracle Data Servers, ODI component import with SQL, backup/export, variables, mappings, datastores, and scenario regeneration. |
 | Oracle Database | 4 | 3 | 65-70% | Covers focused `PASSWORD_LIFE_TIME` profile extension plans, database user password resets, and database component installation with ordered SQL scripts, schema/PDB connection, object status validation, rollback, and evidence. |
 | OSB | 2 | 2 | 45-50% | Covers OSB export packages, pipelines, proxy services, business services, and service accounts. |
@@ -157,6 +157,8 @@ Current tracked training set:
   - `GB_IM-090_OUT_ERP_TO_OTM_PURCHASE_ORDER_MONITORING_v2.0.pdf`
   - `IM090-ICWE-FIN-984-OUT_ERP_TO_TRANSLATOR_EDI810_INVOICES.docx`
   - `GB_IM090_ICWC-CX-506.IN_CX_TO_ERP_ ASSIGNPASSWORD_V1.0.pdf`
+  - `GB_IM090_ICWC-CX-284.OUT_OEC_TO_ERP_CUSTOMERS.OUT_OEC_TO_CUSTOMERS_V1.0.pdf`
+  - `GB_IM090_ICWC-CX-289.IN_OEC_UPDATE_CUSTOMERS_v1.0.pdf`
 - ODI Studio:
   - RFC overview for topology password update on `OIC_PRY_INTPLATCOM_IMPORT`
   - `IM090_ICWE-ERP-956_OUT_ERP_TO_TRANSLATOR_EDI856_ASN.docx`
@@ -190,6 +192,8 @@ Training review passes:
 | OIC | `GB_IM-090_OUT_ERP_TO_OTM_PURCHASE_ORDER_MONITORING_v2.0.pdf` | 2 | Scheduled job stop plus integration disablement validated without installation artifacts. |
 | OIC | `IM090-ICWE-FIN-984-OUT_ERP_TO_TRANSLATOR_EDI810_INVOICES.docx` | 2 | IAR, `edit for` / `Edit connection` extraction, WSDL URL instructions, and password-line filtering validated. |
 | OIC | `GB_IM090_ICWC-CX-506.IN_CX_TO_ERP_ ASSIGNPASSWORD_V1.0.pdf` | 2 | Wrapped IAR name cleanup, lookup CSV, connection extraction, and password-line filtering validated. |
+| OIC | `GB_IM090_ICWC-CX-284.OUT_OEC_TO_ERP_CUSTOMERS.OUT_OEC_TO_CUSTOMERS_V1.0.pdf` | 2 | Letter-spaced PDF extraction, dual IAR install, shared lookup CSVs, connection extraction, and image-stream noise filtering validated. |
+| OIC | `GB_IM090_ICWC-CX-289.IN_OEC_UPDATE_CUSTOMERS_v1.0.pdf` | 1 | Single-IAR OIC upgrade with Dashboard/Lookup RFC exclusions, REG target vs PREPROD reference handling, OEC/OIC connection extraction, and secure credential-session note validated. |
 | ODI Studio | RFC overview for `OIC_PRY_INTPLATCOM_IMPORT` password update | 2 | Topology password update pattern validated. |
 | ODI Studio | `IM090_ICWE-ERP-956_OUT_ERP_TO_TRANSLATOR_EDI856_ASN.docx` | 2 | ODI backup/export, SQL, imports, variables, datastores, and scenario regeneration validated. |
 | ODI Studio | `Step document for password.docx` | 2 | Oracle physical architecture Data Server password update, `GB_EDI_OUT_STG`, `OracleDIAgent`, and secure password handling validated. |
