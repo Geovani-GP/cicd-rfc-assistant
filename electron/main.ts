@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile, copyFile, appendFile, unlink, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile, copyFile, appendFile, unlink, rm, rename } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,6 +131,31 @@ type ActionPlanTextSavePayload = {
   rfc?: string;
   outputDirectory?: string;
   content: string;
+};
+
+type KnowledgeProduct = {
+  id: string;
+  name: string;
+  version: string;
+  previous: string;
+  modules: string[];
+};
+
+type KnowledgeTemplate = {
+  id: string;
+  product?: string;
+  label: string;
+  hint: string;
+};
+
+type RuntimeKnowledgeCatalog = {
+  schemaVersion: number;
+  knowledgeVersion: string;
+  source: "local" | "remote";
+  products: KnowledgeProduct[];
+  templates: KnowledgeTemplate[];
+  basePath: string;
+  previousVersion?: string | null;
 };
 
 type UserDataBackupPayload = {
@@ -332,6 +357,162 @@ async function pathExists(path: string) {
   }
 }
 
+function knowledgeRoot() {
+  return join(app.getPath("userData"), "knowledge");
+}
+
+function knowledgePackagesRoot() {
+  return join(knowledgeRoot(), "packages");
+}
+
+function knowledgePointerPath(name: "current" | "previous") {
+  return join(knowledgeRoot(), `${name}.json`);
+}
+
+async function readJsonFile<T>(path: string): Promise<T> {
+  return JSON.parse(await readFile(path, "utf8")) as T;
+}
+
+async function writeJsonFile(path: string, value: unknown) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readKnowledgePointer(name: "current" | "previous") {
+  const pointerPath = knowledgePointerPath(name);
+  if (!(await pathExists(pointerPath))) return null;
+  try {
+    const pointer = await readJsonFile<{ version?: string }>(pointerPath);
+    return pointer.version?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function isKnowledgeProduct(value: unknown): value is KnowledgeProduct {
+  const item = value as KnowledgeProduct;
+  return Boolean(
+    item &&
+    typeof item.id === "string" &&
+    typeof item.name === "string" &&
+    typeof item.version === "string" &&
+    typeof item.previous === "string" &&
+    Array.isArray(item.modules) &&
+    item.modules.every((module) => typeof module === "string")
+  );
+}
+
+function isKnowledgeTemplate(value: unknown): value is KnowledgeTemplate {
+  const item = value as KnowledgeTemplate;
+  return Boolean(
+    item &&
+    typeof item.id === "string" &&
+    typeof item.label === "string" &&
+    typeof item.hint === "string" &&
+    (item.product === undefined || typeof item.product === "string")
+  );
+}
+
+async function readKnowledgePackage(basePath: string, source: "local" | "remote" = "local"): Promise<RuntimeKnowledgeCatalog> {
+  const manifest = await readJsonFile<{
+    schemaVersion?: number;
+    knowledgeVersion?: string;
+  }>(join(basePath, "manifest.json"));
+  const converterManifest = await readJsonFile<{
+    products?: unknown[];
+  }>(join(basePath, "products", "converters.manifest.json"));
+  const templateCatalog = await readJsonFile<{
+    templates?: unknown[];
+  }>(join(basePath, "templates", "action-templates.json"));
+
+  if (manifest.schemaVersion !== 1 || !manifest.knowledgeVersion) {
+    throw new Error("Invalid knowledge package manifest.");
+  }
+  const products = converterManifest.products;
+  const templates = templateCatalog.templates;
+  if (!Array.isArray(products) || !products.every(isKnowledgeProduct)) {
+    throw new Error("Invalid converter manifest in knowledge package.");
+  }
+  if (!Array.isArray(templates) || !templates.every(isKnowledgeTemplate)) {
+    throw new Error("Invalid action template catalog in knowledge package.");
+  }
+
+  return {
+    schemaVersion: manifest.schemaVersion,
+    knowledgeVersion: manifest.knowledgeVersion,
+    source,
+    products,
+    templates,
+    basePath,
+    previousVersion: await readKnowledgePointer("previous")
+  };
+}
+
+async function loadInstalledKnowledge() {
+  const packagesRoot = knowledgePackagesRoot();
+  const currentVersion = await readKnowledgePointer("current");
+  const previousVersion = await readKnowledgePointer("previous");
+  const candidateVersions = [currentVersion, previousVersion].filter((version): version is string => Boolean(version));
+
+  for (const version of candidateVersions) {
+    try {
+      return await readKnowledgePackage(join(packagesRoot, version));
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function isSafeZipEntryName(name: string) {
+  return Boolean(name && !name.startsWith("/") && !/^[a-z]:/i.test(name) && !name.split("/").includes(".."));
+}
+
+async function extractKnowledgeZip(zipPath: string, destination: string) {
+  const buffer = await readFile(zipPath);
+  const entries = listZipEntries(buffer);
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  for (const entry of entries) {
+    if (!isSafeZipEntryName(entry.name)) throw new Error(`Unsafe ZIP entry: ${entry.name}`);
+    if (entry.name.endsWith("/")) continue;
+    const outputPath = join(destination, entry.name);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, readZipEntry(buffer, entry));
+  }
+}
+
+async function installKnowledgePackage(zipPath: string) {
+  const packagesRoot = knowledgePackagesRoot();
+  const stagingPath = join(knowledgeRoot(), "incoming");
+  await extractKnowledgeZip(zipPath, stagingPath);
+  const stagedCatalog = await readKnowledgePackage(stagingPath);
+  const finalPath = join(packagesRoot, stagedCatalog.knowledgeVersion);
+  await mkdir(packagesRoot, { recursive: true });
+  await rm(finalPath, { recursive: true, force: true });
+  await rename(stagingPath, finalPath);
+
+  const currentVersion = await readKnowledgePointer("current");
+  if (currentVersion && currentVersion !== stagedCatalog.knowledgeVersion) {
+    await writeJsonFile(knowledgePointerPath("previous"), { version: currentVersion, updatedAt: new Date().toISOString() });
+  }
+  await writeJsonFile(knowledgePointerPath("current"), {
+    version: stagedCatalog.knowledgeVersion,
+    installedAt: new Date().toISOString(),
+    sourcePath: zipPath
+  });
+  return readKnowledgePackage(finalPath);
+}
+
+async function rollbackKnowledgePackage() {
+  const currentVersion = await readKnowledgePointer("current");
+  const previousVersion = await readKnowledgePointer("previous");
+  if (!previousVersion) return null;
+  await writeJsonFile(knowledgePointerPath("current"), { version: previousVersion, updatedAt: new Date().toISOString() });
+  if (currentVersion) await writeJsonFile(knowledgePointerPath("previous"), { version: currentVersion, updatedAt: new Date().toISOString() });
+  return loadInstalledKnowledge();
+}
+
 async function getRepositoryInfo(repoPath: string): Promise<RepositoryInfo> {
   const branch = await git(["branch", "--show-current"], repoPath);
   const status = await git(["status", "--porcelain"], repoPath);
@@ -348,7 +529,7 @@ async function getRepositoryInfo(repoPath: string): Promise<RepositoryInfo> {
 function classifyFile(filePath: string): SelectedFile["kind"] {
   const ext = extname(filePath).toLowerCase();
   if (ext === ".iar") return "integration";
-  if (ext === ".par") return "package";
+  if (ext === ".par" || ext === ".zip") return "package";
   if (ext === ".csv") return "lookup";
   if (ext === ".xml" || ext === ".wsdl") return "xml";
   if (ext === ".sql") return "sql";
@@ -1362,6 +1543,17 @@ ipcMain.handle("save-evidence-images", async (_event, payload: EvidenceImagesSav
   }
   return { directory: outputDirectory, count: savedPaths.length, paths: savedPaths };
 });
+
+ipcMain.handle("load-knowledge", async () => loadInstalledKnowledge());
+
+ipcMain.handle("install-knowledge-package", async (_event, filePath: string) => {
+  if (!filePath || extname(filePath).toLowerCase() !== ".zip") {
+    throw new Error("Select a valid knowledge ZIP package.");
+  }
+  return installKnowledgePackage(filePath);
+});
+
+ipcMain.handle("rollback-knowledge-package", async () => rollbackKnowledgePackage());
 
 ipcMain.handle("save-action-plan-text", async (_event, payload: ActionPlanTextSavePayload) => {
   const baseDirectory = payload.outputDirectory?.trim() || await chooseEvidenceBaseDirectory("Seleccionar carpeta base para Action Plan");

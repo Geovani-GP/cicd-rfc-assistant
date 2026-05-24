@@ -27,3 +27,26 @@ export type EmbeddedActionTemplate = {
 export const embeddedKnowledgeManifest = converterManifest as EmbeddedKnowledgeManifest;
 export const embeddedConverterTechnologies = embeddedKnowledgeManifest.products;
 export const embeddedActionTemplateOptions = actionTemplateCatalog.templates as EmbeddedActionTemplate[];
+
+export type RuntimeKnowledgeSource = "embedded" | "local" | "remote";
+
+export type RuntimeKnowledgeCatalog = {
+  schemaVersion: number;
+  knowledgeVersion: string;
+  source: RuntimeKnowledgeSource;
+  products: EmbeddedConverterTechnology[];
+  templates: EmbeddedActionTemplate[];
+  basePath?: string;
+  previousVersion?: string | null;
+};
+
+export function embeddedRuntimeKnowledge(): RuntimeKnowledgeCatalog {
+  return {
+    schemaVersion: embeddedKnowledgeManifest.schemaVersion,
+    knowledgeVersion: embeddedKnowledgeManifest.knowledgeVersion,
+    source: "embedded",
+    products: embeddedConverterTechnologies,
+    templates: embeddedActionTemplateOptions,
+    previousVersion: null
+  };
+}

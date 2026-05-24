@@ -101,6 +101,27 @@ export type EvidenceImage = {
   dataUrl: string;
 };
 
+export type RuntimeKnowledgeCatalog = {
+  schemaVersion: number;
+  knowledgeVersion: string;
+  source: "local" | "remote";
+  products: Array<{
+    id: string;
+    name: string;
+    version: string;
+    previous: string;
+    modules: string[];
+  }>;
+  templates: Array<{
+    id: string;
+    product?: string;
+    label: string;
+    hint: string;
+  }>;
+  basePath: string;
+  previousVersion?: string | null;
+};
+
 declare global {
   interface Window {
     cicd: {
@@ -124,6 +145,9 @@ declare global {
         outputDirectory?: string;
         images: Array<{ name: string; dataUrl: string }>;
       }) => Promise<{ directory: string; count: number; paths: string[] } | null>;
+      loadKnowledge: () => Promise<RuntimeKnowledgeCatalog | null>;
+      installKnowledgePackage: (filePath: string) => Promise<RuntimeKnowledgeCatalog>;
+      rollbackKnowledgePackage: () => Promise<RuntimeKnowledgeCatalog | null>;
       saveActionPlanText: (payload: {
         rfc?: string;
         outputDirectory?: string;

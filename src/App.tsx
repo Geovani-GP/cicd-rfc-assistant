@@ -68,9 +68,9 @@ import {
 } from "./action-plan/parsing/products";
 import type { ManualActionPhase } from "./action-plan/parsing/types";
 import {
-  embeddedActionTemplateOptions,
-  embeddedConverterTechnologies
+  embeddedRuntimeKnowledge
 } from "./knowledge";
+import type { RuntimeKnowledgeCatalog } from "./knowledge";
 import type {
   ActionSourceDocument,
   ArtifactInspection,
@@ -90,7 +90,6 @@ const desktopApi = window.cicd;
 const releaseBranch = "release";
 const pipelinePhases: PipelinePhase[] = ["DEV", "REG", "TEST", "PROD"];
 const actionPlanEnvironments = ["DEV", "REG", "TEST", "PROD"];
-const converterTechnologies = embeddedConverterTechnologies;
 const defaultCustomTheme = {
   colorA: "#d9c4ff",
   colorB: "#8fe8ff",
@@ -705,10 +704,15 @@ const copy = {
     converterSyncTitle: "Sincronizar convertidores",
     converterSyncBody: "Actualiza o regresa la version del motor de conversion por tecnologia. La descarga desde la nube quedara conectada a Cloudflare.",
     converterVersion: "Version actual",
+    converterKnowledge: "Paquete de conocimiento",
+    converterSource: "Origen",
+    converterInstallPackage: "Cargar paquete ZIP",
     converterUpdate: "Actualizar",
     converterRollback: "Version anterior",
     converterUpdated: "Convertidor actualizado.",
     converterRolledBack: "Convertidor regresado a version anterior.",
+    converterPackageInstalled: "Paquete de conocimiento instalado.",
+    converterNoRollback: "No hay version anterior instalada.",
     historyRemoveConfirm: "Eliminar {{rfc}} del historial?",
     historyDiskConfirm: "Tambien quieres eliminar el documento del disco duro?",
     deleteHistoryItem: "Eliminar",
@@ -975,10 +979,15 @@ const copy = {
     converterSyncTitle: "Sync converters",
     converterSyncBody: "Update or roll back the conversion engine version by technology. Cloud download will be wired through Cloudflare.",
     converterVersion: "Current version",
+    converterKnowledge: "Knowledge package",
+    converterSource: "Source",
+    converterInstallPackage: "Load ZIP package",
     converterUpdate: "Update",
     converterRollback: "Previous version",
     converterUpdated: "Converter updated.",
     converterRolledBack: "Converter rolled back.",
+    converterPackageInstalled: "Knowledge package installed.",
+    converterNoRollback: "No previous version installed.",
     historyRemoveConfirm: "Remove {{rfc}} from history?",
     historyDiskConfirm: "Do you also want to delete the document from disk?",
     deleteHistoryItem: "Delete",
@@ -1245,10 +1254,15 @@ const copy = {
     converterSyncTitle: "Sincronizar conversores",
     converterSyncBody: "Atualize ou reverta a versao do motor de conversao por tecnologia. O download em nuvem sera conectado ao Cloudflare.",
     converterVersion: "Versao atual",
+    converterKnowledge: "Pacote de conhecimento",
+    converterSource: "Origem",
+    converterInstallPackage: "Carregar pacote ZIP",
     converterUpdate: "Atualizar",
     converterRollback: "Versao anterior",
     converterUpdated: "Conversor atualizado.",
     converterRolledBack: "Conversor revertido.",
+    converterPackageInstalled: "Pacote de conhecimento instalado.",
+    converterNoRollback: "Nenhuma versao anterior instalada.",
     historyRemoveConfirm: "Excluir {{rfc}} do historico?",
     historyDiskConfirm: "Tambem deseja excluir o documento do disco?",
     deleteHistoryItem: "Excluir",
@@ -1744,14 +1758,12 @@ const actionCopy = {
 const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql"];
 type ActionTemplateOption = { id: ActionTemplateId; product?: string; label: string; hint: string; custom?: boolean };
 
-const actionTemplateOptions = embeddedActionTemplateOptions as ActionTemplateOption[];
-
-function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options = actionTemplateOptions) {
+function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options: ActionTemplateOption[]) {
   const option = options.find((item) => item.id === templateId);
   return !option?.product || option.product === product;
 }
 
-function actionTemplateHint(templateId: ActionTemplateId, options = actionTemplateOptions) {
+function actionTemplateHint(templateId: ActionTemplateId, options: ActionTemplateOption[]) {
   return options.find((item) => item.id === templateId)?.hint ?? "";
 }
 
@@ -2270,6 +2282,7 @@ export function App() {
   const [pendingPage, setPendingPage] = useState(1);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [converterSyncOpen, setConverterSyncOpen] = useState(false);
+  const [knowledgeCatalog, setKnowledgeCatalog] = useState<RuntimeKnowledgeCatalog>(() => embeddedRuntimeKnowledge());
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionDocumentProcessing, setActionDocumentProcessing] = useState(false);
@@ -2476,6 +2489,11 @@ export function App() {
       [item.rfc, item.phase, item.kind, item.path].some((value) => value.toLowerCase().includes(query))
     );
   }, [executionHistory, historySearch]);
+  const converterTechnologies = knowledgeCatalog.products;
+  const actionTemplateOptions = useMemo<ActionTemplateOption[]>(
+    () => knowledgeCatalog.templates as ActionTemplateOption[],
+    [knowledgeCatalog.templates]
+  );
   const customTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => customActionTemplates
       .filter((template) => template.active !== false)
@@ -2494,7 +2512,7 @@ export function App() {
   );
   const allActionTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => [...actionTemplateOptions, ...customTemplateOptions],
-    [customTemplateOptions]
+    [actionTemplateOptions, customTemplateOptions]
   );
   const visibleActionTemplateOptions = useMemo(
     () => allActionTemplateOptions.filter((option) => actionTemplateMatchesProduct(option.id, actionProduct, allActionTemplateOptions)),
@@ -3489,8 +3507,32 @@ export function App() {
     return true;
   }
 
-  function markConverterSynced(action: "update" | "rollback") {
-    setMessage(action === "update" ? t.converterUpdated : t.converterRolledBack);
+  async function installLocalKnowledgePackage() {
+    if (!desktopApi?.selectFiles || !desktopApi?.installKnowledgePackage) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const files = await runTask(() => desktopApi.selectFiles(["zip"]));
+    const file = files?.[0];
+    if (!file?.path) return;
+    const catalog = await runTask(() => desktopApi.installKnowledgePackage(file.path));
+    if (!catalog) return;
+    setKnowledgeCatalog(catalog);
+    setMessage(`${t.converterPackageInstalled} ${catalog.knowledgeVersion}`);
+  }
+
+  async function rollbackLocalKnowledgePackage() {
+    if (!desktopApi?.rollbackKnowledgePackage) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const catalog = await runTask(() => desktopApi.rollbackKnowledgePackage());
+    if (!catalog) {
+      setMessage(t.converterNoRollback);
+      return;
+    }
+    setKnowledgeCatalog(catalog);
+    setMessage(`${t.converterRolledBack} ${catalog.knowledgeVersion}`);
   }
 
   function saveCustomTemplate() {
@@ -4874,6 +4916,18 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    desktopApi?.loadKnowledge?.()
+      .then((catalog) => {
+        if (!cancelled && catalog) setKnowledgeCatalog(catalog);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (pipelineStepIndex >= currentPipelineSteps.length) {
       setPipelineStepIndex(Math.max(0, currentPipelineSteps.length - 1));
     }
@@ -5458,9 +5512,22 @@ export function App() {
                 <div>
                   <h2>{t.converterSyncTitle}</h2>
                   <p>{t.converterSyncBody}</p>
+                  <p>
+                    {t.converterKnowledge}: {knowledgeCatalog.knowledgeVersion} · {t.converterSource}: {knowledgeCatalog.source}
+                  </p>
                 </div>
                 <button className="icon-close" onClick={() => setConverterSyncOpen(false)}>
                   <X size={18} />
+                </button>
+              </div>
+              <div className="inline-actions converter-package-actions">
+                <button className="primary" onClick={installLocalKnowledgePackage}>
+                  <UploadCloud size={16} />
+                  {t.converterInstallPackage}
+                </button>
+                <button className="secondary" onClick={rollbackLocalKnowledgePackage} disabled={!knowledgeCatalog.previousVersion}>
+                  <ChevronLeft size={16} />
+                  {t.converterRollback}
                 </button>
               </div>
               <div className="converter-list">
@@ -5471,11 +5538,11 @@ export function App() {
                       <span>{t.converterVersion}: {converter.version}</span>
                     </div>
                     <div className="inline-actions compact-actions">
-                      <button className="secondary" onClick={() => markConverterSynced("update")}>
+                      <button className="secondary" onClick={installLocalKnowledgePackage}>
                         <RefreshCw size={16} />
                         {t.converterUpdate}
                       </button>
-                      <button className="secondary" onClick={() => markConverterSynced("rollback")}>
+                      <button className="secondary" onClick={rollbackLocalKnowledgePackage} disabled={!knowledgeCatalog.previousVersion}>
                         <ChevronLeft size={16} />
                         {t.converterRollback}: {converter.previous}
                       </button>
