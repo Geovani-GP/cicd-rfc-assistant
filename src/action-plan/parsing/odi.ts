@@ -286,7 +286,8 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
     {
       id: "schedule",
       title: "Schedule Activation",
-      content: "Not applicable unless the RFC explicitly requests ODI schedule activation."
+      content: "Not applicable unless the RFC explicitly requests ODI schedule activation.",
+      defaultIncluded: false
     },
     {
       id: "validation",
@@ -307,9 +308,9 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
       content: [
         "If import or validation fails, stop the execution and capture the error.",
         "Restore the previously exported ODI objects if rollback is approved.",
-        "If the SQL script was executed and rollback is required, coordinate the database rollback with the DBA/request owner.",
+        scripts.length ? "If the SQL script was executed and rollback is required, coordinate the database rollback with the DBA/request owner." : "",
         "Escalate to the ODI/application owner before retrying."
-      ].join("\n")
+      ].filter(Boolean).join("\n")
     },
     {
       id: "evidence",
@@ -382,7 +383,8 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
     {
       id: "schedule",
       title: "Schedule Activation",
-      content: "Not applicable."
+      content: "Not applicable.",
+      defaultIncluded: false
     },
     {
       id: "validation",

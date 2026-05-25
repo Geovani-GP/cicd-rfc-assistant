@@ -266,7 +266,7 @@ function externalConfigurationItemsForProduct(productName: string, text: string,
 }
 
 function externalPhaseModelForProduct(productName: string, rulesCatalog?: KnowledgeRulesCatalog) {
-  if (!rulesCatalog || !["OIC", "MFT"].includes(productName)) return null;
+  if (!rulesCatalog) return null;
   const selectedRule = rulesCatalog.products.find((rule) => runtimeProductMatchesRule(productName, rule));
   return selectedRule?.phaseRules ?? null;
 }
