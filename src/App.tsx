@@ -152,6 +152,7 @@ function normalizeExternalRuleValues(values: string[], normalize: string[] = [])
   const requireUnderscore = normalize.includes("require-underscore");
   const splitPipeComma = normalize.includes("split-pipe-comma");
   const splitSlashPipeComma = normalize.includes("split-slash-pipe-comma");
+  const removeWhitespace = normalize.includes("remove-whitespace");
   const uppercaseKey = normalize.includes("uppercase-key");
   const candidates = splitSlashPipeComma
     ? values.flatMap((value) => value.split(/\s*\/\s*|\s*\|\s*|,\s*/))
@@ -160,7 +161,10 @@ function normalizeExternalRuleValues(values: string[], normalize: string[] = [])
       : values;
   const byKey = new Map<string, string>();
   for (const candidate of candidates) {
-    const value = candidate.replace(/^\d+\.\s*/, "").replace(/\s+/g, " ").trim();
+    const value = candidate
+      .replace(/^\d+\.\s*/, "")
+      .replace(/\s+/g, removeWhitespace ? "" : " ")
+      .trim();
     if (!value || (requireUnderscore && !value.includes("_"))) continue;
     const key = uppercaseKey ? value.toUpperCase() : value.toLowerCase();
     byKey.set(key, value);

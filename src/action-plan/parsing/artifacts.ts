@@ -13,7 +13,12 @@ function quotedValues(value: string) {
 function repairSplitArtifactFileNames(text: string) {
   return text
     .replace(/\b(ICWC-CX-\d+_)\s+(\d{4}_\d{2}\.\d{2}\.\d{4}\.iar)\b/gi, "$1$2")
-    .replace(/\b([A-Z][A-Z0-9-]+_)\s+(\d{4}_\d{2}\.\d{2}\.\d{4}\.iar)\b/gi, "$1$2");
+    .replace(/\b([A-Z][A-Z0-9-]+_)\s+(\d{4}_\d{2}\.\d{2}\.\d{4}\.iar)\b/gi, "$1$2")
+    .replace(/\b(OUT_PLM_ITEM_TO_LO)\s+(OKU_[A-Z0-9]+)\b/gi, "$1$2")
+    .replace(/\b([A-Z0-9][A-Z0-9_.-]+_\d{2}\.\d{2}\.)\s+(\d{4}\.iar)\b/gi, "$1$2")
+    .replace(/\b([A-Z0-9][A-Z0-9_.-]+_\d{2}\.\d{2}\.\d)\s+(\d{3}\.iar)\b/gi, "$1$2")
+    .replace(/\b([A-Z0-9][A-Z0-9_.-]+_\d{2}\.\d{2}\.\d{2})\s+(\d{2}\.iar)\b/gi, "$1$2")
+    .replace(/\b([A-Z0-9][A-Z0-9_.-]+_\d{2}\.\d{2}\.\d{3})\s+(\d\.iar)\b/gi, "$1$2");
 }
 
 export function cleanArtifactCandidate(value: string) {
@@ -74,7 +79,8 @@ export function extractArtifactNames(text: string, options: { includeComponentNa
 }
 
 function cleanArtifactFileName(value: string) {
-  const match = extractArtifactFileNames(value)[0];
+  const fileNames = extractArtifactFileNames(value);
+  const match = fileNames.find((item) => !/\d\.\d[A-Z]/.test(item)) ?? fileNames[0];
   return match ?? "";
 }
 
@@ -88,6 +94,7 @@ function extractArtifactFileNames(value: string) {
     const baseName = extensionMatch ? candidate.slice(0, -extensionMatch[0].length) : candidate;
     const extension = extensionMatch?.[1]?.toLowerCase() ?? "";
     if (baseName.length > 140) continue;
+    if (/\d\.\d[A-Z]/.test(baseName)) continue;
     if (extension !== "wsdl" && extension !== "zip" && /[a-z]/.test(baseName)) continue;
     if (extension !== "wsdl" && extension !== "csv" && !/[_.-]/.test(baseName)) continue;
     if (extension === "csv" && !/[_.-]/.test(baseName) && !/^[A-Z0-9]{5,}$/.test(baseName)) continue;
