@@ -3097,6 +3097,14 @@ export function App() {
     );
   }
 
+  function normalizeArtifactIdentityKey(value: string) {
+    const clean = value.trim();
+    if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(clean)) {
+      return normalizeEnvironmentName(clean);
+    }
+    return normalizeArtifactCompareKey(clean);
+  }
+
   function artifactDisplayName(value: string) {
     return value
       .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i, "")
@@ -3109,7 +3117,7 @@ export function App() {
   }
 
   function dedupeArtifactNames(items: string[]) {
-    return Array.from(new Map(items.filter(Boolean).map((item) => [normalizeArtifactCompareKey(item), item])).values());
+    return Array.from(new Map(items.filter(Boolean).map((item) => [normalizeArtifactIdentityKey(item), item])).values());
   }
 
   function isWeakArtifactEntry(value: string) {
@@ -3219,7 +3227,7 @@ export function App() {
       : installableArtifacts.length
         ? installableArtifacts
         : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
-    return Array.from(new Map(detected.map((item) => [normalizeArtifactCompareKey(item), item])).values());
+    return dedupeArtifactNames(detected);
   }
 
   function actionLoadedArtifactItems(files = actionArtifactFiles, inspections = actionArtifactInspections) {
@@ -3315,7 +3323,7 @@ export function App() {
   function artifactTextShouldUseInspectedArtifacts(value: string, inspectedArtifacts: string[]) {
     if (!inspectedArtifacts.length) return false;
     if (artifactTextCanBeFedFromInspection(value)) return true;
-    const enteredArtifacts = artifactLinesFromText(value).filter((item) => /\.(?:iar|par|zip|jar|sql|csv|xml)$/i.test(item));
+    const enteredArtifacts = artifactLinesFromText(value).filter((item) => /\.(?:iar|par|zip|jar|sql|csv|xml|asc)$/i.test(item));
     if (!enteredArtifacts.length) return true;
     const loadedKeys = inspectedArtifacts.map(normalizeArtifactCompareKey);
     return enteredArtifacts.some((artifact) => !loadedKeys.some((key) => artifactKeysMatch(normalizeArtifactCompareKey(artifact), key)));
@@ -3330,11 +3338,13 @@ export function App() {
     const loadedItems = actionLoadedInstallableArtifactItems();
     const matchedKeys = new Set<string>();
     const rows = documentItems.map((documentName) => {
-      const documentKey = normalizeArtifactCompareKey(documentName);
+      const documentIsFile = /\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(documentName);
+      const documentKey = documentIsFile ? normalizeArtifactIdentityKey(documentName) : normalizeArtifactCompareKey(documentName);
       const match = loadedItems.find((item) => {
-        const loadedKey = normalizeArtifactCompareKey(item.name);
+        const loadedValue = documentIsFile ? item.source : item.name;
+        const loadedKey = documentIsFile ? normalizeArtifactIdentityKey(loadedValue) : normalizeArtifactCompareKey(loadedValue);
         const isMatch = artifactKeysMatch(documentKey, loadedKey);
-        if (isMatch) matchedKeys.add(`${loadedKey}-${item.source}`);
+        if (isMatch) matchedKeys.add(`${normalizeArtifactIdentityKey(item.source)}-${item.source}`);
         return isMatch;
       });
       return {
@@ -3345,7 +3355,7 @@ export function App() {
       };
     });
     for (const item of loadedItems) {
-      const key = `${normalizeArtifactCompareKey(item.name)}-${item.source}`;
+      const key = `${normalizeArtifactIdentityKey(item.source)}-${item.source}`;
       if (!matchedKeys.has(key)) {
         rows.push({
           documentName: "-",
@@ -4626,8 +4636,9 @@ export function App() {
       : actionProduct.trim() || "Oracle Integration Cloud";
     const environmentName = effectiveActionEnvironment().trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
-    const isMftFolderAccessPlan = isMftPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
-    const activityName = actionActivity.trim() || (isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
+    const isMftTransferImportPlan = isMftPlan && (/\bdo\s+not\s+deploy\b|\bimport\s+only\b|\bjust\s+need\s+to\s+import\b|\bArtifact file:\s*[^\n\r]+\.zip\b|\bmft\/transfer\//i.test(sourceText));
+    const isMftFolderAccessPlan = isMftPlan && !isMftTransferImportPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
+    const activityName = actionActivity.trim() || (isMftTransferImportPlan ? "Import MFT transfers" : isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
     const rfcNumber = rfc.trim();
     const sourceDocumentName = actionSourceDocument?.name ?? (
       sourceText.trim()
@@ -5078,7 +5089,12 @@ export function App() {
       "requester",
       ...(externalSafetyRulesForProduct(actionProduct, knowledgeCatalog.rules)?.redactPatterns ?? [])
     ];
-    let redacted = value
+    const uuidPlaceholders: string[] = [];
+    let redacted = value.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, (match) => {
+      const placeholder = `__UUID_${uuidPlaceholders.length}__`;
+      uuidPlaceholders.push(match);
+      return placeholder;
+    })
       .replace(/\b((?:new\s+|confirm\s+)?password\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
       .replace(/\b((?:pwd|pass)\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
       .replace(/\b(password\s+for\s+this\s+information,\s*)([^\n\r]+)/gi, "$1<REDACTED>")
@@ -5089,6 +5105,9 @@ export function App() {
       .replace(/(?:\+\d{1,3}[\s()-]*)?(?:\d[\s()-]*){8,}\d/g, "<REDACTED_PHONE>")
       .replace(/\/Users\/[^/\s]+/g, "/Users/<REDACTED_USER>")
       .replace(/\\Users\\[^\\\s]+/g, "\\Users\\<REDACTED_USER>");
+    uuidPlaceholders.forEach((uuid, index) => {
+      redacted = redacted.replace(new RegExp(`__UUID_${index}__`, "g"), uuid);
+    });
     for (const term of Array.from(new Set(safetyTerms.map((item) => item.trim()).filter(Boolean)))) {
       const label = escapeRegexLiteral(term);
       redacted = redacted.replace(new RegExp(`\\b(${label}\\b\\s*[:=]\\s*)([^\\n\\r]+)`, "gi"), "$1<REDACTED>");
