@@ -282,12 +282,16 @@ function connectionCandidatesFromText(text: string) {
   });
 }
 
-function sanitizeOicSensitiveContent(content: string) {
+function sanitizeOicSensitiveContent(content: string, options: { omitWsdlFileExamples?: boolean } = {}) {
   const artifactNames = installableArtifactNames(content);
+  const wsdlFileNames = options.omitWsdlFileExamples ? artifactNames.filter((artifact) => /\.wsdl$/i.test(artifact)) : [];
   return content
     .split(/\r?\n/)
     .filter((line) => {
       const trimmed = line.trim();
+      if (wsdlFileNames.some((artifact) => new RegExp(`\\b${artifact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(trimmed))) {
+        return false;
+      }
       if (artifactNames.some((artifact) => artifact !== trimmed && artifact.toLowerCase().endsWith(trimmed.toLowerCase()) && artifact.length - trimmed.length >= 4)) {
         return false;
       }
@@ -299,13 +303,14 @@ function sanitizeOicSensitiveContent(content: string) {
     .join("\n");
 }
 
-function connectionConfigurationNotes(text: string, connections: string[], options: { includeWsdlFiles?: boolean } = {}) {
+function connectionConfigurationNotes(text: string, connections: string[], options: { includeConnections?: boolean; includeWsdlFiles?: boolean } = {}) {
   const notes: string[] = [];
+  const includeConnections = options.includeConnections ?? true;
   const includeWsdlFiles = options.includeWsdlFiles ?? true;
   const wsdlFiles = includeWsdlFiles ? installableArtifactNames(text).filter((artifact) => /\.wsdl$/i.test(artifact)) : [];
   const hasUsernamePasswordToken = /\bUsername Password Token\b/i.test(text);
   if (!connections.length && !wsdlFiles.length && !hasUsernamePasswordToken) return "";
-  if (connections.length) notes.push(`Required connection(s):\n${asBullets(connections)}`);
+  if (includeConnections && connections.length) notes.push(`Required connection(s):\n${asBullets(connections)}`);
   if (wsdlFiles.length) notes.push(`WSDL file(s) referenced by the connection configuration:\n${asBullets(wsdlFiles)}`);
   if (hasUsernamePasswordToken) notes.push("Security policy: Username Password Token.");
   notes.push("Use the credentials provided through the approved secure channel. Do not document password values.");
@@ -1235,7 +1240,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   ]);
   const artifactDetectionText = [artifactContent, operational].filter(Boolean).join("\n");
   const loadedArtifacts = loadedOicArtifactFiles(text);
-  const connectionNotes = connectionConfigurationNotes(text, metadata.connections, { includeWsdlFiles: !loadedArtifacts.length });
+  const connectionNotes = connectionConfigurationNotes(text, metadata.connections, { includeConnections: false, includeWsdlFiles: !loadedArtifacts.length });
   const installableArtifacts = loadedArtifacts.length
     ? sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(loadedArtifacts)))
     : sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
@@ -1278,7 +1283,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   const scheduleNotApplicable = !metadata.schedules.length && oicScheduleContentIsNotApplicable(scheduleContent);
   const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
   const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
-  const prepareContent = (content: string) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content), selectedEnvironment);
+  const prepareContent = (content: string) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content, { omitWsdlFileExamples: Boolean(loadedArtifacts.length) }), selectedEnvironment);
   const preInstallClean = /^pre$/i.test(preInstallContent.trim()) ? "" : preInstallContent;
   const useScopedInstallation = scope.ignoreDashboard || scope.ignoreLookups;
   const scopedInstallationContent = useScopedInstallation
