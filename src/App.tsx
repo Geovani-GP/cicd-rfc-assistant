@@ -90,6 +90,12 @@ const desktopApi = window.cicd;
 const releaseBranch = "release";
 const pipelinePhases: PipelinePhase[] = ["DEV", "REG", "TEST", "PROD"];
 const actionPlanEnvironments = ["DEV", "REG", "TEST", "PROD"];
+const instanceEnvironmentSuffixes: Record<string, string> = {
+  DE: "DEV",
+  RE: "REG",
+  TE: "TEST",
+  PR: "PROD"
+};
 const defaultCustomTheme = {
   colorA: "#d9c4ff",
   colorB: "#8fe8ff",
@@ -2216,7 +2222,12 @@ function isAllowedArtifact(path: string) {
 }
 
 function pipelineInstanceFrom(instance: string) {
-  return instance.trim().replace(/(TE|PR)$/i, "");
+  return instance.trim().replace(/(DE|RE|TE|PR)$/i, "");
+}
+
+function environmentFromInstanceSuffix(instance: string) {
+  const match = normalizeEnvironmentName(instance).match(/(DE|RE|TE|PR)$/);
+  return match ? instanceEnvironmentSuffixes[match[1]] ?? "" : "";
 }
 
 function trimExecutionStepTitle(value: string) {
@@ -2813,7 +2824,7 @@ export function App() {
       evidenceItems.length
     );
     if (!hasMeaningfulWork) return null;
-    const environmentValue = targetEnvironment || actionEnvironment || actionInstance;
+    const environmentValue = targetEnvironment || effectiveActionEnvironment() || actionInstance;
     const stepName = executionMode === "cicd"
       ? t.steps.pipeline[0]
       : executionStepsConfirmed
@@ -3148,7 +3159,18 @@ export function App() {
     return [templateHint, actionScopeNotes, sourceText].filter((value) => value.trim()).join("\n\n");
   }
 
-  function manualPhaseSourceKeyFor(text: string, environment = actionEnvironment, product = actionProduct) {
+  function effectiveActionEnvironment() {
+    return environmentFromInstanceSuffix(actionInstance) || actionEnvironment;
+  }
+
+  function actionEnvironmentMismatchNote(selectedEnvironment = actionEnvironment) {
+    const inferred = environmentFromInstanceSuffix(actionInstance);
+    const selected = selectedEnvironment.trim();
+    if (!inferred || !selected || normalizeEnvironmentName(inferred) === normalizeEnvironmentName(selected)) return "";
+    return `Selected environment ${selected} differs from instance suffix ${actionInstance.trim()} -> ${inferred}; using ${inferred}.`;
+  }
+
+  function manualPhaseSourceKeyFor(text: string, environment = effectiveActionEnvironment(), product = actionProduct) {
     return [product || "<product>", environment || "<environment>", text.length, stableTextHash(text)].join("|");
   }
 
@@ -4400,15 +4422,19 @@ export function App() {
 
   function applyManualEnvironment(environment: string, text = manualDetectionSourceText()) {
     if (!text.trim()) return;
+    const resolvedEnvironment = environmentFromInstanceSuffix(actionInstance) || environment;
     const available = availableEnvironmentsFromDocument(text);
     setAvailableDocumentEnvironments(available);
-    const phases = runtimeManualPhasesForProduct(actionProduct, text, environment);
+    const phases = runtimeManualPhasesForProduct(actionProduct, text, resolvedEnvironment);
     setManualPhases(phases);
-    setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment));
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, resolvedEnvironment));
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
-    if (selectedEnvironmentMissingFromDocument(text, environment)) {
-      setMessage(availableEnvironmentMessage(environment, available));
+    const mismatchNote = actionEnvironmentMismatchNote(environment);
+    if (mismatchNote) {
+      setMessage(mismatchNote);
+    } else if (selectedEnvironmentMissingFromDocument(text, resolvedEnvironment)) {
+      setMessage(availableEnvironmentMessage(resolvedEnvironment, available));
     }
   }
 
@@ -4423,11 +4449,12 @@ export function App() {
     setManualInstructions(text);
     setManualSourceText(text);
     if (text) {
+      const environment = effectiveActionEnvironment();
       const available = availableEnvironmentsFromDocument(text);
       setAvailableDocumentEnvironments(available);
-      const phases = runtimeManualPhasesForProduct(actionProduct, text, actionEnvironment);
+      const phases = runtimeManualPhasesForProduct(actionProduct, text, environment);
       setManualPhases(phases);
-      setManualPhaseSourceKey(manualPhaseSourceKeyFor(text));
+      setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment));
       setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
       setManualPhaseIndex(0);
       const operational = operationalIm090Text(text);
@@ -4444,10 +4471,13 @@ export function App() {
           : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
       if (detectedArtifacts.length) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
-      if (!actionEnvironment.trim()) {
+      const mismatchNote = actionEnvironmentMismatchNote();
+      if (mismatchNote) {
+        setMessage(mismatchNote);
+      } else if (!environment.trim()) {
         setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
-      } else if (selectedEnvironmentMissingFromDocument(text, actionEnvironment)) {
-        setMessage(availableEnvironmentMessage(actionEnvironment, available));
+      } else if (selectedEnvironmentMissingFromDocument(text, environment)) {
+        setMessage(availableEnvironmentMessage(environment, available));
       }
     } else {
       setManualPhases([]);
@@ -4482,22 +4512,26 @@ export function App() {
 
   function reviewManualPhases() {
     const sourceText = manualDetectionSourceText();
+    const environment = effectiveActionEnvironment();
     if (!sourceText.trim()) {
       setManualReviewOpen(true);
       return;
     }
-    const phases = runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+    const phases = runtimeManualPhasesForProduct(actionProduct, sourceText, environment);
     const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
-    setManualPhaseSourceKey(manualPhaseSourceKeyFor(sourceText));
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(sourceText, environment));
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
-    if (!actionEnvironment.trim()) {
+    const mismatchNote = actionEnvironmentMismatchNote();
+    if (mismatchNote) {
+      setMessage(mismatchNote);
+    } else if (!environment.trim()) {
       setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
-    } else if (selectedEnvironmentMissingFromDocument(sourceText, actionEnvironment)) {
-      setMessage(availableEnvironmentMessage(actionEnvironment, available));
+    } else if (selectedEnvironmentMissingFromDocument(sourceText, environment)) {
+      setMessage(availableEnvironmentMessage(environment, available));
     }
   }
 
@@ -4579,7 +4613,7 @@ export function App() {
       : actionProduct === "Base de datos"
       ? "Oracle Database"
       : actionProduct.trim() || "Oracle Integration Cloud";
-    const environmentName = actionEnvironment.trim() || "<Environment>";
+    const environmentName = effectiveActionEnvironment().trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const isMftFolderAccessPlan = isMftPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
     const activityName = actionActivity.trim() || (isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
@@ -4611,10 +4645,11 @@ export function App() {
 
   function acceptManualReview() {
     const sourceText = manualDetectionSourceText();
+    const environment = effectiveActionEnvironment();
     const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
     const reviewedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
-      : runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+      : runtimeManualPhasesForProduct(actionProduct, sourceText, environment);
     const disabledKeys = manualPhaseSourceKey === currentSourceKey ? manualPhaseDisabledKeys : manualPhaseDisabledKeysForDefaults(reviewedPhases);
     const enabledPhases = reviewedPhases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
     if (!enabledPhases.length) {
@@ -4959,7 +4994,7 @@ export function App() {
         : [artifactDisplayName(firstArtifact)];
     const componentLines = componentNames.map((item) => `- ${item}`).join("\n");
     const oicComponentBlock = productName === "OIC" ? `\nPackage content detected for confirmation:\n${componentLines}` : "";
-    const environmentName = actionEnvironment.trim() || "<Environment>";
+    const environmentName = effectiveActionEnvironment().trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const activityName = actionActivity.trim() || "Deploy artifacts";
     const manualInstructionText = manualInstructions.trim() || sourceText || "<Installation instructions>";
@@ -4969,7 +5004,7 @@ export function App() {
         const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
         const phases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
           ? manualPhases
-          : runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+          : runtimeManualPhasesForProduct(actionProduct, sourceText, effectiveActionEnvironment());
         const disabledKeys = manualPhaseSourceKey === currentSourceKey
           ? manualPhaseDisabledKeys
           : manualPhaseDisabledKeysForDefaults(phases);
@@ -5168,11 +5203,12 @@ export function App() {
 
   function buildActionPlanSupportOutput() {
     const sourceText = manualDetectionSourceText();
+    const environment = effectiveActionEnvironment();
     const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
     const detectedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
       : sourceText.trim()
-        ? runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment)
+        ? runtimeManualPhasesForProduct(actionProduct, sourceText, environment)
         : [];
     const disabledKeys = manualPhaseSourceKey === currentSourceKey && manualPhaseDisabledKeys.length
       ? manualPhaseDisabledKeys
@@ -5242,14 +5278,16 @@ export function App() {
       `Method: ${actionMethod}`,
       `Product: ${actionProduct || "<empty>"}`,
       `Template: ${selectedTemplate?.label || actionTemplateId}`,
-      `Environment: ${actionEnvironment || "<empty>"}`,
+      `Environment: ${environment || "<empty>"}`,
+      normalizeEnvironmentName(environment) !== normalizeEnvironmentName(actionEnvironment) ? `Selected environment: ${actionEnvironment || "<empty>"}` : "",
+      actionEnvironmentMismatchNote() ? `Environment note: ${actionEnvironmentMismatchNote()}` : "",
       `Instance: ${actionInstance || "<empty>"}`,
       `Activity: ${actionActivity || "<empty>"}`,
       `Scope notes present: ${actionScopeNotes.trim() ? "yes" : "no"}`,
       `Action Plan confirmed: ${actionPlanConfirmed ? "yes" : "no"}`,
       `Action Plan confirmed at: ${actionPlanConfirmedAt || "<empty>"}`,
       `Available document environments: ${availableDocumentEnvironments.join(", ") || "<none>"}`
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
     return redactSupportOutputText([
       "======================= Support Output =======================",
@@ -5746,19 +5784,24 @@ export function App() {
 
   useEffect(() => {
     if (!actionInstance.trim()) return;
-    if (actionEnvironment === "PROD") {
+    const inferredEnvironment = environmentFromInstanceSuffix(actionInstance);
+    if (inferredEnvironment && normalizeEnvironmentName(actionEnvironment) !== normalizeEnvironmentName(inferredEnvironment)) {
+      setActionEnvironment(inferredEnvironment);
+    }
+    const environment = inferredEnvironment || actionEnvironment;
+    if (environment === "PROD") {
       setProdTargetEnvironment(actionInstance);
       return;
     }
-    if (actionEnvironment === "DEV") {
+    if (environment === "DEV") {
       setDevTargetEnvironment(actionInstance);
       return;
     }
-    if (actionEnvironment === "REG") {
+    if (environment === "REG") {
       setRegTargetEnvironment(actionInstance);
       return;
     }
-    if (actionEnvironment === "TEST") {
+    if (environment === "TEST") {
       setTestTargetEnvironment(actionInstance);
     }
   }, [actionEnvironment, actionInstance]);
