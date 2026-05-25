@@ -126,6 +126,8 @@ const pendingWorkStorageKey = "pendingWorkSnapshots";
 const actionMethodStorageKey = "actionPlanMethod";
 const executionModeStorageKey = "rfcExecutionMode";
 const customTemplatesStorageKey = "customActionTemplates";
+const knowledgeUpdateUrlStorageKey = "knowledgeUpdateUrl";
+const knowledgeUpdateTokenStorageKey = "knowledgeUpdateClientToken";
 const maxActionDocumentTextLength = 120000;
 
 type KnowledgeRulesCatalog = NonNullable<RuntimeKnowledgeCatalog["rules"]>;
@@ -839,6 +841,12 @@ const copy = {
     converterRulesAvailable: "Reglas externas cargadas",
     converterRulesMissing: "Sin reglas externas",
     converterInstallPackage: "Cargar paquete ZIP",
+    converterUpdateUrl: "URL de actualizacion",
+    converterUpdateToken: "Token de cliente",
+    converterCheckUpdate: "Buscar actualizacion",
+    converterInstallRemote: "Instalar desde Cloudflare",
+    converterUpdateAvailable: "Actualizacion disponible",
+    converterNoUpdateUrl: "Captura la URL de actualizacion de Cloudflare.",
     converterUpdate: "Actualizar",
     converterRollback: "Version anterior",
     converterUpdated: "Convertidor actualizado.",
@@ -1117,6 +1125,12 @@ const copy = {
     converterRulesAvailable: "External rules loaded",
     converterRulesMissing: "No external rules",
     converterInstallPackage: "Load ZIP package",
+    converterUpdateUrl: "Update URL",
+    converterUpdateToken: "Client token",
+    converterCheckUpdate: "Check update",
+    converterInstallRemote: "Install from Cloudflare",
+    converterUpdateAvailable: "Update available",
+    converterNoUpdateUrl: "Enter the Cloudflare update URL.",
     converterUpdate: "Update",
     converterRollback: "Previous version",
     converterUpdated: "Converter updated.",
@@ -1395,6 +1409,12 @@ const copy = {
     converterRulesAvailable: "Regras externas carregadas",
     converterRulesMissing: "Sem regras externas",
     converterInstallPackage: "Carregar pacote ZIP",
+    converterUpdateUrl: "URL de atualizacao",
+    converterUpdateToken: "Token do cliente",
+    converterCheckUpdate: "Buscar atualizacao",
+    converterInstallRemote: "Instalar do Cloudflare",
+    converterUpdateAvailable: "Atualizacao disponivel",
+    converterNoUpdateUrl: "Informe a URL de atualizacao do Cloudflare.",
     converterUpdate: "Atualizar",
     converterRollback: "Versao anterior",
     converterUpdated: "Conversor atualizado.",
@@ -2421,6 +2441,9 @@ export function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [converterSyncOpen, setConverterSyncOpen] = useState(false);
   const [knowledgeCatalog, setKnowledgeCatalog] = useState<RuntimeKnowledgeCatalog>(() => embeddedRuntimeKnowledge());
+  const [knowledgeUpdateUrl, setKnowledgeUpdateUrl] = useState(() => localStorage.getItem(knowledgeUpdateUrlStorageKey) || "");
+  const [knowledgeUpdateClientToken, setKnowledgeUpdateClientToken] = useState(() => localStorage.getItem(knowledgeUpdateTokenStorageKey) || "");
+  const [remoteKnowledgeVersion, setRemoteKnowledgeVersion] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionDocumentProcessing, setActionDocumentProcessing] = useState(false);
@@ -3669,6 +3692,47 @@ export function App() {
     const catalog = await runTask(() => desktopApi.installKnowledgePackage(file.path));
     if (!catalog) return;
     setKnowledgeCatalog(catalog);
+    setMessage(`${t.converterPackageInstalled} ${catalog.knowledgeVersion}`);
+  }
+
+  function knowledgeUpdatePayload() {
+    const manifestUrl = knowledgeUpdateUrl.trim();
+    if (!manifestUrl) {
+      setMessage(t.converterNoUpdateUrl);
+      return null;
+    }
+    localStorage.setItem(knowledgeUpdateUrlStorageKey, manifestUrl);
+    localStorage.setItem(knowledgeUpdateTokenStorageKey, knowledgeUpdateClientToken.trim());
+    return {
+      manifestUrl,
+      clientToken: knowledgeUpdateClientToken.trim() || undefined
+    };
+  }
+
+  async function checkRemoteKnowledgeUpdate() {
+    if (!desktopApi?.checkKnowledgeUpdate) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const payload = knowledgeUpdatePayload();
+    if (!payload) return;
+    const manifest = await runTask(() => desktopApi.checkKnowledgeUpdate(payload));
+    if (!manifest) return;
+    setRemoteKnowledgeVersion(manifest.knowledgeVersion);
+    setMessage(`${t.converterUpdateAvailable}: ${manifest.knowledgeVersion}`);
+  }
+
+  async function installRemoteKnowledgeUpdate() {
+    if (!desktopApi?.installKnowledgeUpdate) {
+      setMessage(t.messages.filesElectron);
+      return;
+    }
+    const payload = knowledgeUpdatePayload();
+    if (!payload) return;
+    const catalog = await runTask(() => desktopApi.installKnowledgeUpdate(payload));
+    if (!catalog) return;
+    setKnowledgeCatalog(catalog);
+    setRemoteKnowledgeVersion(catalog.knowledgeVersion);
     setMessage(`${t.converterPackageInstalled} ${catalog.knowledgeVersion}`);
   }
 
@@ -5810,6 +5874,40 @@ export function App() {
                   <ChevronLeft size={16} />
                   {t.converterRollback}
                 </button>
+              </div>
+              <div className="clone-box">
+                <div className="split">
+                  <label>
+                    {t.converterUpdateUrl}
+                    <input
+                      value={knowledgeUpdateUrl}
+                      onChange={(event) => setKnowledgeUpdateUrl(event.target.value)}
+                      placeholder="https://updates.example.com/converters/latest"
+                    />
+                  </label>
+                  <label>
+                    {t.converterUpdateToken}
+                    <input
+                      value={knowledgeUpdateClientToken}
+                      onChange={(event) => setKnowledgeUpdateClientToken(event.target.value)}
+                      placeholder="Opcional"
+                      type="password"
+                    />
+                  </label>
+                </div>
+                {remoteKnowledgeVersion && (
+                  <p>{t.converterUpdateAvailable}: {remoteKnowledgeVersion}</p>
+                )}
+                <div className="inline-actions converter-package-actions">
+                  <button className="secondary" onClick={checkRemoteKnowledgeUpdate}>
+                    <RefreshCw size={16} />
+                    {t.converterCheckUpdate}
+                  </button>
+                  <button className="primary" onClick={installRemoteKnowledgeUpdate}>
+                    <Download size={16} />
+                    {t.converterInstallRemote}
+                  </button>
+                </div>
               </div>
               <div className="converter-list">
                 {converterTechnologies.map((converter) => (

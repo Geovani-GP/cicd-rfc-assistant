@@ -188,6 +188,22 @@ declare global {
       }) => Promise<{ directory: string; count: number; paths: string[] } | null>;
       loadKnowledge: () => Promise<RuntimeKnowledgeCatalog | null>;
       installKnowledgePackage: (filePath: string) => Promise<RuntimeKnowledgeCatalog>;
+      checkKnowledgeUpdate: (payload: {
+        manifestUrl: string;
+        clientToken?: string;
+      }) => Promise<{
+        knowledgeVersion: string;
+        package: {
+          fileName?: string;
+          url: string;
+          sha256: string;
+          sizeBytes?: number;
+        };
+      }>;
+      installKnowledgeUpdate: (payload: {
+        manifestUrl: string;
+        clientToken?: string;
+      }) => Promise<RuntimeKnowledgeCatalog>;
       rollbackKnowledgePackage: () => Promise<RuntimeKnowledgeCatalog | null>;
       saveActionPlanText: (payload: {
         rfc?: string;

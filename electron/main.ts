@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, stat, writeFile, copyFile, appendFile, unlink, rm, rename } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
@@ -131,6 +132,24 @@ type ActionPlanTextSavePayload = {
   rfc?: string;
   outputDirectory?: string;
   content: string;
+};
+
+type KnowledgeRemoteUpdatePayload = {
+  manifestUrl: string;
+  clientToken?: string;
+};
+
+type KnowledgeRemoteManifest = {
+  ok?: boolean;
+  manifest?: {
+    knowledgeVersion?: string;
+    package?: {
+      fileName?: string;
+      url?: string;
+      sha256?: string;
+      sizeBytes?: number;
+    };
+  };
 };
 
 type KnowledgeProduct = {
@@ -674,6 +693,53 @@ async function installKnowledgePackage(zipPath: string) {
     sourcePath: zipPath
   });
   return readKnowledgePackage(finalPath);
+}
+
+function knowledgeUpdateHeaders(payload: KnowledgeRemoteUpdatePayload) {
+  const headers: Record<string, string> = { accept: "application/json" };
+  const clientToken = payload.clientToken?.trim();
+  if (clientToken) headers["x-update-token"] = clientToken;
+  return headers;
+}
+
+function assertHttpsUrl(value: string) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
+    throw new Error("Knowledge update URL must use HTTPS.");
+  }
+  return url.toString();
+}
+
+async function fetchRemoteKnowledgeManifest(payload: KnowledgeRemoteUpdatePayload) {
+  const manifestUrl = assertHttpsUrl(payload.manifestUrl);
+  const response = await fetch(manifestUrl, { headers: knowledgeUpdateHeaders(payload) });
+  if (!response.ok) throw new Error(`Knowledge update check failed (${response.status}).`);
+  const body = await response.json() as KnowledgeRemoteManifest;
+  const manifest = body.manifest ?? body as KnowledgeRemoteManifest["manifest"];
+  if (!manifest?.knowledgeVersion || !manifest.package?.url || !manifest.package.sha256) {
+    throw new Error("Invalid remote knowledge manifest.");
+  }
+  return manifest;
+}
+
+function sha256Buffer(buffer: Buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function installRemoteKnowledgePackage(payload: KnowledgeRemoteUpdatePayload) {
+  const manifest = await fetchRemoteKnowledgeManifest(payload);
+  const packageUrl = assertHttpsUrl(manifest.package?.url ?? "");
+  const response = await fetch(packageUrl, { headers: knowledgeUpdateHeaders(payload) });
+  if (!response.ok) throw new Error(`Knowledge package download failed (${response.status}).`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const actualSha = sha256Buffer(buffer);
+  const expectedSha = manifest.package?.sha256?.toLowerCase();
+  if (actualSha !== expectedSha) {
+    throw new Error(`Knowledge package checksum mismatch. Expected ${expectedSha}, got ${actualSha}.`);
+  }
+  const tempPath = join(tmpdir(), manifest.package?.fileName || `converters-${manifest.knowledgeVersion}.zip`);
+  await writeFile(tempPath, buffer);
+  return installKnowledgePackage(tempPath);
 }
 
 async function rollbackKnowledgePackage() {
@@ -1724,6 +1790,10 @@ ipcMain.handle("install-knowledge-package", async (_event, filePath: string) => 
   }
   return installKnowledgePackage(filePath);
 });
+
+ipcMain.handle("check-knowledge-update", async (_event, payload: KnowledgeRemoteUpdatePayload) => fetchRemoteKnowledgeManifest(payload));
+
+ipcMain.handle("install-knowledge-update", async (_event, payload: KnowledgeRemoteUpdatePayload) => installRemoteKnowledgePackage(payload));
 
 ipcMain.handle("rollback-knowledge-package", async () => rollbackKnowledgePackage());
 

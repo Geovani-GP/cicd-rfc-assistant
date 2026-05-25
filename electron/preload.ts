@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("cicd", {
   saveEvidenceImages: (payload: unknown) => ipcRenderer.invoke("save-evidence-images", payload),
   loadKnowledge: () => ipcRenderer.invoke("load-knowledge"),
   installKnowledgePackage: (filePath: string) => ipcRenderer.invoke("install-knowledge-package", filePath),
+  checkKnowledgeUpdate: (payload: unknown) => ipcRenderer.invoke("check-knowledge-update", payload),
+  installKnowledgeUpdate: (payload: unknown) => ipcRenderer.invoke("install-knowledge-update", payload),
   rollbackKnowledgePackage: () => ipcRenderer.invoke("rollback-knowledge-package"),
   saveActionPlanText: (payload: unknown) => ipcRenderer.invoke("save-action-plan-text", payload),
   getPathForFile: (file: File) => webUtils?.getPathForFile(file) ?? (file as File & { path?: string })?.path ?? "",
