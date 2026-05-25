@@ -59,7 +59,7 @@ export type FinalizeResult = {
 export type ArtifactInspection = {
   filePath: string;
   fileName: string;
-  kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "zip" | "xml" | "pgp" | "unsupported" | "error";
   projects: Array<{
     code?: string;
     name?: string;
@@ -68,7 +68,7 @@ export type ArtifactInspection = {
     state?: string;
   }>;
   components: Array<{
-    kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
+    kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity" | "odiMapping" | "odiPackage" | "odiScenario" | "odiVariable" | "odiProcedure";
     name: string;
     path: string;
   }>;
@@ -76,7 +76,7 @@ export type ArtifactInspection = {
   internalArtifacts?: Array<{
     path: string;
     name: string;
-    kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
+    kind: "iar" | "par" | "jar" | "zip" | "xml" | "pgp" | "unsupported" | "error";
     projects: Array<{
       code?: string;
       name?: string;
@@ -85,7 +85,7 @@ export type ArtifactInspection = {
       state?: string;
     }>;
     components: Array<{
-      kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
+      kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity" | "odiMapping" | "odiPackage" | "odiScenario" | "odiVariable" | "odiProcedure";
       name: string;
       path: string;
     }>;

@@ -60,7 +60,7 @@ type InspectedProject = {
 };
 
 type InspectedComponent = {
-  kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
+  kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity" | "odiMapping" | "odiPackage" | "odiScenario" | "odiVariable" | "odiProcedure";
   name: string;
   path: string;
 };
@@ -68,7 +68,7 @@ type InspectedComponent = {
 type InternalArtifactInspection = {
   path: string;
   name: string;
-  kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "zip" | "xml" | "pgp" | "unsupported" | "error";
   projects: InspectedProject[];
   components: InspectedComponent[];
   entries: string[];
@@ -1331,6 +1331,60 @@ function inspectMftZipComponents(buffer: Buffer, entries: ZipEntry[]): Inspected
   return components;
 }
 
+function xmlFieldValues(xml: string, fieldName: string) {
+  const pattern = new RegExp(`<Field\\s+name=["']${fieldName}["'][^>]*>\\s*(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([^<]*))\\s*</Field>`, "gi");
+  return Array.from(xml.matchAll(pattern))
+    .map((match) => (match[1] ?? match[2] ?? "").trim())
+    .filter((value) => value && value.toLowerCase() !== "null")
+    .map(xmlUnescape);
+}
+
+function firstXmlFieldValue(xml: string, fieldName: string) {
+  return xmlFieldValues(xml, fieldName)[0] ?? "";
+}
+
+function inspectOdiXmlBuffer(buffer: Buffer, artifactName: string) {
+  const xml = buffer.toString("latin1");
+  if (!/<SunopsisExport\b/i.test(xml)) {
+    return { projects: [], components: [], entries: [] };
+  }
+
+  const components: InspectedComponent[] = [];
+  const pushUnique = (kind: InspectedComponent["kind"], name: string, path = artifactName) => {
+    const clean = name.trim();
+    if (!clean || components.some((item) => item.kind === kind && item.name.toUpperCase() === clean.toUpperCase())) return;
+    components.push({ kind, name: clean, path });
+  };
+
+  for (const name of xmlFieldValues(xml, "Name")) {
+    if (/^MAP_/i.test(name)) pushUnique("odiMapping", name);
+  }
+  for (const name of xmlFieldValues(xml, "PackName")) pushUnique("odiPackage", name);
+  for (const name of xmlFieldValues(xml, "ScenName")) pushUnique("odiScenario", name);
+  for (const name of xmlFieldValues(xml, "VarName")) pushUnique("odiVariable", name);
+  for (const value of xmlFieldValues(xml, "Description")) {
+    const proc = value.match(/#SNP_TRT\s*:\s*([A-Z0-9_.$-]+)/i)?.[1];
+    if (proc) pushUnique("odiProcedure", proc);
+    const mapping = value.match(/SNP_MAPPING\s*:\s*([A-Z0-9_.$-]+)/i)?.[1];
+    if (mapping) pushUnique("odiMapping", mapping);
+  }
+
+  const projectFolder = Array.from(xml.matchAll(/<!\[CDATA\[(PRY_[A-Z0-9_]+)\.([A-Z0-9_ ]+)(?:\.|])/gi))[0];
+  const repositoryVersion = firstXmlFieldValue(xml, "RepositoryVersion") || xmlAttribute(xml, "RepositoryVersion");
+  const odiVersion = firstXmlFieldValue(xml, "OdiVersion");
+  const projects: InspectedProject[] = projectFolder
+    ? [{ code: projectFolder[1], name: projectFolder[2].trim(), version: odiVersion || repositoryVersion, type: "ODI Project/Folder" }]
+    : [];
+
+  const entries = [
+    repositoryVersion ? `RepositoryVersion: ${repositoryVersion}` : "",
+    odiVersion ? `OdiVersion: ${odiVersion}` : "",
+    ...components.slice(0, 40).map((component) => `${component.kind}: ${component.name}`)
+  ].filter(Boolean);
+
+  return { projects, components, entries };
+}
+
 function isMftZip(entries: ZipEntry[]) {
   return entries.some((entry) => /^mft\/(?:source|target|transfer|security)\//i.test(entry.name));
 }
@@ -1408,6 +1462,32 @@ async function inspectArtifact(filePath: string) {
       components: [{ kind: "mftSecurity", name: "PGP key file", path: basename(filePath) }],
       entries: ["PGP key material detected; content intentionally not displayed."]
     };
+  }
+  if (ext === ".xml") {
+    try {
+      const buffer = await readFile(filePath);
+      const inspected = inspectOdiXmlBuffer(buffer, basename(filePath));
+      return {
+        filePath,
+        fileName: basename(filePath),
+        kind: "xml",
+        projects: inspected.projects,
+        components: inspected.components,
+        entries: inspected.entries,
+        internalArtifacts: []
+      };
+    } catch (error) {
+      const err = error as Error;
+      return {
+        filePath,
+        fileName: basename(filePath),
+        kind: "error",
+        projects: [],
+        components: [],
+        entries: [],
+        error: err.message
+      };
+    }
   }
   if (ext !== ".iar" && ext !== ".par" && ext !== ".jar" && ext !== ".zip") {
     return {

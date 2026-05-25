@@ -1,7 +1,7 @@
 import { buildDatabaseSqlPlan, hasDatabaseInstructions } from "./database";
 import { buildJavaWeblogicPlan, hasJavaWeblogicInstructions, javaConfigurationItems } from "./java";
 import { buildMftConfigurationPlan, hasMftInstructions, mftConfigurationItems, mftManualPlanMetadata } from "./mft";
-import { buildOdiTopologyPlan, hasOdiInstructions, odiConfigurationItems } from "./odi";
+import { buildOdiTopologyPlan, hasOdiInstructions, odiConfigurationItems, odiManualPlanMetadata } from "./odi";
 import { buildManualPhasesFromDocument, oicConfigurationItems } from "./oic";
 import { buildOsbConfigurationPlan, hasOsbInstructions, osbConfigurationItems } from "./osb";
 import type { ManualActionPhase } from "./types";
@@ -47,6 +47,9 @@ export function configurationItemsForProduct(productName: string, text: string) 
 export function manualPlanMetadataForProduct(productName: string, environmentName: string, instanceName: string, instructions: string) {
   if (isMftManualPlan(productName, instructions)) {
     return mftManualPlanMetadata(productName, environmentName, instanceName, instructions);
+  }
+  if (isOdiManualPlan(productName, instructions)) {
+    return odiManualPlanMetadata(productName, environmentName, instanceName, instructions);
   }
   return "";
 }

@@ -3070,7 +3070,7 @@ export function App() {
   }
 
   function isInspectableArtifact(file: SelectedFile) {
-    return file.kind === "integration" || file.kind === "package" || file.kind === "pgp";
+    return file.kind === "integration" || file.kind === "package" || file.kind === "xml" || file.kind === "pgp";
   }
 
   function componentBadge(kind: ArtifactInspection["components"][number]["kind"]) {
@@ -3084,6 +3084,11 @@ export function App() {
     if (kind === "mftTarget") return "MFT Target";
     if (kind === "mftTransfer") return "MFT Transfer";
     if (kind === "mftSecurity") return "MFT Security";
+    if (kind === "odiMapping") return "ODI Mapping";
+    if (kind === "odiPackage") return "ODI Package";
+    if (kind === "odiScenario") return "ODI Scenario";
+    if (kind === "odiVariable") return "ODI Variable";
+    if (kind === "odiProcedure") return "ODI Procedure";
     return "DVM";
   }
 
@@ -3091,6 +3096,7 @@ export function App() {
     if (!isInspectableArtifact(file)) return { state: "exists", label: "Existe" };
     if (!inspection) return { state: "pending", label: "Pendiente" };
     if (inspection.kind === "error") return { state: "missing", label: "No existe" };
+    if (inspection.kind === "unsupported") return { state: "exists", label: "Existe" };
     const hasDetectedContent = inspection.projects.length > 0 || inspection.components.length > 0 || inspection.entries.length > 0 || Boolean(inspection.internalArtifacts?.length);
     return hasDetectedContent ? { state: "exists", label: "Existe" } : { state: "missing", label: "No detectado" };
   }
@@ -3152,12 +3158,23 @@ export function App() {
       if (component.kind === "mftSource") return [`Source: ${component.name}`, `Component path: ${component.path}`];
       if (component.kind === "mftTarget") return [`Target: ${component.name}`, `Component path: ${component.path}`];
       if (component.kind === "mftSecurity") return [`Processing Action: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "odiMapping") return [`ODI Mapping: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "odiPackage") return [`ODI Package: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "odiScenario") return [`ODI Scenario: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "odiVariable") return [`ODI Variable: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "odiProcedure") return [`ODI Procedure: ${component.name}`, `Component path: ${component.path}`];
       return [`${component.kind}: ${component.name}`, `Component path: ${component.path}`];
     };
     for (const inspection of inspections) {
       lines.push(`Artifact file: ${inspection.fileName}`);
       for (const project of inspection.projects) {
-        lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+        if (project.type === "ODI Project/Folder") {
+          lines.push(`ODI Project: ${project.code}`);
+          if (project.name) lines.push(`ODI Folder: ${project.name}`);
+          if (project.version) lines.push(`ODI Version: ${project.version}`);
+        } else {
+          lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+        }
       }
       for (const component of inspection.components) {
         lines.push(...componentPlanLines(component));
@@ -3168,7 +3185,13 @@ export function App() {
       for (const internalArtifact of inspection.internalArtifacts ?? []) {
         lines.push(`Artifact file: ${internalArtifact.name}`);
         for (const project of internalArtifact.projects) {
-          lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+          if (project.type === "ODI Project/Folder") {
+            lines.push(`ODI Project: ${project.code}`);
+            if (project.name) lines.push(`ODI Folder: ${project.name}`);
+            if (project.version) lines.push(`ODI Version: ${project.version}`);
+          } else {
+            lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
+          }
         }
         for (const component of internalArtifact.components) {
           lines.push(...componentPlanLines(component));
