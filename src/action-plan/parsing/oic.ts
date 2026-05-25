@@ -139,8 +139,8 @@ function cleanFusionHost(value: string) {
 function strictEnvironmentAliases(environment: string) {
   const selected = normalizeEnvironmentName(environment);
   if (selected === "REG") return ["REG", "REGRESSION"];
-  if (selected === "TEST") return ["TEST"];
-  if (selected === "PREPROD" || selected === "TE") return ["PREPROD", "TE"];
+  if (selected === "TEST") return ["TEST", "PREPROD", "TE"];
+  if (selected === "PREPROD" || selected === "TE") return ["TEST", "PREPROD", "TE"];
   if (selected === "PROD" || selected === "PRODUCTION" || selected === "PR") return ["PROD", "PRODUCTION", "PR"];
   if (selected === "DEV" || selected === "DEVELOPMENT") return ["DEV", "DEVELOPMENT"];
   return selected ? [selected] : [];
