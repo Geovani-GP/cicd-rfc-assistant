@@ -970,7 +970,7 @@ const copy = {
       baseFolderRequired: "Elige una carpeta de trabajo antes de actualizar o clonar repositorios.",
       cloneOk: "Repositorio clonado correctamente.",
       dropPath: "No pude leer la ruta local de los archivos arrastrados. Haz click en el recuadro para seleccionarlos.",
-      invalidFiles: "Solo se permiten artefactos .iar, .par, .xml, .wsdl, .csv, .zip, .jar o .sql.",
+      invalidFiles: "Solo se permiten artefactos .iar, .par, .xml, .wsdl, .csv, .zip, .jar, .sql o .asc.",
       summaryOk: "Resumen actualizado.",
       draftOk: "Borrador preparado localmente.",
       noFiles: "Agrega al menos un artefacto antes de continuar.",
@@ -1016,7 +1016,7 @@ const copy = {
       mode: "Modo",
       modeHelp: "ADHOC usa int_adhoc.txt para desplegar solo lo listado. FULL usa int_full.txt para una lista completa/controlada.",
       dropTitle: "Arrastra archivos aqui o haz click para buscarlos",
-      dropBody: "Acepta .iar, .par, .xml, .wsdl, lookups .csv, librerias .zip, paquetes OSB .jar y scripts .sql. Los .csv se colocan en OIC/Lookups.",
+      dropBody: "Acepta .iar, .par, .xml, .wsdl, lookups .csv, librerias .zip, paquetes OSB .jar, scripts .sql y llaves PGP .asc. Los .csv se colocan en OIC/Lookups.",
       preview: "Vista previa",
       clearPackage: "Limpiar paquete",
       prepareDraft: "Revisar paquete"
@@ -1254,7 +1254,7 @@ const copy = {
       baseFolderRequired: "Choose a workspace folder before refreshing or cloning repositories.",
       cloneOk: "Repository cloned successfully.",
       dropPath: "I could not read the local path for dropped files. Click the drop area to select them.",
-      invalidFiles: "Only .iar, .par, .xml, .wsdl, .csv, .zip, .jar, or .sql artifacts are allowed.",
+      invalidFiles: "Only .iar, .par, .xml, .wsdl, .csv, .zip, .jar, .sql, or .asc artifacts are allowed.",
       summaryOk: "Summary refreshed.",
       draftOk: "Local draft prepared.",
       noFiles: "Add at least one artifact before continuing.",
@@ -1300,7 +1300,7 @@ const copy = {
       mode: "Mode",
       modeHelp: "ADHOC uses int_adhoc.txt to deploy only listed items. FULL uses int_full.txt for a complete/controlled list.",
       dropTitle: "Drop files here or click to browse",
-      dropBody: "Accepts .iar, .par, .xml, .wsdl, lookup .csv files, library .zip files, OSB .jar packages, and .sql scripts. .csv files go into OIC/Lookups.",
+      dropBody: "Accepts .iar, .par, .xml, .wsdl, lookup .csv files, library .zip files, OSB .jar packages, .sql scripts, and PGP .asc keys. .csv files go into OIC/Lookups.",
       preview: "Preview",
       clearPackage: "Clear package",
       prepareDraft: "Review package"
@@ -1538,7 +1538,7 @@ const copy = {
       baseFolderRequired: "Escolha uma pasta de trabalho antes de atualizar ou clonar repositorios.",
       cloneOk: "Repositorio clonado com sucesso.",
       dropPath: "Nao foi possivel ler a rota local dos arquivos arrastados. Clique na area para seleciona-los.",
-      invalidFiles: "Somente artefatos .iar, .par, .xml, .wsdl, .csv, .zip, .jar ou .sql sao permitidos.",
+      invalidFiles: "Somente artefatos .iar, .par, .xml, .wsdl, .csv, .zip, .jar, .sql ou .asc sao permitidos.",
       summaryOk: "Resumo atualizado.",
       draftOk: "Rascunho local preparado.",
       noFiles: "Adicione pelo menos um artefato antes de continuar.",
@@ -1584,7 +1584,7 @@ const copy = {
       mode: "Modo",
       modeHelp: "ADHOC usa int_adhoc.txt para implantar apenas itens listados. FULL usa int_full.txt para uma lista completa/controlada.",
       dropTitle: "Arraste arquivos aqui ou clique para buscar",
-      dropBody: "Aceita .iar, .par, .xml, .wsdl, lookups .csv, bibliotecas .zip, pacotes OSB .jar e scripts .sql. Arquivos .csv vao para OIC/Lookups.",
+      dropBody: "Aceita .iar, .par, .xml, .wsdl, lookups .csv, bibliotecas .zip, pacotes OSB .jar, scripts .sql e chaves PGP .asc. Arquivos .csv vao para OIC/Lookups.",
       preview: "Preview",
       clearPackage: "Limpar pacote",
       prepareDraft: "Revisar pacote"
@@ -1943,7 +1943,7 @@ const actionCopy = {
   }
 } as const;
 
-const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql"];
+const allowedArtifactExtensions = [".iar", ".par", ".xml", ".wsdl", ".csv", ".zip", ".jar", ".sql", ".asc"];
 type ActionTemplateOption = { id: ActionTemplateId; product?: string; label: string; hint: string; custom?: boolean };
 
 function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options: ActionTemplateOption[]) {
@@ -2207,12 +2207,13 @@ function regionFromRepo(name: string) {
 }
 
 function classifyDroppedFile(path: string): SelectedFile["kind"] {
-    const clean = path.toLowerCase();
-    if (clean.endsWith(".iar")) return "integration";
-    if (clean.endsWith(".par") || clean.endsWith(".jar")) return "package";
+  const clean = path.toLowerCase();
+  if (clean.endsWith(".iar")) return "integration";
+  if (clean.endsWith(".par") || clean.endsWith(".zip") || clean.endsWith(".jar")) return "package";
   if (clean.endsWith(".csv")) return "lookup";
   if (clean.endsWith(".xml") || clean.endsWith(".wsdl")) return "xml";
   if (clean.endsWith(".sql")) return "sql";
+  if (clean.endsWith(".asc")) return "pgp";
   return "other";
 }
 
@@ -3043,15 +3044,16 @@ export function App() {
 
   function fileBadge(kind: SelectedFile["kind"]) {
     if (kind === "integration") return ".iar";
-    if (kind === "package") return ".par";
+    if (kind === "package") return "pkg";
     if (kind === "lookup") return "lookup";
     if (kind === "xml") return ".xml";
     if (kind === "sql") return ".sql";
+    if (kind === "pgp") return ".asc";
     return t.badgeOther;
   }
 
   function isInspectableArtifact(file: SelectedFile) {
-    return file.kind === "integration" || file.kind === "package";
+    return file.kind === "integration" || file.kind === "package" || file.kind === "pgp";
   }
 
   function componentBadge(kind: ArtifactInspection["components"][number]["kind"]) {
@@ -3061,6 +3063,10 @@ export function App() {
     if (kind === "proxyService") return "Proxy Service";
     if (kind === "businessService") return "Business Service";
     if (kind === "serviceAccount") return "Service Account";
+    if (kind === "mftSource") return "MFT Source";
+    if (kind === "mftTarget") return "MFT Target";
+    if (kind === "mftTransfer") return "MFT Transfer";
+    if (kind === "mftSecurity") return "MFT Security";
     return "DVM";
   }
 
@@ -3085,7 +3091,7 @@ export function App() {
   function normalizeArtifactCompareKey(value: string) {
     return normalizeEnvironmentName(
       value
-        .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i, "")
+        .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i, "")
         .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "")
         .replace(/\bV(?:ERSION)?\d+$/i, "")
     );
@@ -3093,12 +3099,12 @@ export function App() {
 
   function artifactDisplayName(value: string) {
     return value
-      .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i, "")
+      .replace(/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i, "")
       .replace(/_\d{2}[._]\d{2}[._]\d{4}$/i, "");
   }
 
   function artifactVersionFromName(value: string) {
-    const match = value.match(/_(\d{2}[._]\d{2}[._]\d{4})(?:\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))?$/i);
+    const match = value.match(/_(\d{2}[._]\d{2}[._]\d{4})(?:\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc))?$/i);
     return match?.[1]?.replace(/_/g, ".") ?? undefined;
   }
 
@@ -3116,14 +3122,20 @@ export function App() {
 
   function artifactInspectionTextForPlan(inspections = actionArtifactInspections) {
     const lines: string[] = [];
+    const componentPlanLines = (component: ArtifactInspection["components"][number]) => {
+      if (component.kind === "mftTransfer") return [`Transfer Rule: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "mftSource") return [`Source: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "mftTarget") return [`Target: ${component.name}`, `Component path: ${component.path}`];
+      if (component.kind === "mftSecurity") return [`Processing Action: ${component.name}`, `Component path: ${component.path}`];
+      return [`${component.kind}: ${component.name}`, `Component path: ${component.path}`];
+    };
     for (const inspection of inspections) {
       lines.push(`Artifact file: ${inspection.fileName}`);
       for (const project of inspection.projects) {
         lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
       }
       for (const component of inspection.components) {
-        lines.push(`${component.kind}: ${component.name}`);
-        lines.push(`Component path: ${component.path}`);
+        lines.push(...componentPlanLines(component));
       }
       for (const entry of inspection.entries.filter((item) => /\.(?:Pipeline|BusinessService|ServiceAccount)$/i.test(item))) {
         lines.push(`Package entry: ${entry}`);
@@ -3134,8 +3146,7 @@ export function App() {
           lines.push(`Integration: ${[project.code, project.name, project.version].filter(Boolean).join(" | ")}`);
         }
         for (const component of internalArtifact.components) {
-          lines.push(`${component.kind}: ${component.name}`);
-          lines.push(`Component path: ${component.path}`);
+          lines.push(...componentPlanLines(component));
         }
       }
     }
@@ -3249,12 +3260,12 @@ export function App() {
   function inspectedActionInstallableArtifacts(files = actionArtifactFiles, inspections = actionArtifactInspections) {
     const artifacts: string[] = [];
     for (const file of files) {
-      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(file.name)) artifacts.push(file.name);
+      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(file.name)) artifacts.push(file.name);
     }
     for (const inspection of inspections) {
-      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(inspection.fileName)) artifacts.push(inspection.fileName);
+      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(inspection.fileName)) artifacts.push(inspection.fileName);
       for (const internalArtifact of inspection.internalArtifacts ?? []) {
-        if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(internalArtifact.name)) artifacts.push(internalArtifact.name);
+        if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(internalArtifact.name)) artifacts.push(internalArtifact.name);
       }
     }
     return dedupeArtifactNames(artifacts);
@@ -5071,7 +5082,9 @@ export function App() {
       .replace(/\b((?:new\s+|confirm\s+)?password\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
       .replace(/\b((?:pwd|pass)\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
       .replace(/\b(password\s+for\s+this\s+information,\s*)([^\n\r]+)/gi, "$1<REDACTED>")
+      .replace(/\b(password|pwd|pass|token|secret|credential)\s*=\s*(["'])(.*?)\2/gi, "$1=$2<REDACTED>$2")
       .replace(/(<[^>\n\r]*password[^>\n\r]*>)(.*?)(<\/[^>\n\r]+>)/gi, "$1<REDACTED>$3")
+      .replace(/-----BEGIN PGP [^-]+-----[\s\S]*?-----END PGP [^-]+-----/gi, "-----BEGIN PGP BLOCK-----\n<REDACTED>\n-----END PGP BLOCK-----")
       .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<REDACTED_EMAIL>")
       .replace(/(?:\+\d{1,3}[\s()-]*)?(?:\d[\s()-]*){8,}\d/g, "<REDACTED_PHONE>")
       .replace(/\/Users\/[^/\s]+/g, "/Users/<REDACTED_USER>")

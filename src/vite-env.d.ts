@@ -20,7 +20,7 @@ export type RepositoryInfo = {
 export type SelectedFile = {
   path: string;
   name: string;
-  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "other";
+  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "pgp" | "other";
 };
 
 export type ActionSourceDocument = {
@@ -59,7 +59,7 @@ export type FinalizeResult = {
 export type ArtifactInspection = {
   filePath: string;
   fileName: string;
-  kind: "iar" | "par" | "jar" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
   projects: Array<{
     code?: string;
     name?: string;
@@ -68,7 +68,7 @@ export type ArtifactInspection = {
     state?: string;
   }>;
   components: Array<{
-    kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
+    kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
     name: string;
     path: string;
   }>;
@@ -76,7 +76,7 @@ export type ArtifactInspection = {
   internalArtifacts?: Array<{
     path: string;
     name: string;
-    kind: "iar" | "par" | "jar" | "unsupported" | "error";
+    kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
     projects: Array<{
       code?: string;
       name?: string;
@@ -85,7 +85,7 @@ export type ArtifactInspection = {
       state?: string;
     }>;
     components: Array<{
-      kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
+      kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
       name: string;
       path: string;
     }>;

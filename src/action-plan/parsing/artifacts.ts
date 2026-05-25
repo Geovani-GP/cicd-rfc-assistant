@@ -32,7 +32,7 @@ export function cleanArtifactCandidate(value: string) {
 function isLikelyArtifactName(value: string) {
   const clean = cleanArtifactCandidate(value);
   if (!clean || /^https?:\/\//i.test(clean)) return false;
-  if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)\b/i.test(clean)) return true;
+  if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)\b/i.test(clean)) return true;
   if (/^[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}$/i.test(clean)) return true;
   if (clean.length < 10) return false;
   if (/^(stop schedule|start schedule|confirm|release|test|prod|development|regression|pre-prod|home|schedule)$/i.test(clean)) {
@@ -86,7 +86,7 @@ function cleanArtifactFileName(value: string) {
 
 function extractArtifactFileNames(value: string) {
   const matches: string[] = [];
-  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+?\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))(?=$|[^A-Z0-9_.-]|[A-Z]{2,}_)/gi;
+  const pattern = /(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+?\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc))(?=$|[^A-Z0-9_.-]|[A-Z]{2,}_)/gi;
   for (const match of value.matchAll(pattern)) {
     const candidate = match[1];
     if (!/^[A-Z0-9]/.test(candidate)) continue;
@@ -95,8 +95,8 @@ function extractArtifactFileNames(value: string) {
     const extension = extensionMatch?.[1]?.toLowerCase() ?? "";
     if (baseName.length > 140) continue;
     if (/\d\.\d[A-Z]/.test(baseName)) continue;
-    if (extension !== "wsdl" && extension !== "zip" && /[a-z]/.test(baseName)) continue;
-    if (extension !== "wsdl" && extension !== "csv" && !/[_.-]/.test(baseName)) continue;
+    if (extension !== "wsdl" && extension !== "zip" && extension !== "asc" && /[a-z]/.test(baseName)) continue;
+    if (extension !== "wsdl" && extension !== "csv" && extension !== "asc" && !/[_.-]/.test(baseName)) continue;
     if (extension === "csv" && !/[_.-]/.test(baseName) && !/^[A-Z0-9]{5,}$/.test(baseName)) continue;
     matches.push(candidate);
   }
@@ -107,7 +107,7 @@ function extractArtifactFileNamesFromLine(value: string) {
   const exact = extractArtifactFileNames(value);
   if (exact.length) return exact;
   const trimmed = value.trim();
-  const wholeToken = trimmed.match(/^([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|wsdl|csv|zip|jar|sql))$/);
+  const wholeToken = trimmed.match(/^([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc))$/);
   if (!wholeToken) return [];
   return [wholeToken[1]];
 }

@@ -24,7 +24,7 @@ type RepositoryInfo = {
 type SelectedFile = {
   path: string;
   name: string;
-  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "other";
+  kind: "integration" | "package" | "lookup" | "xml" | "sql" | "pgp" | "other";
 };
 
 type ActionSourceDocument = {
@@ -60,7 +60,7 @@ type InspectedProject = {
 };
 
 type InspectedComponent = {
-  kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount";
+  kind: "connection" | "schedule" | "dvm" | "pipeline" | "proxyService" | "businessService" | "serviceAccount" | "mftSource" | "mftTarget" | "mftTransfer" | "mftSecurity";
   name: string;
   path: string;
 };
@@ -68,7 +68,7 @@ type InspectedComponent = {
 type InternalArtifactInspection = {
   path: string;
   name: string;
-  kind: "iar" | "par" | "jar" | "unsupported" | "error";
+  kind: "iar" | "par" | "jar" | "zip" | "pgp" | "unsupported" | "error";
   projects: InspectedProject[];
   components: InspectedComponent[];
   entries: string[];
@@ -767,10 +767,11 @@ async function getRepositoryInfo(repoPath: string): Promise<RepositoryInfo> {
 function classifyFile(filePath: string): SelectedFile["kind"] {
   const ext = extname(filePath).toLowerCase();
   if (ext === ".iar") return "integration";
-  if (ext === ".par" || ext === ".zip") return "package";
+  if (ext === ".par" || ext === ".zip" || ext === ".jar") return "package";
   if (ext === ".csv") return "lookup";
   if (ext === ".xml" || ext === ".wsdl") return "xml";
   if (ext === ".sql") return "sql";
+  if (ext === ".asc") return "pgp";
   return "other";
 }
 
@@ -1289,13 +1290,66 @@ function inspectOsbJarBuffer(buffer: Buffer): ZipInspectionResult {
   };
 }
 
-function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "par"): ZipInspectionResult {
+function xmlAttribute(xml: string, attributeName: string) {
+  const match = xml.match(new RegExp(`\\b${attributeName}\\s*=\\s*["']([^"']+)["']`, "i"));
+  return match ? xmlUnescape(match[1]).trim() : "";
+}
+
+function mftComponentNameFromXml(buffer: Buffer, entry: ZipEntry) {
+  const xml = readZipEntry(buffer, entry).toString("utf8");
+  return xmlAttribute(xml, "name") || xmlAttribute(xml, "displayName") || baseNameWithoutExtension(entry.name);
+}
+
+function inspectMftZipComponents(buffer: Buffer, entries: ZipEntry[]): InspectedComponent[] {
+  const components: InspectedComponent[] = [];
+  for (const entry of entries.filter((item) => !item.name.endsWith("/"))) {
+    try {
+      if (/^mft\/source\/.+\.xml$/i.test(entry.name)) {
+        components.push({ kind: "mftSource", name: mftComponentNameFromXml(buffer, entry), path: entry.name });
+      } else if (/^mft\/target\/.+\.xml$/i.test(entry.name)) {
+        components.push({ kind: "mftTarget", name: mftComponentNameFromXml(buffer, entry), path: entry.name });
+      } else if (/^mft\/transfer\/.+\.xml$/i.test(entry.name)) {
+        components.push({ kind: "mftTransfer", name: mftComponentNameFromXml(buffer, entry), path: entry.name });
+      } else if (/^mft\/security\/.+\.xml$/i.test(entry.name)) {
+        const xml = readZipEntry(buffer, entry).toString("utf8");
+        const securityMatches = Array.from(xml.matchAll(/<\s*(PGP(?:Encryption|Decryption))\b[^>]*>/gi));
+        if (!securityMatches.length) {
+          components.push({ kind: "mftSecurity", name: baseNameWithoutExtension(entry.name), path: entry.name });
+        }
+        for (const match of securityMatches) {
+          const tagXml = match[0];
+          const tagName = match[1].replace(/([a-z])([A-Z])/g, "$1 $2");
+          const name = xmlAttribute(tagXml, "displayName") || xmlAttribute(tagXml, "name") || tagName;
+          components.push({ kind: "mftSecurity", name, path: entry.name });
+        }
+      }
+    } catch {
+      components.push({ kind: "mftSecurity", name: baseNameWithoutExtension(entry.name), path: entry.name });
+    }
+    if (components.length >= 120) break;
+  }
+  return components;
+}
+
+function isMftZip(entries: ZipEntry[]) {
+  return entries.some((entry) => /^mft\/(?:source|target|transfer|security)\//i.test(entry.name));
+}
+
+function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "par" | "zip"): ZipInspectionResult {
   const entries = listZipEntries(buffer);
   const projectEntries = entries.filter((entry) => entry.name.endsWith("ics_project_attributes.properties"));
   const visibleEntries = entries
     .map((entry) => entry.name)
     .filter((name) => !name.endsWith("/"))
     .slice(0, 120);
+  if (kind === "zip" && isMftZip(entries)) {
+    return {
+      projects: [],
+      components: inspectMftZipComponents(buffer, entries),
+      entries: visibleEntries,
+      internalArtifacts: []
+    };
+  }
   const projects = projectEntries.map((entry) => {
     const props = parseProperties(readZipEntry(buffer, entry).toString("utf8"));
     return {
@@ -1345,7 +1399,17 @@ function inspectZipBuffer(buffer: Buffer, artifactName: string, kind: "iar" | "p
 
 async function inspectArtifact(filePath: string) {
   const ext = extname(filePath).toLowerCase();
-  if (ext !== ".iar" && ext !== ".par" && ext !== ".jar") {
+  if (ext === ".asc") {
+    return {
+      filePath,
+      fileName: basename(filePath),
+      kind: "pgp",
+      projects: [],
+      components: [{ kind: "mftSecurity", name: "PGP key file", path: basename(filePath) }],
+      entries: ["PGP key material detected; content intentionally not displayed."]
+    };
+  }
+  if (ext !== ".iar" && ext !== ".par" && ext !== ".jar" && ext !== ".zip") {
     return {
       filePath,
       fileName: basename(filePath),
@@ -1369,7 +1433,7 @@ async function inspectArtifact(filePath: string) {
         internalArtifacts: inspected.internalArtifacts
       };
     }
-    const inspected = inspectZipBuffer(buffer, basename(filePath), ext === ".par" ? "par" : "iar");
+    const inspected = inspectZipBuffer(buffer, basename(filePath), ext === ".par" ? "par" : ext === ".zip" ? "zip" : "iar");
     return {
       filePath,
       fileName: basename(filePath),

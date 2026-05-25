@@ -3,7 +3,8 @@ import { asBullets } from "./common";
 import type { ManualActionPhase } from "./types";
 
 export function hasMftInstructions(text: string) {
-  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts|MFT server|MFT folders?|User Access|Folder Access Settings)\b/i.test(text);
+  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts|MFT server|MFT folders?|User Access|Folder Access Settings)\b/i.test(text) ||
+    /\bmft\/(?:source|target|transfer|security)\//i.test(text);
 }
 
 function quotedValues(value: string) {
@@ -76,6 +77,12 @@ function hasMftFolderAccessInstructions(text: string) {
 
 export function mftConfigurationItems(text: string) {
   const items: string[] = [];
+  for (const match of text.matchAll(/\bArtifact file:\s*([^\n\r]+\.(?:zip|asc))\b/gi)) {
+    items.push(`Artifact: ${cleanMftCandidate(match[1])}`);
+  }
+  for (const match of text.matchAll(/(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+?\.(?:zip|asc))(?=$|[^A-Z0-9_.-])/gi)) {
+    items.push(`Artifact: ${cleanMftCandidate(match[1])}`);
+  }
   for (const folder of mftFolderPaths(text)) items.push(`Folder: ${folder}`);
   for (const user of mftAccessUsers(text)) items.push(`User: ${user}`);
   const permissions = mftAccessPermissions(text);
@@ -88,6 +95,16 @@ export function mftConfigurationItems(text: string) {
   for (const match of transferMatches) {
     const value = cleanMftCandidate(match[1]);
     if (isLikelyMftTransferRuleName(value)) items.push(`Transfer Rule: ${value}`);
+  }
+
+  for (const match of text.matchAll(/\bSource:\s*([A-Z0-9_ -]{4,})/gi)) {
+    const value = cleanMftCandidate(match[1]);
+    if (isLikelyMftTargetName(value) || isLikelyMftTransferRuleName(value)) items.push(`Source: ${value}`);
+  }
+
+  for (const match of text.matchAll(/\bTarget:\s*([A-Z0-9_ -]{4,})/gi)) {
+    const value = cleanMftCandidate(match[1]);
+    if (isLikelyMftTargetName(value) || isLikelyMftTransferRuleName(value)) items.push(`Target: ${value}`);
   }
 
   for (const match of text.matchAll(/\bdestination\s+["“]?([^"\n”]+)["”]?/gi)) {
@@ -111,6 +128,12 @@ export function mftConfigurationItems(text: string) {
   return Array.from(new Map(items.map((item) => [item.toLowerCase().replace(/^processing action:\s*\d+\.\s*/i, "processing action: "), item.replace(/^Processing Action:\s*\d+\.\s*/i, "Processing Action: ")])).values());
 }
 
+function mftArtifacts(text: string) {
+  return mftConfigurationItems(text)
+    .filter((item) => item.startsWith("Artifact: "))
+    .map((item) => item.replace(/^Artifact:\s*/, ""));
+}
+
 function mftTransferRules(text: string) {
   return mftConfigurationItems(text)
     .filter((item) => item.startsWith("Transfer Rule: "))
@@ -123,6 +146,12 @@ function mftTargets(text: string) {
     .map((item) => item.replace(/^Target:\s*/, ""));
 }
 
+function mftSources(text: string) {
+  return mftConfigurationItems(text)
+    .filter((item) => item.startsWith("Source: "))
+    .map((item) => item.replace(/^Source:\s*/, ""));
+}
+
 function mftActions(text: string) {
   return mftConfigurationItems(text)
     .filter((item) => item.startsWith("Processing Action: "))
@@ -131,6 +160,13 @@ function mftActions(text: string) {
 
 function mftConsoleUrl(text: string) {
   return text.match(/https?:\/\/\S*?mftconsole\b/i)?.[0].replace(/[).,;]+$/g, "") ?? "";
+}
+
+function hasMftDeploymentInstructions(text: string) {
+  return /\b(?:MFT Transfers deploy|Transfers deploy|Deploy Transfer|import package|deploy package|configuration package)\b/i.test(text) ||
+    /\bArtifact file:\s*[^\n\r]+\.zip\b/i.test(text) ||
+    /\bArtifact file:\s*[^\n\r]+\.asc\b/i.test(text) ||
+    /\bmft\/(?:source|target|transfer|security)\//i.test(text);
 }
 
 function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
@@ -274,6 +310,147 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
   ];
 }
 
+function buildMftDeploymentPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const artifacts = mftArtifacts(text);
+  const zipArtifacts = artifacts.filter((item) => /\.zip$/i.test(item));
+  const pgpArtifacts = artifacts.filter((item) => /\.asc$/i.test(item));
+  const transferRules = mftTransferRules(text);
+  const sources = mftSources(text);
+  const targets = mftTargets(text);
+  const actions = mftActions(text);
+  const instance = text.match(/\b(?:Target instance|Instance):\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
+  const targetEnvironment = [selectedEnvironment, instance].filter(Boolean).join(" / ") || selectedEnvironment || "target MFT environment";
+  const artifactLines = artifacts.length ? asBullets(artifacts) : "- Confirm the MFT deployment package and key artifacts attached to the RFC.";
+  const transferLines = transferRules.length ? asBullets(transferRules) : "- Validate transfer rules imported from the MFT package.";
+  const sourceLines = sources.length ? asBullets(sources) : "- Validate sources imported from the MFT package.";
+  const targetLines = targets.length ? asBullets(targets) : "- Validate targets imported from the MFT package.";
+  const actionLines = actions.length ? asBullets(actions) : "- Validate security/processing actions imported from the MFT package.";
+  const pgpLines = pgpArtifacts.length ? asBullets(pgpArtifacts) : "- Confirm whether a PGP key artifact is required for this RFC.";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        `Validate access to the target MFT environment before starting the deployment: ${targetEnvironment}.`,
+        "Confirm the RFC is approved for the production MFT instance before importing or deploying any transfer configuration.",
+        "Confirm MFT admin access and any required credentials are available through the approved secure channel.",
+        "Do not capture or expose password values, private key contents, or passphrases in the Action Plan or RFC evidence.",
+        "",
+        "Deployment artifacts detected:",
+        artifactLines,
+        "",
+        "PGP/security artifact handling:",
+        pgpLines,
+        "Import or validate key material only through the approved MFT security/key management procedure."
+      ].join("\n")
+    },
+    {
+      id: "backup",
+      title: "Backup",
+      content: [
+        "Before importing the new package, capture current MFT configuration evidence.",
+        "",
+        "Capture/export if available:",
+        "- Current deployment status for matching transfer rules.",
+        "- Existing transfer rule definitions that will be replaced or updated.",
+        "- Existing source and target definitions that match the package content.",
+        "- Existing security/PGP action configuration and key aliases without exposing key material.",
+        "",
+        "If a matching configuration does not exist, document that backup is not applicable for that component."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "Import and deploy the MFT package.",
+        "",
+        "1. Login to the target MFT console using the approved admin account.",
+        "2. Navigate to the MFT design/import area for transfer configuration packages.",
+        "3. Import the approved ZIP package attached to this RFC:",
+        zipArtifacts.length ? zipArtifacts.map((item) => `   - ${item}`).join("\n") : "   - <MFT package ZIP>",
+        "4. Review the import summary before applying the change.",
+        "5. Import or validate required PGP/security key material using the approved secure procedure:",
+        pgpArtifacts.length ? pgpArtifacts.map((item) => `   - ${item}`).join("\n") : "   - <PGP key artifact, if applicable>",
+        "6. Validate or adjust imported sources:",
+        sourceLines,
+        "7. Validate or adjust imported targets:",
+        targetLines,
+        "8. Validate or adjust imported security/processing actions:",
+        actionLines,
+        "9. Save the imported configuration.",
+        "10. Deploy the imported transfer rule(s):",
+        transferLines,
+        "11. Capture the import/deploy confirmation evidence."
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: [
+        "Not applicable unless the imported transfer package includes a separate scheduled activation step.",
+        "",
+        "Confirm deployed transfer rule(s):",
+        transferLines
+      ].join("\n"),
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate the imported MFT configuration after deployment.",
+        "",
+        "1. Confirm the transfer rule(s) are deployed successfully:",
+        transferLines,
+        "",
+        "2. Confirm source definitions are present and configured:",
+        sourceLines,
+        "",
+        "3. Confirm target definitions are present and configured:",
+        targetLines,
+        "",
+        "4. Confirm security/PGP actions and key aliases are present without exposing private key material:",
+        actionLines,
+        "",
+        "5. Confirm there are no deployment or validation errors in the MFT console.",
+        "6. If business validation is required, coordinate a controlled file transfer test with the requester/owner."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If import, key validation, or deployment fails, stop execution and capture the error details.",
+        "",
+        "Rollback/contingency:",
+        "1. Undeploy the transfer rule(s) changed by this RFC, if they were partially deployed.",
+        "2. Restore the previous transfer/source/target/security configuration using the backup/export evidence.",
+        "3. Revalidate deployment status after restoration.",
+        "4. Escalate to the MFT technical owner before retrying with different package, endpoint, key, or credential values."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- MFT target environment and instance.",
+        "- Backup/export or current-state evidence.",
+        "- ZIP package import summary.",
+        "- PGP/security key validation evidence without key material or passphrases.",
+        "- Transfer rule deployment confirmation.",
+        "- Source, target, and security action validation.",
+        "- Final validation result.",
+        "- Rollback evidence, if applicable.",
+        "",
+        "Share final execution result with the RFC requester/customer."
+      ].join("\n")
+    }
+  ];
+}
+
 function buildMftImplementationSteps(text: string) {
   const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
   const targets = mftTargets(text);
@@ -332,6 +509,7 @@ function buildMftImplementationSteps(text: string) {
 
 export function buildMftConfigurationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   if (hasMftFolderAccessInstructions(text)) return buildMftFolderAccessPlan(text, selectedEnvironment);
+  if (hasMftDeploymentInstructions(text)) return buildMftDeploymentPlan(text, selectedEnvironment);
   const transferRule = mftTransferRules(text)[0] ?? "<Transfer rule>";
   const targets = mftTargets(text);
   const actions = mftActions(text);
@@ -462,6 +640,40 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
       users.length ? `Users:\n${asBullets(users)}` : "",
       "",
       permissions.length ? `Permissions:\n${asBullets(permissions)}` : ""
+    ].filter(Boolean).join("\n");
+  }
+  if (hasMftDeploymentInstructions(instructions)) {
+    const artifacts = mftArtifacts(instructions);
+    const transferRules = mftTransferRules(instructions);
+    const sources = mftSources(instructions);
+    const targets = mftTargets(instructions);
+    const actions = mftActions(instructions);
+    return [
+      "Environment:",
+      `- MFT Instance: ${instanceName}`,
+      "",
+      "Estimated Duration:",
+      "30-45 minutes",
+      "",
+      "Impact:",
+      "- MFT transfer configuration will be imported/deployed in the target environment.",
+      "- File transfer impact depends on the deployed transfer rules and should be coordinated with the requester/owner.",
+      "",
+      "Scope:",
+      `- ${environmentName} environment only`,
+      "",
+      "Expected Outcome:",
+      "MFT package imported, required security/key material validated, and transfer rules deployed successfully.",
+      "",
+      artifacts.length ? `Artifacts:\n${asBullets(artifacts)}` : "",
+      "",
+      transferRules.length ? `Transfer Rules:\n${asBullets(transferRules)}` : "",
+      "",
+      sources.length ? `Sources:\n${asBullets(sources)}` : "",
+      "",
+      targets.length ? `Targets:\n${asBullets(targets)}` : "",
+      "",
+      actions.length ? `Security / Processing Actions:\n${asBullets(actions)}` : ""
     ].filter(Boolean).join("\n");
   }
   const transferRule = mftTransferRules(instructions)[0] ?? "<Transfer rule>";
