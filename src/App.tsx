@@ -3077,6 +3077,18 @@ export function App() {
     return match?.[1]?.replace(/_/g, ".") ?? undefined;
   }
 
+  function dedupeArtifactNames(items: string[]) {
+    return Array.from(new Map(items.filter(Boolean).map((item) => [normalizeArtifactCompareKey(item), item])).values());
+  }
+
+  function isWeakArtifactEntry(value: string) {
+    const clean = value.trim();
+    if (!clean) return true;
+    if (/^<?artifact>?$/i.test(clean)) return true;
+    if (/^<?(?:artifact|component|package|file)\s*\d*>?$/i.test(clean)) return true;
+    return false;
+  }
+
   function artifactInspectionTextForPlan(inspections = actionArtifactInspections) {
     const lines: string[] = [];
     for (const inspection of inspections) {
@@ -3163,12 +3175,12 @@ export function App() {
     return Array.from(new Map(detected.map((item) => [normalizeArtifactCompareKey(item), item])).values());
   }
 
-  function actionLoadedArtifactItems() {
+  function actionLoadedArtifactItems(files = actionArtifactFiles, inspections = actionArtifactInspections) {
     const items: Array<{ name: string; version?: string; source: string }> = [];
-    for (const file of actionArtifactFiles) {
+    for (const file of files) {
       items.push({ name: artifactDisplayName(file.name), version: artifactVersionFromName(file.name), source: file.name });
     }
-    for (const inspection of actionArtifactInspections) {
+    for (const inspection of inspections) {
       for (const project of inspection.projects) {
         if (project.code) items.push({ name: project.code, version: project.version, source: inspection.fileName });
         if (project.name) items.push({ name: project.name, version: project.version, source: inspection.fileName });
@@ -3188,6 +3200,49 @@ export function App() {
       }
     }
     return Array.from(new Map(items.map((item) => [`${normalizeArtifactCompareKey(item.name)}-${item.source}`, item])).values());
+  }
+
+  function inspectedActionInstallableArtifacts(files = actionArtifactFiles, inspections = actionArtifactInspections) {
+    const artifacts: string[] = [];
+    for (const file of files) {
+      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(file.name)) artifacts.push(file.name);
+    }
+    for (const inspection of inspections) {
+      if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(inspection.fileName)) artifacts.push(inspection.fileName);
+      for (const internalArtifact of inspection.internalArtifacts ?? []) {
+        if (/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql)$/i.test(internalArtifact.name)) artifacts.push(internalArtifact.name);
+      }
+    }
+    return dedupeArtifactNames(artifacts);
+  }
+
+  function inspectedActionComponentNames(files = actionArtifactFiles, inspections = actionArtifactInspections) {
+    const names: string[] = [];
+    for (const item of actionLoadedArtifactItems(files, inspections)) {
+      names.push(item.name);
+    }
+    return dedupeArtifactNames(names);
+  }
+
+  function artifactTextCanBeFedFromInspection(value: string) {
+    const lines = artifactLinesFromText(value);
+    return !value.trim() || !lines.length || lines.every(isWeakArtifactEntry);
+  }
+
+  function repairedArtifactsForActionPlan(candidates: string[]) {
+    const inspectedArtifacts = inspectedActionInstallableArtifacts();
+    if (!inspectedArtifacts.length) return candidates;
+    if (!candidates.length || candidates.every(isWeakArtifactEntry)) return inspectedArtifacts;
+
+    const repaired = candidates.flatMap((candidate) => {
+      const candidateKey = normalizeArtifactCompareKey(candidate);
+      const match = inspectedArtifacts.find((artifact) => {
+        const artifactKey = normalizeArtifactCompareKey(artifact);
+        return artifactKeysMatch(candidateKey, artifactKey);
+      });
+      return match ? [match] : [];
+    });
+    return repaired.length ? dedupeArtifactNames([...repaired, ...inspectedArtifacts]) : inspectedArtifacts;
   }
 
   function actionArtifactComparisonRows() {
@@ -4255,6 +4310,10 @@ export function App() {
       for (const file of allowed) byPath.set(file.path, file);
       return Array.from(byPath.values());
     });
+    setArtifactText((current) => {
+      if (!artifactTextCanBeFedFromInspection(current)) return current;
+      return dedupeArtifactNames([...artifactLinesFromText(current).filter((item) => !isWeakArtifactEntry(item)), ...allowed.map((file) => file.name)]).join("\n");
+    });
     const inspectablePaths = allowed.filter(isInspectableArtifact).map((file) => file.path);
     if (inspectablePaths.length) {
       setExpandedActionArtifactFiles((current) => Array.from(new Set([...current, ...inspectablePaths])));
@@ -4716,6 +4775,11 @@ export function App() {
       for (const item of result ?? []) byPath.set(item.filePath, item);
       return Array.from(byPath.values());
     });
+    setArtifactText((current) => {
+      if (!artifactTextCanBeFedFromInspection(current)) return current;
+      const inspectedArtifacts = inspectedActionInstallableArtifacts([], result ?? []);
+      return inspectedArtifacts.length ? inspectedArtifacts.join("\n") : current;
+    });
   }
 
   async function refreshSummary() {
@@ -4825,19 +4889,25 @@ export function App() {
             ? sourceInstallableArtifacts
             : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }))
         : [];
-    const artifacts = enteredArtifacts.length
+    const rawArtifacts = enteredArtifacts.length
       ? enteredInstallableArtifacts.length
         ? enteredInstallableArtifacts
         : sourceHasInstallableArtifacts
           ? sourceInstallableArtifacts
           : enteredArtifacts
       : detectedManualArtifacts;
+    const artifacts = actionMethod === "manual" ? rawArtifacts : repairedArtifactsForActionPlan(rawArtifacts);
     const repoName = selectedRepo?.name ?? "<Repository>";
     const branchName = rfc.trim() || "<RFC>";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <artifact>";
     const firstArtifact = artifacts[0] ?? "<artifact>";
     const productName = actionProduct.trim() || "<Product>";
-    const componentNames = artifacts.length ? artifacts.map((item) => item.replace(/\.[^.]+$/, "")) : [firstArtifact.replace(/\.[^.]+$/, "")];
+    const inspectedComponents = actionMethod === "manual" ? [] : inspectedActionComponentNames();
+    const componentNames = inspectedComponents.length
+      ? inspectedComponents
+      : artifacts.length
+        ? artifacts.map((item) => artifactDisplayName(item))
+        : [artifactDisplayName(firstArtifact)];
     const componentLines = componentNames.map((item) => `- ${item}`).join("\n");
     const oicComponentBlock = productName === "OIC" ? `\nLookup/component(s):\n${componentLines}` : "";
     const environmentName = actionEnvironment.trim() || "<Environment>";
