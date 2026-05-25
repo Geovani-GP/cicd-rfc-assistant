@@ -4511,15 +4511,20 @@ export function App() {
       actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
     const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
     const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
+    const inspectedInstallableArtifacts = actionProduct === "OIC"
+      ? filterOicArtifacts(inspectedActionInstallableArtifacts())
+      : [];
     const oicInstallableArtifacts = actionProduct === "OIC"
-      ? Array.from(
-          new Map(
-            [...enteredInstallableArtifacts, ...sourceInstallableArtifacts].map((item) => [
-              normalizeArtifactCompareKey(item),
-              item
-            ])
-          ).values()
-        )
+      ? inspectedInstallableArtifacts.length
+        ? inspectedInstallableArtifacts
+        : Array.from(
+            new Map(
+              [...enteredInstallableArtifacts, ...sourceInstallableArtifacts].map((item) => [
+                normalizeArtifactCompareKey(item),
+                item
+              ])
+            ).values()
+          )
       : enteredInstallableArtifacts;
     const hasOicInstallableArtifacts = actionProduct === "OIC" && oicInstallableArtifacts.length > 0;
     const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
@@ -4540,6 +4545,8 @@ export function App() {
           ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : databaseItems.length
           ? databaseItems
+        : hasOicInstallableArtifacts
+          ? oicInstallableArtifacts
         : sourceInstallableArtifacts.length
           ? sourceInstallableArtifacts
         : oicConfigurationItems.length
