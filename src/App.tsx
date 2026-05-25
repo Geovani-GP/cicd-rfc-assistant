@@ -6209,6 +6209,10 @@ export function App() {
                   </select>
                 </label>
               )}
+              <label className="action-instance-field">
+                {a.instance}
+                <input value={actionInstance} onChange={(event) => setActionInstance(event.target.value)} />
+              </label>
               <label className="action-environment-field">
                 {a.environment}
                 <select value={actionEnvironment} onChange={(event) => handleActionEnvironmentChange(event.target.value)}>
@@ -6233,10 +6237,6 @@ export function App() {
                       </option>
                     ))}
                 </select>
-              </label>
-              <label className="action-instance-field">
-                  {a.instance}
-                  <input value={actionInstance} onChange={(event) => setActionInstance(event.target.value)} />
               </label>
               <label className="action-activity-field">
                 {a.activity}
