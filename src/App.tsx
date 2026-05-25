@@ -128,6 +128,101 @@ const executionModeStorageKey = "rfcExecutionMode";
 const customTemplatesStorageKey = "customActionTemplates";
 const maxActionDocumentTextLength = 120000;
 
+type KnowledgeRulesCatalog = NonNullable<RuntimeKnowledgeCatalog["rules"]>;
+type KnowledgeRuleProduct = KnowledgeRulesCatalog["products"][number];
+
+function runtimeProductMatchesRule(productName: string, rule: KnowledgeRuleProduct) {
+  const normalizedProduct = productName.trim().toLowerCase();
+  return normalizedProduct === rule.productName.toLowerCase() ||
+    normalizedProduct === rule.id.toLowerCase() ||
+    (normalizedProduct === "base de datos" && rule.id === "database");
+}
+
+function externalRegexWithGlobal(pattern: string, flags = "i") {
+  const cleanFlags = Array.from(new Set(`${flags}g`.replace(/[^dgimsuvy]/g, "").split(""))).join("");
+  return new RegExp(pattern, cleanFlags);
+}
+
+function firstExternalCapturedValue(match: RegExpMatchArray) {
+  return match.slice(1).find((value) => value?.trim())?.trim() ?? match[0]?.trim() ?? "";
+}
+
+function normalizeExternalRuleValues(values: string[], normalize: string[] = []) {
+  const requireUnderscore = normalize.includes("require-underscore");
+  const splitPipeComma = normalize.includes("split-pipe-comma");
+  const splitSlashPipeComma = normalize.includes("split-slash-pipe-comma");
+  const uppercaseKey = normalize.includes("uppercase-key");
+  const candidates = splitSlashPipeComma
+    ? values.flatMap((value) => value.split(/\s*\/\s*|\s*\|\s*|,\s*/))
+    : splitPipeComma
+      ? values.flatMap((value) => value.split(/\s*\|\s*|,\s*/))
+      : values;
+  const byKey = new Map<string, string>();
+  for (const candidate of candidates) {
+    const value = candidate.replace(/^\d+\.\s*/, "").replace(/\s+/g, " ").trim();
+    if (!value || (requireUnderscore && !value.includes("_"))) continue;
+    const key = uppercaseKey ? value.toUpperCase() : value.toLowerCase();
+    byKey.set(key, value);
+  }
+  return Array.from(byKey.values()).slice(0, 20);
+}
+
+function titledPermission(value: string) {
+  const upper = value.toUpperCase();
+  if (upper === "READ") return "Read";
+  if (upper === "WRITE") return "Write";
+  if (upper === "LIST") return "List";
+  if (upper === "DELETE") return "Delete";
+  return value;
+}
+
+function labelExternalConfigurationItems(productName: string, extracted: Array<{ target: string; values: string[] }>) {
+  const items: string[] = [];
+  const normalizedProduct = productName.trim().toLowerCase();
+  for (const item of extracted) {
+    if (item.target === "configurationItems.connections") {
+      for (const value of item.values) items.push(`Connection: ${value}`);
+    } else if (item.target === "configurationItems.lookups") {
+      for (const value of item.values) items.push(`Lookup: ${value}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.folders") {
+      for (const value of item.values) items.push(`Folder: ${value}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.users") {
+      for (const value of item.values) items.push(`User: ${value}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.permissions") {
+      if (item.values.length) items.push(`Permissions: ${item.values.map(titledPermission).join("/")}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.transferRules") {
+      for (const value of item.values) items.push(`Transfer Rule: ${value}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.destinations") {
+      for (const value of item.values) items.push(`Target: ${value}`);
+    } else if (normalizedProduct === "mft" && item.target === "configurationItems.processingActions") {
+      for (const value of item.values) items.push(`Processing Action: ${value}`);
+    }
+  }
+  return Array.from(new Map(items.map((item) => [item.toLowerCase(), item])).values());
+}
+
+function externalConfigurationItemsForProduct(productName: string, text: string, rulesCatalog?: KnowledgeRulesCatalog) {
+  if (!rulesCatalog || !["OIC", "MFT"].includes(productName)) return null;
+  const selectedRule = rulesCatalog.products.find((rule) => runtimeProductMatchesRule(productName, rule));
+  if (!selectedRule) return null;
+  const extracted = selectedRule.extractorRules.map((extractor) => {
+    const values: string[] = [];
+    for (const pattern of extractor.patterns) {
+      try {
+        const regex = externalRegexWithGlobal(pattern.pattern, pattern.flags || "i");
+        for (const match of text.matchAll(regex)) values.push(firstExternalCapturedValue(match));
+      } catch {
+        // Invalid external patterns are ignored here so the embedded parser can remain the fallback.
+      }
+    }
+    return {
+      target: extractor.target,
+      values: normalizeExternalRuleValues(values, extractor.normalize)
+    };
+  }).filter((item) => item.values.length);
+  return labelExternalConfigurationItems(productName, extracted);
+}
+
 function createClientId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -2507,6 +2602,11 @@ export function App() {
     () => knowledgeCatalog.templates as ActionTemplateOption[],
     [knowledgeCatalog.templates]
   );
+  function runtimeConfigurationItemsForProduct(productName: string, text: string) {
+    const externalItems = externalConfigurationItemsForProduct(productName, text, knowledgeCatalog.rules);
+    if (externalItems?.length) return externalItems;
+    return configurationItemsForProduct(productName, text);
+  }
   const customTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => customActionTemplates
       .filter((template) => template.active !== false)
@@ -3019,7 +3119,7 @@ export function App() {
 
   function actionArtifactComparisonRows() {
     const sourceText = manualDetectionSourceText();
-    if (actionProduct === "OIC" && configurationItemsForProduct(actionProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
+    if (actionProduct === "OIC" && runtimeConfigurationItemsForProduct(actionProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
     const documentItems = actionDocumentArtifactNames();
@@ -4124,7 +4224,7 @@ export function App() {
       const detectedArtifacts = installableArtifacts.length
         ? installableArtifacts
         : isMftManualPlan(actionProduct, text)
-          ? configurationItemsForProduct(actionProduct, text)
+          ? runtimeConfigurationItemsForProduct(actionProduct, text)
           : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
       if (detectedArtifacts.length) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
@@ -4206,7 +4306,7 @@ export function App() {
         )
       : enteredInstallableArtifacts;
     const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
-    const oicConfigurationItems = actionProduct === "OIC" ? configurationItemsForProduct(actionProduct, sourceText) : [];
+    const oicConfigurationItems = actionProduct === "OIC" ? runtimeConfigurationItemsForProduct(actionProduct, sourceText) : [];
     const isOdiPlan = isOdiManualPlan(actionProduct, sourceText);
     const isOsbPlan = isOsbManualPlan(actionProduct, sourceText);
     const isJavaPlan = isJavaManualPlan(actionProduct, sourceText);
@@ -4214,13 +4314,13 @@ export function App() {
     const detectedArtifacts = enteredArtifacts.length
       ? []
       : isMftManualPlan(actionProduct, sourceText)
-        ? configurationItemsForProduct(actionProduct, sourceText)
+        ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isOdiPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isOsbPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isJavaPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : databaseItems.length
           ? databaseItems
         : oicConfigurationItems.length
@@ -4234,11 +4334,11 @@ export function App() {
         : oicConfigurationItems.length
           ? oicConfigurationItems
         : isOdiPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isOsbPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isJavaPlan
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : oicInstallableArtifacts.length
         ? oicInstallableArtifacts
         : sourceHasInstallableArtifacts
@@ -4605,7 +4705,7 @@ export function App() {
     const detectedManualArtifacts =
       actionMethod === "manual" && !enteredArtifacts.length
         ? isMftManualPlan(actionProduct, sourceText)
-          ? configurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
           : sourceInstallableArtifacts.length
             ? sourceInstallableArtifacts
             : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }))
@@ -4696,20 +4796,7 @@ export function App() {
   }
 
   function normalizedDiagnosticValues(values: string[], normalize: string[] = []) {
-    const requireUnderscore = normalize.includes("require-underscore");
-    const splitPipeComma = normalize.includes("split-pipe-comma");
-    const uppercaseKey = normalize.includes("uppercase-key");
-    const candidates = splitPipeComma
-      ? values.flatMap((value) => value.split(/\s*\|\s*|,\s*/))
-      : values;
-    const byKey = new Map<string, string>();
-    for (const candidate of candidates) {
-      const value = candidate.replace(/^\d+\.\s*/, "").replace(/\s+/g, " ").trim();
-      if (!value || (requireUnderscore && !value.includes("_"))) continue;
-      const key = uppercaseKey ? value.toUpperCase() : value.toLowerCase();
-      byKey.set(key, value);
-    }
-    return Array.from(byKey.values()).slice(0, 20);
+    return normalizeExternalRuleValues(values, normalize);
   }
 
   function productMatchesRule(productName: string, rule: NonNullable<RuntimeKnowledgeCatalog["rules"]>["products"][number]) {
