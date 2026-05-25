@@ -137,12 +137,33 @@ const maxActionDocumentTextLength = 120000;
 
 type KnowledgeRulesCatalog = NonNullable<RuntimeKnowledgeCatalog["rules"]>;
 type KnowledgeRuleProduct = KnowledgeRulesCatalog["products"][number];
+type KnowledgeDetectorResult = { product: KnowledgeRuleProduct; score: number; matches: string[] };
 
 function runtimeProductMatchesRule(productName: string, rule: KnowledgeRuleProduct) {
   const normalizedProduct = productName.trim().toLowerCase();
   return normalizedProduct === rule.productName.toLowerCase() ||
     normalizedProduct === rule.id.toLowerCase() ||
     (normalizedProduct === "base de datos" && rule.id === "database");
+}
+
+function detectKnowledgeRuleProducts(sourceText: string, rulesCatalog?: KnowledgeRulesCatalog): KnowledgeDetectorResult[] {
+  if (!rulesCatalog || !sourceText.trim()) return [];
+  return rulesCatalog.products.map((product) => {
+    let score = 0;
+    const matches: string[] = [];
+    for (const detector of product.detectorRules) {
+      try {
+        const regex = new RegExp(detector.pattern, detector.flags || "i");
+        if (regex.test(sourceText)) {
+          score += detector.weight ?? 1;
+          matches.push(detector.id);
+        }
+      } catch {
+        matches.push(`${detector.id}: invalid pattern`);
+      }
+    }
+    return { product, score, matches };
+  }).sort((left, right) => right.score - left.score);
 }
 
 function externalRegexWithGlobal(pattern: string, flags = "i") {
@@ -2723,6 +2744,16 @@ export function App() {
     const phases = buildManualPhasesForProduct(productName, text, environment);
     return applyExternalPhaseModel(phases, externalPhaseModelForProduct(productName, knowledgeCatalog.rules));
   }
+  function effectiveActionProductForText(text: string) {
+    if (actionTemplateId !== "auto") return actionProduct;
+    const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
+    const top = detectorResults[0];
+    if (!top || top.score <= 0) return actionProduct;
+    const selected = detectorResults.find((item) => runtimeProductMatchesRule(actionProduct, item.product));
+    const selectedScore = selected?.score ?? 0;
+    if (selectedScore > 0) return actionProduct;
+    return top.product.productName;
+  }
   const customTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => customActionTemplates
       .filter((template) => template.active !== false)
@@ -3212,7 +3243,7 @@ export function App() {
       ? `${documentText}\n\nRFC complementary instructions:\n${editedText}`
       : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
-    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT") {
+    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT" || actionProduct === "ODI Studio") {
       const loadedArtifactText = actionProduct === "MFT" ? "" : actionArtifactFiles.map((file) => file.name).join("\n");
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
       return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
@@ -3233,7 +3264,7 @@ export function App() {
     return `Selected environment ${selected} differs from instance suffix ${actionInstance.trim()} -> ${inferred}; using ${inferred}.`;
   }
 
-  function manualPhaseSourceKeyFor(text: string, environment = effectiveActionEnvironment(), product = actionProduct) {
+  function manualPhaseSourceKeyFor(text: string, environment = effectiveActionEnvironment(), product = effectiveActionProductForText(text)) {
     return [product || "<product>", environment || "<environment>", text.length, stableTextHash(text)].join("|");
   }
 
@@ -3244,15 +3275,16 @@ export function App() {
   function actionDocumentArtifactNames() {
     const entered = artifactLinesFromText(artifactText);
     const sourceText = manualDetectionSourceText();
-    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
     const filterOicArtifacts = (items: string[]) =>
-      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
     const enteredFiltered = filterOicLookupArtifacts(entered);
     const enteredInstallable = filterOicArtifacts(installableArtifactNames(artifactText));
     const installableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
-    const combinedInstallable = actionProduct === "OIC"
+    const combinedInstallable = effectiveProduct === "OIC"
       ? Array.from(
           new Map(
             [...enteredInstallable, ...installableArtifacts].map((item) => [
@@ -3376,10 +3408,11 @@ export function App() {
 
   function actionArtifactComparisonRows() {
     const sourceText = manualDetectionSourceText();
-    if (actionProduct === "OIC" && runtimeConfigurationItemsForProduct(actionProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    if (effectiveProduct === "OIC" && runtimeConfigurationItemsForProduct(effectiveProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
-    const documentItems = actionProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
+    const documentItems = effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
     const loadedItems = actionLoadedInstallableArtifactItems();
     const matchedKeys = new Set<string>();
     const rows = documentItems.map((documentName) => {
@@ -4489,11 +4522,12 @@ export function App() {
   function applyManualEnvironment(environment: string, text = manualDetectionSourceText()) {
     if (!text.trim()) return;
     const resolvedEnvironment = environmentFromInstanceSuffix(actionInstance) || environment;
+    const effectiveProduct = effectiveActionProductForText(text);
     const available = availableEnvironmentsFromDocument(text);
     setAvailableDocumentEnvironments(available);
-    const phases = runtimeManualPhasesForProduct(actionProduct, text, resolvedEnvironment);
+    const phases = runtimeManualPhasesForProduct(effectiveProduct, text, resolvedEnvironment);
     setManualPhases(phases);
-    setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, resolvedEnvironment));
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, resolvedEnvironment, effectiveProduct));
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     const mismatchNote = actionEnvironmentMismatchNote(environment);
@@ -4516,11 +4550,12 @@ export function App() {
     setManualSourceText(text);
     if (text) {
       const environment = effectiveActionEnvironment();
+      const effectiveProduct = effectiveActionProductForText(text);
       const available = availableEnvironmentsFromDocument(text);
       setAvailableDocumentEnvironments(available);
-      const phases = runtimeManualPhasesForProduct(actionProduct, text, environment);
+      const phases = runtimeManualPhasesForProduct(effectiveProduct, text, environment);
       setManualPhases(phases);
-      setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment));
+      setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment, effectiveProduct));
       setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
       setManualPhaseIndex(0);
       const operational = operationalIm090Text(text);
@@ -4532,8 +4567,8 @@ export function App() {
       const installableArtifacts = installableArtifactNames(artifactDetectionText);
       const detectedArtifacts = installableArtifacts.length
         ? installableArtifacts
-        : isMftManualPlan(actionProduct, text)
-          ? runtimeConfigurationItemsForProduct(actionProduct, text)
+        : isMftManualPlan(effectiveProduct, text)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, text)
           : extractArtifactNames(artifactSection || operational, { includeComponentNames: true });
       if (detectedArtifacts.length) setArtifactText(detectedArtifacts.join("\n"));
       setManualReviewOpen(true);
@@ -4583,11 +4618,12 @@ export function App() {
       setManualReviewOpen(true);
       return;
     }
-    const phases = runtimeManualPhasesForProduct(actionProduct, sourceText, environment);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const phases = runtimeManualPhasesForProduct(effectiveProduct, sourceText, environment);
     const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
-    setManualPhaseSourceKey(manualPhaseSourceKeyFor(sourceText, environment));
+    setManualPhaseSourceKey(manualPhaseSourceKeyFor(sourceText, environment, effectiveProduct));
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
@@ -4603,18 +4639,19 @@ export function App() {
 
   function buildManualActionPlan(phases: ManualActionPhase[]) {
     const sourceText = manualDetectionSourceText();
+    const effectiveProduct = effectiveActionProductForText(sourceText);
     const enteredArtifacts = artifactLinesFromText(artifactText);
-    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
     const filterOicArtifacts = (items: string[]) =>
-      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
     const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
     const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
-    const inspectedInstallableArtifacts = actionProduct === "OIC"
+    const inspectedInstallableArtifacts = effectiveProduct === "OIC"
       ? filterOicArtifacts(inspectedActionInstallableArtifacts())
       : [];
-    const oicInstallableArtifacts = actionProduct === "OIC"
+    const oicInstallableArtifacts = effectiveProduct === "OIC"
       ? inspectedInstallableArtifacts.length
         ? inspectedInstallableArtifacts
         : Array.from(
@@ -4626,23 +4663,23 @@ export function App() {
             ).values()
           )
       : enteredInstallableArtifacts;
-    const hasOicInstallableArtifacts = actionProduct === "OIC" && oicInstallableArtifacts.length > 0;
-    const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
-    const oicConfigurationItems = actionProduct === "OIC" && !hasOicInstallableArtifacts ? runtimeConfigurationItemsForProduct(actionProduct, sourceText) : [];
-    const isOdiPlan = isOdiManualPlan(actionProduct, sourceText);
-    const isOsbPlan = isOsbManualPlan(actionProduct, sourceText);
-    const isJavaPlan = isJavaManualPlan(actionProduct, sourceText);
-    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && !isOdiPlan && !isOsbPlan && !isJavaPlan && sourceInstallableArtifacts.length > 0;
+    const hasOicInstallableArtifacts = effectiveProduct === "OIC" && oicInstallableArtifacts.length > 0;
+    const databaseItems = effectiveProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
+    const oicConfigurationItems = effectiveProduct === "OIC" && !hasOicInstallableArtifacts ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText) : [];
+    const isOdiPlan = isOdiManualPlan(effectiveProduct, sourceText);
+    const isOsbPlan = isOsbManualPlan(effectiveProduct, sourceText);
+    const isJavaPlan = isJavaManualPlan(effectiveProduct, sourceText);
+    const sourceHasInstallableArtifacts = effectiveProduct !== "MFT" && !isOdiPlan && !isOsbPlan && !isJavaPlan && sourceInstallableArtifacts.length > 0;
     const detectedArtifacts = enteredArtifacts.length
       ? []
-      : isMftManualPlan(actionProduct, sourceText)
-        ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+      : isMftManualPlan(effectiveProduct, sourceText)
+        ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : isOdiPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : isOsbPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : isJavaPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : databaseItems.length
           ? databaseItems
         : hasOicInstallableArtifacts
@@ -4651,34 +4688,34 @@ export function App() {
           ? sourceInstallableArtifacts
         : oicConfigurationItems.length
           ? oicConfigurationItems
-          : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
+        : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
     const artifacts = enteredArtifacts.length
       ? databaseItems.length
         ? databaseItems
         : oicInstallableArtifacts.length
           ? oicInstallableArtifacts
         : isOdiPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : isOsbPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : isJavaPlan
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
         : sourceHasInstallableArtifacts
           ? sourceInstallableArtifacts
         : oicConfigurationItems.length
           ? oicConfigurationItems
           : enteredArtifacts
       : detectedArtifacts;
-    const isMftPlan = isMftManualPlan(actionProduct, sourceText);
+    const isMftPlan = isMftManualPlan(effectiveProduct, sourceText);
     const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "Configuration item(s)" : "Artifact(s) / component(s)";
     const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const validationBlock = isMftPlan ? "" : actionArtifactValidationBlock();
     const productName = isJavaPlan
       ? "JAVA / WebLogic"
-      : actionProduct === "Base de datos"
+      : effectiveProduct === "Base de datos"
       ? "Oracle Database"
-      : actionProduct.trim() || "Oracle Integration Cloud";
+      : effectiveProduct.trim() || "Oracle Integration Cloud";
     const environmentName = effectiveActionEnvironment().trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
     const isMftTransferImportPlan = isMftPlan && (/\bdo\s+not\s+deploy\b|\bimport\s+only\b|\bjust\s+need\s+to\s+import\b|\bArtifact file:\s*[^\n\r]+\.zip\b|\bmft\/transfer\//i.test(sourceText));
@@ -4693,8 +4730,8 @@ export function App() {
         : "<IM090 / instructions document>"
     );
     const metadata = manualPlanMetadataForProduct(productName, environmentName, instanceName, sourceText);
-    const normalizePhaseOutput = !isMftPlan && !isOdiPlan && !isOsbPlan && !isJavaPlan && !isDatabaseManualPlan(actionProduct, sourceText);
-    const sourceDocumentLine = (actionProduct === "Base de datos" || isOdiPlan || isOsbPlan || isJavaPlan) && !actionSourceDocument
+    const normalizePhaseOutput = !isMftPlan && !isOdiPlan && !isOsbPlan && !isJavaPlan && !isDatabaseManualPlan(effectiveProduct, sourceText);
+    const sourceDocumentLine = (effectiveProduct === "Base de datos" || isOdiPlan || isOsbPlan || isJavaPlan) && !actionSourceDocument
       ? ""
       : `Source document: ${sourceDocumentName}\n`;
     const phaseBlocks = phases.map((phase, index) => {
@@ -4713,10 +4750,11 @@ export function App() {
   function acceptManualReview() {
     const sourceText = manualDetectionSourceText();
     const environment = effectiveActionEnvironment();
-    const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const currentSourceKey = manualPhaseSourceKeyFor(sourceText, environment, effectiveProduct);
     const reviewedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
-      : runtimeManualPhasesForProduct(actionProduct, sourceText, environment);
+      : runtimeManualPhasesForProduct(effectiveProduct, sourceText, environment);
     const disabledKeys = manualPhaseSourceKey === currentSourceKey ? manualPhaseDisabledKeys : manualPhaseDisabledKeysForDefaults(reviewedPhases);
     const enabledPhases = reviewedPhases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
     if (!enabledPhases.length) {
@@ -5026,19 +5064,20 @@ export function App() {
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
     const sourceText = manualDetectionSourceText();
-    const ignoreOicLookups = actionProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
     const filterOicArtifacts = (items: string[]) =>
-      actionProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
     const enteredArtifacts = artifactLinesFromText(artifactText);
     const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
     const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
-    const sourceHasInstallableArtifacts = actionProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
+    const sourceHasInstallableArtifacts = effectiveProduct !== "MFT" && sourceInstallableArtifacts.length > 0;
     const detectedManualArtifacts =
       actionMethod === "manual" && !enteredArtifacts.length
-        ? isMftManualPlan(actionProduct, sourceText)
-          ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
+        ? isMftManualPlan(effectiveProduct, sourceText)
+          ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText)
           : sourceInstallableArtifacts.length
             ? sourceInstallableArtifacts
             : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }))
@@ -5050,12 +5089,12 @@ export function App() {
           ? sourceInstallableArtifacts
           : enteredArtifacts
       : detectedManualArtifacts;
-    const artifacts = actionProduct === "OIC" ? repairedArtifactsForActionPlan(rawArtifacts) : rawArtifacts;
+    const artifacts = effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(rawArtifacts) : rawArtifacts;
     const repoName = selectedRepo?.name ?? "<Repository>";
     const branchName = rfc.trim() || "<RFC>";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <artifact>";
     const firstArtifact = artifacts[0] ?? "<artifact>";
-    const productName = actionProduct.trim() || "<Product>";
+    const productName = effectiveProduct.trim() || "<Product>";
     const inspectedComponents = actionMethod === "manual" ? [] : inspectedActionComponentNames();
     const componentNames = inspectedComponents.length
       ? inspectedComponents
@@ -5071,10 +5110,10 @@ export function App() {
 
     if (actionMethod === "manual") {
       if (sourceText.trim()) {
-        const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+        const currentSourceKey = manualPhaseSourceKeyFor(sourceText, effectiveActionEnvironment(), effectiveProduct);
         const phases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
           ? manualPhases
-          : runtimeManualPhasesForProduct(actionProduct, sourceText, effectiveActionEnvironment());
+          : runtimeManualPhasesForProduct(effectiveProduct, sourceText, effectiveActionEnvironment());
         const disabledKeys = manualPhaseSourceKey === currentSourceKey
           ? manualPhaseDisabledKeys
           : manualPhaseDisabledKeysForDefaults(phases);
@@ -5091,7 +5130,7 @@ export function App() {
         return;
       }
       const sourceDocumentName = actionSourceDocument?.name ?? (sourceText.trim() ? "Pasted installation instructions" : "<IM090 / instructions document>");
-      const itemLabel = actionProduct === "MFT" ? "Component(s) / configuration item(s)" : "Artifact(s) / component(s)";
+      const itemLabel = effectiveProduct === "MFT" ? "Component(s) / configuration item(s)" : "Artifact(s) / component(s)";
       const manualPlan = `==========================================================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nMethod: Manual\nProduct: ${productName}\nSource document: ${sourceDocumentName}\n${itemLabel}:\n${artifactLines}\n\n1- Review installation instructions:\n1.1- Open the source document and validate the scope for RFC ${branchName}.\n1.2- Confirm the target environment and instance:\n- Environment: ${environmentName}\n- Instance: ${instanceName}\n1.3- Confirm the ${itemLabel.toLowerCase()} listed for this change:\n${artifactLines}\n\n2- Execute manual installation:\n${manualInstructionText}\n\n3- Post-deployment validation (${environmentName} - ${instanceName}):\n3.1- Validate the deployed artifact/component(s):\n${componentLines}\n3.2- Confirm the latest values/configuration are reflected.\n\n4- Share the evidence.\n\n==========================================================`;
 
       setActionPlan(manualPlan);
@@ -5222,24 +5261,10 @@ export function App() {
     if (!rulesCatalog) return "External rules package: <none>";
     if (!sourceText.trim()) return `External rules package: ${rulesCatalog.knowledgeVersion}\nSource text: <empty>`;
 
-    const detectorResults = rulesCatalog.products.map((product) => {
-      let score = 0;
-      const matches: string[] = [];
-      for (const detector of product.detectorRules) {
-        try {
-          const regex = new RegExp(detector.pattern, detector.flags || "i");
-          if (regex.test(sourceText)) {
-            score += detector.weight ?? 1;
-            matches.push(detector.id);
-          }
-        } catch {
-          matches.push(`${detector.id}: invalid pattern`);
-        }
-      }
-      return { product, score, matches };
-    }).sort((left, right) => right.score - left.score);
+    const detectorResults = detectKnowledgeRuleProducts(sourceText, rulesCatalog);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
 
-    const selectedRule = rulesCatalog.products.find((rule) => productMatchesRule(actionProduct, rule)) ?? detectorResults.find((item) => item.score > 0)?.product;
+    const selectedRule = rulesCatalog.products.find((rule) => productMatchesRule(effectiveProduct, rule)) ?? detectorResults.find((item) => item.score > 0)?.product;
     const selectedRuleIsOic = selectedRule ? runtimeProductMatchesRule("OIC", selectedRule) : false;
     const inspectedOicIarArtifacts = selectedRuleIsOic
       ? preferCanonicalOicIarArtifacts(inspectedActionInstallableArtifacts().filter((artifact) => /\.iar$/i.test(artifact)))
@@ -5276,6 +5301,7 @@ export function App() {
 
     const top = detectorResults[0];
     const selectedDetector = selectedRule ? detectorResults.find((item) => item.product.id === selectedRule.id) : null;
+    const selectedActionDetector = detectorResults.find((item) => runtimeProductMatchesRule(actionProduct, item.product));
     const phaseDelta = selectedRule ? selectedRule.phaseRules.length - detectedPhaseCount : 0;
     const safetySummary = selectedRule?.safety
       ? [
@@ -5287,6 +5313,7 @@ export function App() {
     return [
       `External rules package: ${rulesCatalog.knowledgeVersion}`,
       `Current parser product: ${actionProduct || "<empty>"}`,
+      effectiveProduct !== actionProduct ? `Effective parser product: ${effectiveProduct} (auto-detect override; selected product score=${selectedActionDetector?.score ?? 0})` : "",
       top ? `Top rules detector: ${top.product.productName} (${top.product.id}) | Score: ${top.score} | Matches: ${top.matches.join(", ") || "<none>"}` : "Top rules detector: <none>",
       selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedDetector?.score ?? 0}` : "Selected rules product: <none>",
       selectedRule ? `Phase model comparison: parser=${detectedPhaseCount}, rules=${selectedRule.phaseRules.length}, delta=${phaseDelta}` : "",
@@ -5311,11 +5338,12 @@ export function App() {
   function buildActionPlanSupportOutput() {
     const sourceText = manualDetectionSourceText();
     const environment = effectiveActionEnvironment();
-    const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const currentSourceKey = manualPhaseSourceKeyFor(sourceText, environment, effectiveProduct);
     const detectedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
       : sourceText.trim()
-        ? runtimeManualPhasesForProduct(actionProduct, sourceText, environment)
+        ? runtimeManualPhasesForProduct(effectiveProduct, sourceText, environment)
         : [];
     const disabledKeys = manualPhaseSourceKey === currentSourceKey && manualPhaseDisabledKeys.length
       ? manualPhaseDisabledKeys
@@ -5384,6 +5412,7 @@ export function App() {
       `RFC: ${rfc.trim() || "<empty>"}`,
       `Method: ${actionMethod}`,
       `Product: ${actionProduct || "<empty>"}`,
+      effectiveProduct !== actionProduct ? `Effective product: ${effectiveProduct}` : "",
       `Template: ${selectedTemplate?.label || actionTemplateId}`,
       `Environment: ${environment || "<empty>"}`,
       normalizeEnvironmentName(environment) !== normalizeEnvironmentName(actionEnvironment) ? `Selected environment: ${actionEnvironment || "<empty>"}` : "",
