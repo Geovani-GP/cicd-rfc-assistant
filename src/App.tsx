@@ -223,6 +223,30 @@ function externalConfigurationItemsForProduct(productName: string, text: string,
   return labelExternalConfigurationItems(productName, extracted);
 }
 
+function externalPhaseModelForProduct(productName: string, rulesCatalog?: KnowledgeRulesCatalog) {
+  if (!rulesCatalog || !["OIC", "MFT"].includes(productName)) return null;
+  const selectedRule = rulesCatalog.products.find((rule) => runtimeProductMatchesRule(productName, rule));
+  return selectedRule?.phaseRules ?? null;
+}
+
+function applyExternalPhaseModel(phases: ManualActionPhase[], phaseRules: KnowledgeRuleProduct["phaseRules"] | null) {
+  if (!phaseRules?.length) return phases;
+  const phaseById = new Map(phases.map((phase) => [phase.id, phase]));
+  const modeled: ManualActionPhase[] = [];
+  const usedIds = new Set<string>();
+  for (const rule of phaseRules) {
+    const phase = phaseById.get(rule.id as ManualActionPhase["id"]);
+    if (!phase) continue;
+    modeled.push({
+      ...phase,
+      defaultIncluded: phase.defaultIncluded ?? rule.defaultIncluded
+    });
+    usedIds.add(phase.id);
+  }
+  const remaining = phases.filter((phase) => !usedIds.has(phase.id));
+  return modeled.length ? [...modeled, ...remaining] : phases;
+}
+
 function createClientId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -2607,6 +2631,10 @@ export function App() {
     if (externalItems?.length) return externalItems;
     return configurationItemsForProduct(productName, text);
   }
+  function runtimeManualPhasesForProduct(productName: string, text: string, environment: string) {
+    const phases = buildManualPhasesForProduct(productName, text, environment);
+    return applyExternalPhaseModel(phases, externalPhaseModelForProduct(productName, knowledgeCatalog.rules));
+  }
   const customTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => customActionTemplates
       .filter((template) => template.active !== false)
@@ -4186,7 +4214,7 @@ export function App() {
     if (!text.trim()) return;
     const available = availableEnvironmentsFromDocument(text);
     setAvailableDocumentEnvironments(available);
-    const phases = buildManualPhasesForProduct(actionProduct, text, environment);
+    const phases = runtimeManualPhasesForProduct(actionProduct, text, environment);
     setManualPhases(phases);
     setManualPhaseSourceKey(manualPhaseSourceKeyFor(text, environment));
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
@@ -4209,7 +4237,7 @@ export function App() {
     if (text) {
       const available = availableEnvironmentsFromDocument(text);
       setAvailableDocumentEnvironments(available);
-      const phases = buildManualPhasesForProduct(actionProduct, text, actionEnvironment);
+      const phases = runtimeManualPhasesForProduct(actionProduct, text, actionEnvironment);
       setManualPhases(phases);
       setManualPhaseSourceKey(manualPhaseSourceKeyFor(text));
       setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
@@ -4270,7 +4298,7 @@ export function App() {
       setManualReviewOpen(true);
       return;
     }
-    const phases = buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+    const phases = runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
     const available = availableEnvironmentsFromDocument(sourceText);
     setAvailableDocumentEnvironments(available);
     setManualPhases(phases);
@@ -4390,7 +4418,7 @@ export function App() {
     const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
     const reviewedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
-      : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+      : runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
     const disabledKeys = manualPhaseSourceKey === currentSourceKey ? manualPhaseDisabledKeys : manualPhaseDisabledKeysForDefaults(reviewedPhases);
     const enabledPhases = reviewedPhases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
     if (!enabledPhases.length) {
@@ -4735,7 +4763,7 @@ export function App() {
         const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
         const phases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
           ? manualPhases
-          : buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
+          : runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment);
         const disabledKeys = manualPhaseSourceKey === currentSourceKey
           ? manualPhaseDisabledKeys
           : manualPhaseDisabledKeysForDefaults(phases);
@@ -4875,7 +4903,7 @@ export function App() {
     const detectedPhases = manualPhases.length && manualPhaseSourceKey === currentSourceKey
       ? manualPhases
       : sourceText.trim()
-        ? buildManualPhasesForProduct(actionProduct, sourceText, actionEnvironment)
+        ? runtimeManualPhasesForProduct(actionProduct, sourceText, actionEnvironment)
         : [];
     const disabledKeys = manualPhaseSourceKey === currentSourceKey && manualPhaseDisabledKeys.length
       ? manualPhaseDisabledKeys
