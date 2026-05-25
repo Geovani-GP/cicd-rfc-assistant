@@ -36,6 +36,18 @@ export type RuntimeKnowledgeCatalog = {
   source: RuntimeKnowledgeSource;
   products: EmbeddedConverterTechnology[];
   templates: EmbeddedActionTemplate[];
+  rules?: {
+    schemaVersion: number;
+    knowledgeVersion: string;
+    rulesSchema?: string;
+    products: Array<{
+      id: string;
+      path: string;
+      detectors: number;
+      extractors: number;
+      phaseModel: number;
+    }>;
+  };
   basePath?: string;
   previousVersion?: string | null;
 };

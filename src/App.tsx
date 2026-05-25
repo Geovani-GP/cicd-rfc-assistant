@@ -706,6 +706,9 @@ const copy = {
     converterVersion: "Version actual",
     converterKnowledge: "Paquete de conocimiento",
     converterSource: "Origen",
+    converterRules: "Reglas",
+    converterRulesAvailable: "Reglas externas cargadas",
+    converterRulesMissing: "Sin reglas externas",
     converterInstallPackage: "Cargar paquete ZIP",
     converterUpdate: "Actualizar",
     converterRollback: "Version anterior",
@@ -981,6 +984,9 @@ const copy = {
     converterVersion: "Current version",
     converterKnowledge: "Knowledge package",
     converterSource: "Source",
+    converterRules: "Rules",
+    converterRulesAvailable: "External rules loaded",
+    converterRulesMissing: "No external rules",
     converterInstallPackage: "Load ZIP package",
     converterUpdate: "Update",
     converterRollback: "Previous version",
@@ -1256,6 +1262,9 @@ const copy = {
     converterVersion: "Versao atual",
     converterKnowledge: "Pacote de conhecimento",
     converterSource: "Origem",
+    converterRules: "Regras",
+    converterRulesAvailable: "Regras externas carregadas",
+    converterRulesMissing: "Sem regras externas",
     converterInstallPackage: "Carregar pacote ZIP",
     converterUpdate: "Atualizar",
     converterRollback: "Versao anterior",
@@ -2490,6 +2499,10 @@ export function App() {
     );
   }, [executionHistory, historySearch]);
   const converterTechnologies = knowledgeCatalog.products;
+  const converterRuleSummaries = useMemo(
+    () => new Map((knowledgeCatalog.rules?.products ?? []).map((rule) => [rule.id, rule])),
+    [knowledgeCatalog.rules]
+  );
   const actionTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => knowledgeCatalog.templates as ActionTemplateOption[],
     [knowledgeCatalog.templates]
@@ -5515,6 +5528,9 @@ export function App() {
                   <p>
                     {t.converterKnowledge}: {knowledgeCatalog.knowledgeVersion} · {t.converterSource}: {knowledgeCatalog.source}
                   </p>
+                  <p>
+                    {t.converterRules}: {knowledgeCatalog.rules ? `${t.converterRulesAvailable} (${knowledgeCatalog.rules.products.length})` : t.converterRulesMissing}
+                  </p>
                 </div>
                 <button className="icon-close" onClick={() => setConverterSyncOpen(false)}>
                   <X size={18} />
@@ -5536,6 +5552,14 @@ export function App() {
                     <div>
                       <strong>{converter.name}</strong>
                       <span>{t.converterVersion}: {converter.version}</span>
+                      {(() => {
+                        const rules = converterRuleSummaries.get(converter.id);
+                        return (
+                          <span>
+                            {t.converterRules}: {rules ? `${rules.detectors}D / ${rules.extractors}E / ${rules.phaseModel}P` : t.converterRulesMissing}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="inline-actions compact-actions">
                       <button className="secondary" onClick={installLocalKnowledgePackage}>

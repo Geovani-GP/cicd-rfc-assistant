@@ -118,6 +118,18 @@ export type RuntimeKnowledgeCatalog = {
     label: string;
     hint: string;
   }>;
+  rules?: {
+    schemaVersion: number;
+    knowledgeVersion: string;
+    rulesSchema?: string;
+    products: Array<{
+      id: string;
+      path: string;
+      detectors: number;
+      extractors: number;
+      phaseModel: number;
+    }>;
+  };
   basePath: string;
   previousVersion?: string | null;
 };

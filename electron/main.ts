@@ -148,12 +148,28 @@ type KnowledgeTemplate = {
   hint: string;
 };
 
+type KnowledgeRuleProduct = {
+  id: string;
+  path: string;
+  detectors: number;
+  extractors: number;
+  phaseModel: number;
+};
+
+type KnowledgeRulesCatalog = {
+  schemaVersion: number;
+  knowledgeVersion: string;
+  rulesSchema?: string;
+  products: KnowledgeRuleProduct[];
+};
+
 type RuntimeKnowledgeCatalog = {
   schemaVersion: number;
   knowledgeVersion: string;
   source: "local" | "remote";
   products: KnowledgeProduct[];
   templates: KnowledgeTemplate[];
+  rules?: KnowledgeRulesCatalog;
   basePath: string;
   previousVersion?: string | null;
 };
@@ -413,10 +429,72 @@ function isKnowledgeTemplate(value: unknown): value is KnowledgeTemplate {
   );
 }
 
+function isRuleCatalogProduct(value: unknown): value is { id: string; path: string } {
+  const item = value as { id?: unknown; path?: unknown };
+  return Boolean(item && typeof item.id === "string" && typeof item.path === "string");
+}
+
+function packageScopedPath(basePath: string, packagePath: string) {
+  const scopedRoot = resolve(basePath);
+  const candidate = resolve(scopedRoot, packagePath);
+  if (candidate !== scopedRoot && !candidate.startsWith(`${scopedRoot}${process.platform === "win32" ? "\\" : "/"}`)) {
+    throw new Error(`Knowledge package path escapes package root: ${packagePath}`);
+  }
+  return candidate;
+}
+
+async function readKnowledgeRules(basePath: string, catalogPath: string | undefined) {
+  if (!catalogPath) return undefined;
+  const absoluteCatalogPath = packageScopedPath(basePath, catalogPath);
+  if (!(await pathExists(absoluteCatalogPath))) return undefined;
+  const catalog = await readJsonFile<{
+    schemaVersion?: number;
+    knowledgeVersion?: string;
+    rulesSchema?: string;
+    products?: unknown[];
+  }>(absoluteCatalogPath);
+  if (catalog.schemaVersion !== 1 || !catalog.knowledgeVersion || !Array.isArray(catalog.products)) {
+    throw new Error("Invalid rules catalog in knowledge package.");
+  }
+
+  const products: KnowledgeRuleProduct[] = [];
+  for (const product of catalog.products) {
+    if (!isRuleCatalogProduct(product)) throw new Error("Invalid rules catalog product entry.");
+    const rulePath = packageScopedPath(basePath, product.path);
+    const ruleFile = await readJsonFile<{
+      schemaVersion?: number;
+      productId?: string;
+      detectors?: unknown[];
+      extractors?: unknown[];
+      phaseModel?: unknown[];
+    }>(rulePath);
+    if (ruleFile.schemaVersion !== 1 || ruleFile.productId !== product.id) {
+      throw new Error(`Invalid rules file for ${product.id}.`);
+    }
+    products.push({
+      id: product.id,
+      path: product.path,
+      detectors: Array.isArray(ruleFile.detectors) ? ruleFile.detectors.length : 0,
+      extractors: Array.isArray(ruleFile.extractors) ? ruleFile.extractors.length : 0,
+      phaseModel: Array.isArray(ruleFile.phaseModel) ? ruleFile.phaseModel.length : 0
+    });
+  }
+
+  return {
+    schemaVersion: catalog.schemaVersion,
+    knowledgeVersion: catalog.knowledgeVersion,
+    rulesSchema: catalog.rulesSchema,
+    products
+  };
+}
+
 async function readKnowledgePackage(basePath: string, source: "local" | "remote" = "local"): Promise<RuntimeKnowledgeCatalog> {
   const manifest = await readJsonFile<{
     schemaVersion?: number;
     knowledgeVersion?: string;
+    contents?: {
+      rules?: string;
+    };
   }>(join(basePath, "manifest.json"));
   const converterManifest = await readJsonFile<{
     products?: unknown[];
@@ -443,6 +521,7 @@ async function readKnowledgePackage(basePath: string, source: "local" | "remote"
     source,
     products,
     templates,
+    rules: await readKnowledgeRules(basePath, manifest.contents?.rules),
     basePath,
     previousVersion: await readKnowledgePointer("previous")
   };
