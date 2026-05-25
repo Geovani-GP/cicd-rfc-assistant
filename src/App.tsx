@@ -3170,8 +3170,16 @@ export function App() {
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
     if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT") {
       const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
+      const loadedArtifactNames = new Set(actionArtifactFiles.map((file) => file.name.toLowerCase()));
+      const missingArtifactText = actionProduct === "MFT"
+        ? artifactLinesFromText(artifactText)
+            .filter((item) => /\.(?:xml|zip|asc)$/i.test(item))
+            .filter((item) => !loadedArtifactNames.has(item.toLowerCase()))
+            .map((item) => `Missing artifact file: ${item}`)
+            .join("\n")
+        : "";
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
-      return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
+      return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, missingArtifactText, artifactInspectionTextForPlan()]
         .filter((value) => value.trim())
         .join("\n\n");
     }
@@ -5090,7 +5098,7 @@ export function App() {
       ...(externalSafetyRulesForProduct(actionProduct, knowledgeCatalog.rules)?.redactPatterns ?? [])
     ];
     const uuidPlaceholders: string[] = [];
-    let redacted = value.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, (match) => {
+    let redacted = value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (match) => {
       const placeholder = `__UUID_${uuidPlaceholders.length}__`;
       uuidPlaceholders.push(match);
       return placeholder;
