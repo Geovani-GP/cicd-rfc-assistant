@@ -807,7 +807,7 @@ function oicDetectedMetadata(text: string) {
       if (!metadata) return [];
       const code = metadata[1]?.trim();
       const name = metadata[2]?.trim();
-      return [code, name].filter(Boolean);
+      return [name || code].filter(Boolean);
     });
   const namedIntegrations = Array.from(text.matchAll(/^\s*Name\s+((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gim)).map((match) => match[1]);
   const repeatedIntegrations = Array.from(text.matchAll(/\bRepeat the steps for the\s+([A-Z][A-Z0-9_]{6,})\s+integration\b/gi)).map((match) => match[1]);
@@ -847,6 +847,13 @@ function libraryZipArtifacts(text: string) {
   return uniqueValues(
     Array.from(text.matchAll(/\b([A-Z][A-Za-z0-9]+)\s+\1_(\d{2}\.\d{2}\.\d{3})\s*(\d)\.zip\b/g))
       .map((match) => `${match[1]}_${match[2]}${match[3]}.zip`)
+  );
+}
+
+function loadedOicArtifactFiles(text: string) {
+  return uniqueValues(
+    linesMatching(text, /^Artifact file:\s*([A-Z0-9][A-Z0-9_.-]+\.(?:iar|par|zip|jar|sql|csv|xml))$/i)
+      .filter((artifact) => !/\.wsdl$/i.test(artifact))
   );
 }
 
@@ -1227,11 +1234,14 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
     "Installation Steps"
   ]);
   const artifactDetectionText = [artifactContent, operational].filter(Boolean).join("\n");
-  const installableArtifacts = sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
-    ...installableArtifactNames(artifactDetectionText),
-    ...installableArtifactNames(text),
-    ...libraryZipArtifacts(text)
-  ]))));
+  const loadedArtifacts = loadedOicArtifactFiles(text);
+  const installableArtifacts = loadedArtifacts.length
+    ? sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(loadedArtifacts)))
+    : sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
+        ...installableArtifactNames(artifactDetectionText),
+        ...installableArtifactNames(text),
+        ...libraryZipArtifacts(text)
+      ]))));
   const artifacts = (installableArtifacts.length
     ? installableArtifacts
     : extractArtifactNames(artifactContent || operational, { includeComponentNames: true }))

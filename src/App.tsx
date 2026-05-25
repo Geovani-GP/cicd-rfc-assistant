@@ -169,7 +169,7 @@ function normalizeExternalRuleValues(values: string[], normalize: string[] = [])
     const key = uppercaseKey ? value.toUpperCase() : value.toLowerCase();
     byKey.set(key, value);
   }
-  return Array.from(byKey.values()).slice(0, 20);
+  return Array.from(byKey.values()).slice(0, 200);
 }
 
 function titledPermission(value: string) {
@@ -189,6 +189,10 @@ function labelExternalConfigurationItems(productName: string, extracted: Array<{
       for (const value of item.values) items.push(`Connection: ${value}`);
     } else if (item.target === "configurationItems.lookups") {
       for (const value of item.values) items.push(`Lookup: ${value}`);
+    } else if (normalizedProduct === "oic" && item.target === "configurationItems.artifacts") {
+      for (const value of item.values) items.push(`Artifact: ${value}`);
+    } else if (normalizedProduct === "oic" && item.target === "configurationItems.integrations") {
+      for (const value of item.values) items.push(`Integration: ${value}`);
     } else if (normalizedProduct === "mft" && item.target === "configurationItems.folders") {
       for (const value of item.values) items.push(`Folder: ${value}`);
     } else if (normalizedProduct === "mft" && item.target === "configurationItems.users") {
@@ -3206,6 +3210,14 @@ export function App() {
     return Array.from(new Map(items.map((item) => [`${normalizeArtifactCompareKey(item.name)}-${item.source}`, item])).values());
   }
 
+  function actionLoadedInstallableArtifactItems(files = actionArtifactFiles, inspections = actionArtifactInspections) {
+    return inspectedActionInstallableArtifacts(files, inspections).map((artifact) => ({
+      name: artifactDisplayName(artifact),
+      version: artifactVersionFromName(artifact),
+      source: artifact
+    }));
+  }
+
   function inspectedActionInstallableArtifacts(files = actionArtifactFiles, inspections = actionArtifactInspections) {
     const artifacts: string[] = [];
     for (const file of files) {
@@ -3222,8 +3234,20 @@ export function App() {
 
   function inspectedActionComponentNames(files = actionArtifactFiles, inspections = actionArtifactInspections) {
     const names: string[] = [];
-    for (const item of actionLoadedArtifactItems(files, inspections)) {
-      names.push(item.name);
+    for (const inspection of inspections) {
+      for (const project of inspection.projects) {
+        if (project.name) names.push(project.name);
+        else if (project.code) names.push(project.code);
+      }
+      for (const internalArtifact of inspection.internalArtifacts ?? []) {
+        for (const project of internalArtifact.projects) {
+          if (project.name) names.push(project.name);
+          else if (project.code) names.push(project.code);
+        }
+      }
+    }
+    if (!names.length) {
+      for (const item of actionLoadedInstallableArtifactItems(files, inspections)) names.push(item.name);
     }
     return dedupeArtifactNames(names);
   }
@@ -3249,13 +3273,22 @@ export function App() {
     return repaired.length ? dedupeArtifactNames([...repaired, ...inspectedArtifacts]) : inspectedArtifacts;
   }
 
+  function artifactTextShouldUseInspectedArtifacts(value: string, inspectedArtifacts: string[]) {
+    if (!inspectedArtifacts.length) return false;
+    if (artifactTextCanBeFedFromInspection(value)) return true;
+    const enteredArtifacts = artifactLinesFromText(value).filter((item) => /\.(?:iar|par|zip|jar|sql|csv|xml)$/i.test(item));
+    if (!enteredArtifacts.length) return true;
+    const loadedKeys = inspectedArtifacts.map(normalizeArtifactCompareKey);
+    return enteredArtifacts.some((artifact) => !loadedKeys.some((key) => artifactKeysMatch(normalizeArtifactCompareKey(artifact), key)));
+  }
+
   function actionArtifactComparisonRows() {
     const sourceText = manualDetectionSourceText();
     if (actionProduct === "OIC" && runtimeConfigurationItemsForProduct(actionProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
-    const documentItems = actionDocumentArtifactNames();
-    const loadedItems = actionLoadedArtifactItems();
+    const documentItems = actionProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
+    const loadedItems = actionLoadedInstallableArtifactItems();
     const matchedKeys = new Set<string>();
     const rows = documentItems.map((documentName) => {
       const documentKey = normalizeArtifactCompareKey(documentName);
@@ -4309,11 +4342,10 @@ export function App() {
 
   function addActionArtifactFiles(allowed: SelectedFile[]) {
     if (!allowed.length) return;
-    setActionArtifactFiles((current) => {
-      const byPath = new Map(current.map((file) => [file.path, file]));
-      for (const file of allowed) byPath.set(file.path, file);
-      return Array.from(byPath.values());
-    });
+    const byPath = new Map(actionArtifactFiles.map((file) => [file.path, file]));
+    for (const file of allowed) byPath.set(file.path, file);
+    const nextFiles = Array.from(byPath.values());
+    setActionArtifactFiles(nextFiles);
     setArtifactText((current) => {
       if (!artifactTextCanBeFedFromInspection(current)) return current;
       return dedupeArtifactNames([...artifactLinesFromText(current).filter((item) => !isWeakArtifactEntry(item)), ...allowed.map((file) => file.name)]).join("\n");
@@ -4321,7 +4353,7 @@ export function App() {
     const inspectablePaths = allowed.filter(isInspectableArtifact).map((file) => file.path);
     if (inspectablePaths.length) {
       setExpandedActionArtifactFiles((current) => Array.from(new Set([...current, ...inspectablePaths])));
-      inspectActionArtifacts(inspectablePaths).catch(() => undefined);
+      inspectActionArtifacts(inspectablePaths, nextFiles).catch(() => undefined);
     }
     addLog(`Artefactos de Action Plan agregados: ${allowed.map((file) => file.name).join(", ")}`, "actionPlan");
   }
@@ -4770,18 +4802,17 @@ export function App() {
     });
   }
 
-  async function inspectActionArtifacts(paths = actionArtifactFiles.filter(isInspectableArtifact).map((file) => file.path)) {
+  async function inspectActionArtifacts(paths = actionArtifactFiles.filter(isInspectableArtifact).map((file) => file.path), filesForArtifacts = actionArtifactFiles) {
     if (!desktopApi) return;
     if (!paths.length) return;
     const result = await runTask(() => desktopApi.inspectArtifacts(paths));
-    setActionArtifactInspections((current) => {
-      const byPath = new Map(current.map((item) => [item.filePath, item]));
-      for (const item of result ?? []) byPath.set(item.filePath, item);
-      return Array.from(byPath.values());
-    });
+    const byPath = new Map(actionArtifactInspections.map((item) => [item.filePath, item]));
+    for (const item of result ?? []) byPath.set(item.filePath, item);
+    const nextInspections = Array.from(byPath.values());
+    setActionArtifactInspections(nextInspections);
     setArtifactText((current) => {
-      if (!artifactTextCanBeFedFromInspection(current)) return current;
-      const inspectedArtifacts = inspectedActionInstallableArtifacts([], result ?? []);
+      const inspectedArtifacts = inspectedActionInstallableArtifacts(filesForArtifacts, nextInspections);
+      if (!artifactTextShouldUseInspectedArtifacts(current, inspectedArtifacts)) return current;
       return inspectedArtifacts.length ? inspectedArtifacts.join("\n") : current;
     });
   }
