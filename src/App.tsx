@@ -5098,6 +5098,15 @@ export function App() {
     }).sort((left, right) => right.score - left.score);
 
     const selectedRule = rulesCatalog.products.find((rule) => productMatchesRule(actionProduct, rule)) ?? detectorResults.find((item) => item.score > 0)?.product;
+    const selectedRuleIsOic = selectedRule ? runtimeProductMatchesRule("OIC", selectedRule) : false;
+    const inspectedOicIarArtifacts = selectedRuleIsOic
+      ? preferCanonicalOicIarArtifacts(inspectedActionInstallableArtifacts().filter((artifact) => /\.iar$/i.test(artifact)))
+      : [];
+    const hasOicInstallablePackage = selectedRuleIsOic && (
+      inspectedOicIarArtifacts.length > 0 ||
+      /^Artifact file:\s*[A-Z0-9][A-Z0-9_.-]+\.iar$/im.test(sourceText) ||
+      installableArtifactNames(sourceText).some((artifact) => /\.iar$/i.test(artifact))
+    );
     const extracted = selectedRule
       ? selectedRule.extractorRules.map((extractor) => {
           const values: string[] = [];
@@ -5111,11 +5120,16 @@ export function App() {
               values.push(`<invalid pattern: ${pattern.id}>`);
             }
           }
+          const normalizedValues = normalizedDiagnosticValues(values, extractor.normalize);
+          const diagnosticValues = selectedRuleIsOic && extractor.target === "configurationItems.artifacts" && inspectedOicIarArtifacts.length
+            ? inspectedOicIarArtifacts
+            : normalizedValues;
           return {
             target: extractor.target,
-            values: normalizedDiagnosticValues(values, extractor.normalize)
+            values: diagnosticValues
           };
         }).filter((item) => item.values.length)
+        .filter((item) => !(hasOicInstallablePackage && item.target === "configurationItems.lookups"))
       : [];
 
     const top = detectorResults[0];
