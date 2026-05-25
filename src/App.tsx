@@ -5089,8 +5089,8 @@ export function App() {
     ].join("\n");
 
     return redactSupportOutputText([
-      "======================= Codex Support Output =======================",
-      "Purpose: share this block with Codex/support instead of screenshots.",
+      "======================= Support Output =======================",
+      "Purpose: share this block with support instead of screenshots.",
       "",
       supportSection("RFC Metadata", metadata),
       supportSection("Source Document", sourceDocumentInfo),
@@ -5669,10 +5669,17 @@ export function App() {
           </button>
         </nav>
 
-        <button className="secondary full" onClick={() => desktopApi?.openExternal(projectUrl)}>
-          <ExternalLink size={16} />
-          {t.openVbs}
-        </button>
+        <div className="sidebar-link-actions">
+          <button className="secondary full" onClick={() => desktopApi?.openExternal(projectUrl)}>
+            <ExternalLink size={16} />
+            {t.openVbs}
+          </button>
+          {activeStep === "actionPlan" && (
+            <button className="secondary sidebar-support-button" onClick={copyActionPlanSupportOutput} title={a.supportOutput} aria-label={a.supportOutput}>
+              <MessageSquareText size={18} />
+            </button>
+          )}
+        </div>
       </aside>
 
       <main className="content">
@@ -6176,10 +6183,6 @@ export function App() {
                   <button className="secondary" disabled={!actionPlan} onClick={copyActionPlan} title={a.copy}>
                     <Copy size={16} />
                     {a.copy}
-                  </button>
-                  <button className="secondary" onClick={copyActionPlanSupportOutput} title={a.supportOutput}>
-                    <MessageSquareText size={16} />
-                    {a.supportOutput}
                   </button>
                 </div>
               </div>

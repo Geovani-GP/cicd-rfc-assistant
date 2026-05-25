@@ -3225,6 +3225,31 @@ h2 {
   background: var(--oracle-soft);
 }
 
+.sidebar-link-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.sidebar-link-actions .full {
+  flex: 1;
+  margin-top: 0;
+}
+
+.sidebar-support-button {
+  width: 54px;
+  min-width: 54px;
+  border-color: #5a514c;
+  color: #ffffff;
+  background: #403b37;
+}
+
+.sidebar-support-button:hover {
+  color: #ffffff;
+  background: #514943;
+}
+
 .full {
   width: 100%;
   margin-top: auto;
