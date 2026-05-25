@@ -89,18 +89,13 @@ The `Sync` / `Sincronizar` button opens a converter modal with independent entri
 - SOA
 - JAVA
 
-Current buttons are UI scaffolding:
-
-- update converter
-- roll back to previous converter version
-
-The Cloudflare download/update flow is not connected yet. The expected future flow is:
+The Cloudflare download/update flow is connected through the private update Worker:
 
 ```text
 GitHub converter repository
   -> CI validation
-  -> versioned converter package
-  -> Cloudflare Pages or R2 distribution
+  -> GitHub Release with versioned converter package
+  -> Cloudflare Worker update endpoint
   -> desktop app downloads and validates package
   -> local cache
   -> rollback available
@@ -121,6 +116,33 @@ Recommended converter manifest shape:
   }
 }
 ```
+
+## Operational Scripts
+
+Use this repository for UI, Electron, Action Plan workflow, evidence export, packaging, and desktop distribution changes:
+
+```bash
+cd /Users/geovanigomez/dev/cicd-rfc-assistant
+npm run verify
+git add .
+git commit -m "Describe app change"
+git push
+```
+
+Distribution builds:
+
+```bash
+npm run dist:mac
+npm run dist:win
+npm run dist:linux
+npm run dist:all
+```
+
+Notes:
+
+- `npm run verify` compiles the app and Electron preload/main code.
+- `dist:mac`, `dist:win`, and `dist:linux` are prepared as local commands, but the most reliable way to build all three platforms is still CI runners per OS.
+- Transformer-only changes do not require rebuilding this app. Publish them from `cicd-rfc-converters`; users then click `Actualizar transformadores`.
 
 ## Converter Training Status
 

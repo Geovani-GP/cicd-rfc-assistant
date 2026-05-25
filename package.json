@@ -10,9 +10,14 @@
     "dev": "vite --host 127.0.0.1",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on tcp:5173 && node scripts/start-electron-dev.cjs\"",
     "build": "tsc && vite build && tsc -p electron/tsconfig.json && node scripts/copy-preload.cjs",
+    "verify": "npm run build",
     "preview": "vite preview --host 127.0.0.1",
     "electron:pack": "npm run build && electron-builder --dir",
-    "electron:dist": "npm run build && electron-builder"
+    "electron:dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:all": "npm run build && electron-builder --mac --win --linux"
   },
   "dependencies": {
     "vite": "^7.1.10",
