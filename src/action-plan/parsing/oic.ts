@@ -299,9 +299,10 @@ function sanitizeOicSensitiveContent(content: string) {
     .join("\n");
 }
 
-function connectionConfigurationNotes(text: string, connections: string[]) {
+function connectionConfigurationNotes(text: string, connections: string[], options: { includeWsdlFiles?: boolean } = {}) {
   const notes: string[] = [];
-  const wsdlFiles = installableArtifactNames(text).filter((artifact) => /\.wsdl$/i.test(artifact));
+  const includeWsdlFiles = options.includeWsdlFiles ?? true;
+  const wsdlFiles = includeWsdlFiles ? installableArtifactNames(text).filter((artifact) => /\.wsdl$/i.test(artifact)) : [];
   const hasUsernamePasswordToken = /\bUsername Password Token\b/i.test(text);
   if (!connections.length && !wsdlFiles.length && !hasUsernamePasswordToken) return "";
   if (connections.length) notes.push(`Required connection(s):\n${asBullets(connections)}`);
@@ -1223,7 +1224,6 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   const scope = oicScopeOverrides(text);
   const operational = operationalIm090Text(text);
   const metadata = oicDetectedMetadata(text);
-  const connectionNotes = connectionConfigurationNotes(text, metadata.connections);
   const connectionReference = connectionReferenceBlock(text, selectedEnvironment, metadata.connections, scope);
   const lines = actionPlanLinesFromIm090(text);
   const startAt = 0;
@@ -1235,6 +1235,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   ]);
   const artifactDetectionText = [artifactContent, operational].filter(Boolean).join("\n");
   const loadedArtifacts = loadedOicArtifactFiles(text);
+  const connectionNotes = connectionConfigurationNotes(text, metadata.connections, { includeWsdlFiles: !loadedArtifacts.length });
   const installableArtifacts = loadedArtifacts.length
     ? sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(loadedArtifacts)))
     : sortOicArtifacts(preferCanonicalOicIarArtifacts(collapseSupersededVersionedArtifacts(uniqueValues([
