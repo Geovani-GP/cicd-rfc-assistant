@@ -1289,6 +1289,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   const scopedInstallationContent = useScopedInstallation
     ? oicInstallationFallback(scope, metadata, artifacts, selectedEnvironment, text)
     : directInstructionContent || installationContent || "Execute the manual installation steps described in the IM090.";
+  const importValidationItems = loadedArtifacts.length ? artifacts : metadata.integrations;
 
   const phases: ManualActionPhase[] = [
     {
@@ -1318,7 +1319,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
       title: "Installation Steps",
       content: prepareContent([
         scopedInstallationContent,
-        !useScopedInstallation && metadata.integrations.length ? `Import/validate the following integration artifact(s):\n${asBullets(metadata.integrations)}` : "",
+        !useScopedInstallation && importValidationItems.length ? `Import/validate the following integration artifact(s):\n${asBullets(importValidationItems)}` : "",
         !useScopedInstallation && metadata.connections.length
           ? scope.commonConnectionsMayExist
             ? `Validate/configure the required connection(s) only if they are not already configured or if test fails:\n${asBullets(metadata.connections)}`
@@ -1326,7 +1327,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
           : "",
         useScopedInstallation ? "" : connectionNotes,
         !scope.ignoreLookups && metadata.dvms.length ? `Validate or update the required DVM/lookup value(s):\n${asBullets(metadata.dvms)}\nDo not document password values.` : "",
-        !useScopedInstallation && metadata.integrations.length ? `Activate the imported integration(s) after connections${scope.ignoreLookups ? "" : " and DVM/lookups"} are configured.` : ""
+        !useScopedInstallation && importValidationItems.length ? `Activate the imported integration(s) after connections${scope.ignoreLookups ? "" : " and DVM/lookups"} are configured.` : ""
       ].filter(Boolean).join("\n\n"))
     },
     {
