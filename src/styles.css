@@ -3663,6 +3663,51 @@ textarea:focus {
   animation: soft-enter 220ms ease both;
 }
 
+.artifact-alert-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(220, 38, 38, 0.34);
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.artifact-alert-button:hover {
+  color: #991b1b;
+  background: rgba(220, 38, 38, 0.16);
+}
+
+.action-artifact-issues-modal {
+  width: min(720px, calc(100vw - 56px));
+}
+
+.artifact-issue-summary {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 18px;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.artifact-issue-summary ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--oracle-ink);
+  font-weight: 750;
+}
+
+.artifact-issue-message textarea {
+  min-height: 220px;
+  margin-top: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
 .pipeline-layout {
   display: grid;
   margin-top: 16px;

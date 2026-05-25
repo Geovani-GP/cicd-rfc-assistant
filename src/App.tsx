@@ -1775,6 +1775,10 @@ const actionCopy = {
     artifactMissing: "No existe",
     artifactExists: "Existe",
     artifactPending: "Pendiente",
+    artifactIssuesTitle: "Componentes faltantes",
+    artifactIssuesBody: "Se detectaron artefactos referenciados por el IM090 que no estan cargados. El Action Plan no se modifica por esta alerta.",
+    artifactIssuesButton: "Ver componentes faltantes",
+    rfcMessage: "Mensaje para RFC",
     noActionArtifacts: "No hay artefactos cargados para validar.",
     noArtifactComparison: "Carga el IM090 o captura artefactos para comparar.",
     sourceDocument: "Documento IM090 / instrucciones",
@@ -1844,6 +1848,10 @@ const actionCopy = {
     artifactMissing: "Missing",
     artifactExists: "Exists",
     artifactPending: "Pending",
+    artifactIssuesTitle: "Missing components",
+    artifactIssuesBody: "Some artifacts referenced by the IM090 are not loaded. This alert does not modify the Action Plan.",
+    artifactIssuesButton: "View missing components",
+    rfcMessage: "RFC message",
     noActionArtifacts: "No artifacts loaded for validation.",
     noArtifactComparison: "Load the IM090 or capture artifacts to compare.",
     sourceDocument: "IM090 / instructions document",
@@ -1913,6 +1921,10 @@ const actionCopy = {
     artifactMissing: "Nao existe",
     artifactExists: "Existe",
     artifactPending: "Pendente",
+    artifactIssuesTitle: "Componentes faltantes",
+    artifactIssuesBody: "Foram detectados artefatos referenciados pelo IM090 que nao estao carregados. O Action Plan nao e modificado por este alerta.",
+    artifactIssuesButton: "Ver componentes faltantes",
+    rfcMessage: "Mensagem para RFC",
     noActionArtifacts: "Nao ha artefatos carregados para validar.",
     noArtifactComparison: "Carregue o IM090 ou capture artefatos para comparar.",
     sourceDocument: "Documento IM090 / instrucoes",
@@ -2517,6 +2529,7 @@ export function App() {
   const [actionPlanConfirmedAt, setActionPlanConfirmedAt] = useState("");
   const [supportOutputOpen, setSupportOutputOpen] = useState(false);
   const [supportOutputText, setSupportOutputText] = useState("");
+  const [actionArtifactIssuesOpen, setActionArtifactIssuesOpen] = useState(false);
   const [riceFolderPath, setRiceFolderPath] = useState("");
   const [mode, setMode] = useState<"ADHOC" | "FULL">("ADHOC");
   const [files, setFiles] = useState<SelectedFile[]>([]);
@@ -3038,6 +3051,10 @@ export function App() {
     () => actionArtifactComparisonRows(),
     [actionSourceDocument, actionScopeNotes, artifactText, manualInstructions, manualSourceText, actionArtifactFiles, actionArtifactInspections]
   );
+  const actionArtifactIssues = useMemo(
+    () => actionArtifactRows.filter((row) => row.status === "missing" && row.documentName !== "-"),
+    [actionArtifactRows]
+  );
   const activeStepLog = evidenceLog.filter(
     (entry) => entry.step === activeStep && matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId)
   );
@@ -3170,16 +3187,8 @@ export function App() {
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
     if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT") {
       const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
-      const loadedArtifactNames = new Set(actionArtifactFiles.map((file) => file.name.toLowerCase()));
-      const missingArtifactText = actionProduct === "MFT"
-        ? artifactLinesFromText(artifactText)
-            .filter((item) => /\.(?:xml|zip|asc)$/i.test(item))
-            .filter((item) => !loadedArtifactNames.has(item.toLowerCase()))
-            .map((item) => `Missing artifact file: ${item}`)
-            .join("\n")
-        : "";
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
-      return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, missingArtifactText, artifactInspectionTextForPlan()]
+      return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
         .filter((value) => value.trim())
         .join("\n\n");
     }
@@ -4636,7 +4645,7 @@ export function App() {
     const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "Configuration item(s)" : "Artifact(s) / component(s)";
     const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
-    const validationBlock = actionArtifactValidationBlock();
+    const validationBlock = isMftPlan ? "" : actionArtifactValidationBlock();
     const productName = isJavaPlan
       ? "JAVA / WebLogic"
       : actionProduct === "Base de datos"
@@ -5072,6 +5081,33 @@ export function App() {
   async function copyActionPlan() {
     if (!actionPlan) return;
     await navigator.clipboard?.writeText(actionPlan);
+  }
+
+  function actionArtifactIssueMessage() {
+    const missing = actionArtifactIssues.map((row) => row.documentName);
+    const loaded = actionArtifactFiles.map((file) => file.name);
+    const missingLines = missing.length ? missing.map((item) => `- ${item}`).join("\n") : "- <missing artifact>";
+    const loadedLines = loaded.length ? loaded.map((item) => `- ${item}`).join("\n") : "- <no artifact loaded>";
+    const scopeConfirmation = actionProduct === "MFT"
+      ? "\n\nAlso, please confirm whether the current scope remains import only and that no MFT transfer should be deployed."
+      : "";
+
+    return [
+      "Dear Customer,",
+      "",
+      "During RFC artifact validation, the source document references the following required artifact(s) that are not currently attached/loaded:",
+      missingLines,
+      "",
+      "Current loaded artifact(s):",
+      loadedLines,
+      "",
+      "Could you please attach the missing artifact(s), or confirm whether the loaded package formally replaces this requirement for the import?",
+      scopeConfirmation
+    ].join("\n");
+  }
+
+  async function copyActionArtifactIssueMessage() {
+    await navigator.clipboard?.writeText(actionArtifactIssueMessage());
   }
 
   function redactSupportOutputText(value: string) {
@@ -6420,6 +6456,16 @@ export function App() {
               <div className="output-head">
                 <strong>{a.preview}</strong>
                 <div>
+                  {actionArtifactIssues.length > 0 && (
+                    <button
+                      className="artifact-alert-button"
+                      onClick={() => setActionArtifactIssuesOpen(true)}
+                      title={a.artifactIssuesButton}
+                      aria-label={a.artifactIssuesButton}
+                    >
+                      <AlertCircle size={17} />
+                    </button>
+                  )}
                   {actionPlanConfirmed && (
                     <span className="action-plan-status">
                       <CheckCircle2 size={15} />
@@ -7076,6 +7122,45 @@ export function App() {
           </div>
         </div>
       </aside>
+
+      {actionArtifactIssuesOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setActionArtifactIssuesOpen(false)}>
+          <section className="workspace-modal action-artifact-issues-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2>{a.artifactIssuesTitle}</h2>
+                <p>{a.artifactIssuesBody}</p>
+              </div>
+              <button className="icon-close" onClick={() => setActionArtifactIssuesOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="artifact-issue-summary">
+              <span className="artifact-status-badge missing">
+                <AlertCircle size={13} />
+                {a.artifactMissing}
+              </span>
+              <ul>
+                {actionArtifactIssues.map((row) => (
+                  <li key={row.documentName}>{row.documentName}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="artifact-issue-message">
+              <div className="output-head compact">
+                <strong>{a.rfcMessage}</strong>
+                <button className="secondary compact" onClick={copyActionArtifactIssueMessage}>
+                  <Copy size={15} />
+                  {a.copy}
+                </button>
+              </div>
+              <textarea value={actionArtifactIssueMessage()} readOnly />
+            </div>
+          </section>
+        </div>
+      )}
 
       {actionArtifactModalOpen && (
         <div className="modal-backdrop" onMouseDown={() => setActionArtifactModalOpen(false)}>

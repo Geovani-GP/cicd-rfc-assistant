@@ -134,10 +134,6 @@ function mftArtifacts(text: string) {
     .map((item) => item.replace(/^Artifact:\s*/, ""));
 }
 
-function missingMftArtifacts(text: string) {
-  return uniqueValues(Array.from(text.matchAll(/\bMissing artifact file:\s*([^\n\r]+\.(?:xml|zip|asc))\b/gi)).map((match) => cleanMftCandidate(match[1])));
-}
-
 function mftTransferRules(text: string) {
   return mftConfigurationItems(text)
     .filter((item) => item.startsWith("Transfer Rule: "))
@@ -320,8 +316,6 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
 
 function buildMftDeploymentPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   const artifacts = mftArtifacts(text);
-  const missingArtifacts = missingMftArtifacts(text);
-  const missingXmlArtifacts = missingArtifacts.filter((item) => /\.xml$/i.test(item));
   const xmlArtifacts = artifacts.filter((item) => /\.xml$/i.test(item));
   const zipArtifacts = artifacts.filter((item) => /\.zip$/i.test(item));
   const pgpArtifacts = artifacts.filter((item) => /\.asc$/i.test(item));
@@ -330,8 +324,7 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
   const targets = mftTargets(text);
   const actions = mftActions(text);
   const importOnly = hasMftImportOnlyInstruction(text);
-  const blockedByMissingXml = missingXmlArtifacts.length > 0;
-  const deployAllowed = !importOnly && !blockedByMissingXml;
+  const deployAllowed = !importOnly;
   const instance = text.match(/\b(?:Target instance|Instance):\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
   const targetEnvironment = [selectedEnvironment, instance].filter(Boolean).join(" / ") || selectedEnvironment || "target MFT environment";
   const artifactLines = artifacts.length ? asBullets(artifacts) : "- Confirm the MFT package and key artifacts attached to the RFC.";
@@ -347,9 +340,7 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
       title: "Prerequisites",
       content: [
         `Validate access to the target MFT environment before starting the import: ${targetEnvironment}.`,
-        blockedByMissingXml
-          ? "Execution blocker: the IM090 requires a configuration plan XML that is not loaded. Do not import or deploy until the missing XML is attached or the requester confirms an approved replacement."
-          : importOnly
+        importOnly
           ? "Confirm the current RFC scope is import only. Do not deploy, start, activate, or execute any transfer rule."
           : "Confirm the RFC is approved for the production MFT instance before importing or deploying any transfer configuration.",
         "Confirm MFT admin access and any required credentials are available through the approved secure channel.",
@@ -357,8 +348,6 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
         "",
         "Artifacts detected:",
         artifactLines,
-        missingArtifacts.length ? "\nMissing artifact(s) that must be resolved before execution:" : "",
-        missingArtifacts.length ? asBullets(missingArtifacts) : "",
         xmlArtifacts.length ? "\nConfiguration plan artifact(s) required by the IM090:" : "",
         xmlArtifacts.length ? asBullets(xmlArtifacts) : "",
         zipArtifacts.length ? "\nArchive artifact(s) required by the IM090:" : "",
@@ -388,7 +377,7 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
       id: "installation",
       title: "Installation Steps",
       content: [
-        blockedByMissingXml ? "Do not execute the import. Resolve the missing configuration plan XML before proceeding." : importOnly ? "Import the MFT package only. Do not deploy the transfer rules." : "Import and deploy the MFT package.",
+        importOnly ? "Import the MFT package only. Do not deploy the transfer rules." : "Import and deploy the MFT package.",
         "",
         "1. Login to the target MFT console using the approved admin account.",
         "2. Navigate to the MFT design/import area for transfer configuration packages.",
@@ -407,13 +396,11 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
         "10. Validate or adjust imported security/processing actions:",
         actionLines,
         "11. Save imported configuration changes if prompted.",
-        blockedByMissingXml
-          ? "12. Stop. Do not click Import or Deploy until the missing configuration plan XML is provided or formally waived."
-          : importOnly
+        importOnly
           ? "12. Stop after import/save. Do not click Deploy and do not run transfer functionality validation."
           : "12. Deploy the imported transfer rule(s):",
         deployAllowed ? transferLines : "",
-        blockedByMissingXml ? "13. Capture the RFI/blocker evidence." : importOnly ? "13. Capture import confirmation evidence." : "13. Capture the import/deploy confirmation evidence."
+        importOnly ? "13. Capture import confirmation evidence." : "13. Capture the import/deploy confirmation evidence."
       ].join("\n")
     },
     {
@@ -422,11 +409,9 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
       content: [
         importOnly
           ? "Not applicable. The current RFC scope is import only; do not deploy, start, activate, or schedule transfer execution."
-          : blockedByMissingXml
-          ? "Not applicable while the required configuration plan XML is missing."
           : "Not applicable unless the imported transfer package includes a separate scheduled activation step.",
         "",
-        importOnly || blockedByMissingXml ? "Confirm transfer rule(s) are not deployed under the current blocker/scope:" : "Confirm deployed transfer rule(s):",
+        importOnly ? "Confirm transfer rule(s) are not deployed under the current scope:" : "Confirm deployed transfer rule(s):",
         transferLines
       ].join("\n"),
       defaultIncluded: false
@@ -435,35 +420,34 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
       id: "validation",
       title: "Validation",
       content: [
-        blockedByMissingXml ? "Validate the blocker state. Do not validate deployment." : importOnly ? "Validate the imported MFT configuration without deploying transfer rules." : "Validate the imported MFT configuration after deployment.",
+        importOnly ? "Validate the imported MFT configuration without deploying transfer rules." : "Validate the imported MFT configuration after deployment.",
         "",
-        blockedByMissingXml ? "1. Confirm the required configuration plan XML is missing and the RFC remains blocked/pending customer response:" : importOnly ? "1. Confirm the transfer rule(s) are imported and visible in MFT Designer:" : "1. Confirm the transfer rule(s) are deployed successfully:",
-        blockedByMissingXml ? asBullets(missingXmlArtifacts) : transferLines,
-        blockedByMissingXml ? "" : "",
-        blockedByMissingXml ? "2. Confirm no import or deploy action was executed." : "2. Confirm source definitions are present and configured:",
-        blockedByMissingXml ? "" : sourceLines,
-        blockedByMissingXml ? "3. Keep validation limited to artifact/readiness checks until the missing XML is resolved." : "",
-        blockedByMissingXml ? "" : "",
-        blockedByMissingXml ? "" : "3. Confirm target definitions are present and configured:",
-        blockedByMissingXml ? "" : targetLines,
-        blockedByMissingXml ? "" : "",
-        blockedByMissingXml ? "" : "4. Confirm security/PGP actions and key aliases are present without exposing private key material:",
-        blockedByMissingXml ? "" : actionLines,
-        blockedByMissingXml ? "" : "",
-        blockedByMissingXml ? "" : importOnly ? "5. Confirm no transfer rule was deployed, started, activated, or executed." : "5. Confirm there are no deployment or validation errors in the MFT console.",
-        blockedByMissingXml ? "" : importOnly ? "6. Do not perform file pickup/send functional validation unless a new RFC update explicitly authorizes deployment/execution." : "6. If business validation is required, coordinate a controlled file transfer test with the requester/owner."
+        importOnly ? "1. Confirm the transfer rule(s) are imported and visible in MFT Designer:" : "1. Confirm the transfer rule(s) are deployed successfully:",
+        transferLines,
+        "",
+        "2. Confirm source definitions are present and configured:",
+        sourceLines,
+        "",
+        "3. Confirm target definitions are present and configured:",
+        targetLines,
+        "",
+        "4. Confirm security/PGP actions and key aliases are present without exposing private key material:",
+        actionLines,
+        "",
+        importOnly ? "5. Confirm no transfer rule was deployed, started, activated, or executed." : "5. Confirm there are no deployment or validation errors in the MFT console.",
+        importOnly ? "6. Do not perform file pickup/send functional validation unless a new RFC update explicitly authorizes deployment/execution." : "6. If business validation is required, coordinate a controlled file transfer test with the requester/owner."
       ].filter(Boolean).join("\n")
     },
     {
       id: "returnPoint",
       title: "Return Point / Contingency",
       content: [
-        blockedByMissingXml ? "If the required configuration plan XML is missing, do not proceed with import or deployment." : importOnly ? "If import or key validation fails, stop execution and capture the error details." : "If import, key validation, or deployment fails, stop execution and capture the error details.",
+        importOnly ? "If import or key validation fails, stop execution and capture the error details." : "If import, key validation, or deployment fails, stop execution and capture the error details.",
         "",
         "Rollback/contingency:",
-        blockedByMissingXml ? "1. Keep the RFC in awaiting-customer/RFI status until the missing XML is attached or formally waived." : importOnly ? "1. Do not deploy or execute any transfer as part of troubleshooting." : "1. Undeploy the transfer rule(s) changed by this RFC, if they were partially deployed.",
-        blockedByMissingXml ? "2. If the requester confirms the ZIP replaces the XML, update the Action Plan evidence with that confirmation before execution." : importOnly ? "2. Remove or restore imported transfer/source/target/security configuration using backup/export evidence, if rollback is approved." : "2. Restore the previous transfer/source/target/security configuration using the backup/export evidence.",
-        blockedByMissingXml ? "3. Regenerate the Action Plan after the artifact discrepancy is resolved." : importOnly ? "3. Revalidate import/configuration status after restoration." : "3. Revalidate deployment status after restoration.",
+        importOnly ? "1. Do not deploy or execute any transfer as part of troubleshooting." : "1. Undeploy the transfer rule(s) changed by this RFC, if they were partially deployed.",
+        importOnly ? "2. Remove or restore imported transfer/source/target/security configuration using backup/export evidence, if rollback is approved." : "2. Restore the previous transfer/source/target/security configuration using the backup/export evidence.",
+        importOnly ? "3. Revalidate import/configuration status after restoration." : "3. Revalidate deployment status after restoration.",
         "4. Escalate to the MFT technical owner before retrying with different package, endpoint, key, or credential values."
       ].join("\n")
     },
@@ -474,11 +458,11 @@ function buildMftDeploymentPlan(text: string, selectedEnvironment: string): Manu
         "Attach evidence for:",
         "- MFT target environment and instance.",
         "- Backup/export or current-state evidence.",
-        blockedByMissingXml ? "- RFI/blocker evidence showing the missing configuration plan XML." : "- ZIP package import summary.",
+        "- ZIP package import summary.",
         xmlArtifacts.length ? "- Configuration plan XML selection/import evidence." : "",
         "- PGP/security key validation evidence without key material or passphrases.",
-        blockedByMissingXml ? "- Evidence that no import, deploy, start, activation, or transfer execution was performed." : importOnly ? "- Transfer rule import confirmation, without deployment evidence." : "- Transfer rule deployment confirmation.",
-        blockedByMissingXml ? "" : "- Source, target, and security action validation.",
+        importOnly ? "- Transfer rule import confirmation, without deployment evidence." : "- Transfer rule deployment confirmation.",
+        "- Source, target, and security action validation.",
         importOnly ? "- Evidence that no transfer was deployed, started, activated, or executed." : "",
         "- Final validation result.",
         "- Rollback evidence, if applicable.",
@@ -659,8 +643,6 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
     const targets = mftTargets(instructions);
     const actions = mftActions(instructions);
     const importOnly = hasMftImportOnlyInstruction(instructions);
-    const missingArtifacts = missingMftArtifacts(instructions);
-    const blockedByMissingXml = missingArtifacts.some((item) => /\.xml$/i.test(item));
     return [
       "Environment:",
       `- MFT Instance: ${instanceName}`,
@@ -669,14 +651,10 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
       "30-45 minutes",
       "",
       "Impact:",
-      blockedByMissingXml
-        ? "- Execution blocked. Required MFT configuration plan XML is missing."
-        : importOnly
+      importOnly
         ? "- Import-only change. No transfer rule deployment or file processing impact expected."
         : "- MFT transfer configuration will be imported/deployed in the target environment.",
-      blockedByMissingXml
-        ? "- No import, deploy, start, activation, or file processing should be performed until the artifact discrepancy is resolved."
-        : importOnly
+      importOnly
         ? "- No transfer should be started, activated, deployed, or functionally executed under the current RFC scope."
         : "- File transfer impact depends on the deployed transfer rules and should be coordinated with the requester/owner.",
       "",
@@ -684,15 +662,11 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
       `- ${environmentName} environment only`,
       "",
       "Expected Outcome:",
-      blockedByMissingXml
-        ? "Missing configuration plan XML is resolved before any MFT import or deployment activity proceeds."
-        : importOnly
+      importOnly
         ? "MFT package imported and required security/key material validated without deploying transfer rules."
         : "MFT package imported, required security/key material validated, and transfer rules deployed successfully.",
       "",
       artifacts.length ? `Artifacts:\n${asBullets(artifacts)}` : "",
-      "",
-      missingArtifacts.length ? `Missing Artifacts:\n${asBullets(missingArtifacts)}` : "",
       "",
       transferRules.length ? `Transfer Rules:\n${asBullets(transferRules)}` : "",
       "",
