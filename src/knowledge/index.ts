@@ -42,10 +42,35 @@ export type RuntimeKnowledgeCatalog = {
     rulesSchema?: string;
     products: Array<{
       id: string;
+      productName: string;
       path: string;
       detectors: number;
       extractors: number;
       phaseModel: number;
+      detectorRules: Array<{
+        id: string;
+        pattern: string;
+        flags?: string;
+        weight?: number;
+        notes?: string;
+      }>;
+      extractorRules: Array<{
+        id: string;
+        target: string;
+        patterns: Array<{
+          id: string;
+          pattern: string;
+          flags?: string;
+          weight?: number;
+          notes?: string;
+        }>;
+        normalize?: string[];
+      }>;
+      phaseRules: Array<{
+        id: string;
+        title: string;
+        defaultIncluded: boolean;
+      }>;
     }>;
   };
   basePath?: string;

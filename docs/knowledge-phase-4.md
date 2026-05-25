@@ -27,3 +27,18 @@ Rule paths are resolved inside the installed package directory. A package cannot
 ## Current Boundary
 
 The existing TypeScript parser still drives Action Plan generation. External rules are loaded for visibility and validation first; behavior replacement will be introduced gradually in later steps.
+
+## Step 3 Diagnostic Mode
+
+The renderer now receives full external rule definitions and runs them in parallel when building the Codex Support Output.
+
+The diagnostic section reports:
+
+- external knowledge package version
+- current parser product
+- top product detected by external rules
+- selected rules product used for extraction
+- parser phase count vs. rules phase model count
+- extracted items grouped by rule target
+
+This remains read-only diagnostics. It does not change generated Action Plans yet.

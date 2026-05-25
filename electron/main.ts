@@ -148,12 +148,37 @@ type KnowledgeTemplate = {
   hint: string;
 };
 
+type KnowledgePatternRule = {
+  id: string;
+  pattern: string;
+  flags?: string;
+  weight?: number;
+  notes?: string;
+};
+
+type KnowledgeExtractorRule = {
+  id: string;
+  target: string;
+  patterns: KnowledgePatternRule[];
+  normalize?: string[];
+};
+
+type KnowledgePhaseRule = {
+  id: string;
+  title: string;
+  defaultIncluded: boolean;
+};
+
 type KnowledgeRuleProduct = {
   id: string;
+  productName: string;
   path: string;
   detectors: number;
   extractors: number;
   phaseModel: number;
+  detectorRules: KnowledgePatternRule[];
+  extractorRules: KnowledgeExtractorRule[];
+  phaseRules: KnowledgePhaseRule[];
 };
 
 type KnowledgeRulesCatalog = {
@@ -434,6 +459,40 @@ function isRuleCatalogProduct(value: unknown): value is { id: string; path: stri
   return Boolean(item && typeof item.id === "string" && typeof item.path === "string");
 }
 
+function isPatternRule(value: unknown): value is KnowledgePatternRule {
+  const item = value as KnowledgePatternRule;
+  return Boolean(
+    item &&
+    typeof item.id === "string" &&
+    typeof item.pattern === "string" &&
+    (item.flags === undefined || typeof item.flags === "string") &&
+    (item.weight === undefined || typeof item.weight === "number") &&
+    (item.notes === undefined || typeof item.notes === "string")
+  );
+}
+
+function isExtractorRule(value: unknown): value is KnowledgeExtractorRule {
+  const item = value as KnowledgeExtractorRule;
+  return Boolean(
+    item &&
+    typeof item.id === "string" &&
+    typeof item.target === "string" &&
+    Array.isArray(item.patterns) &&
+    item.patterns.every(isPatternRule) &&
+    (item.normalize === undefined || (Array.isArray(item.normalize) && item.normalize.every((entry) => typeof entry === "string")))
+  );
+}
+
+function isPhaseRule(value: unknown): value is KnowledgePhaseRule {
+  const item = value as KnowledgePhaseRule;
+  return Boolean(
+    item &&
+    typeof item.id === "string" &&
+    typeof item.title === "string" &&
+    typeof item.defaultIncluded === "boolean"
+  );
+}
+
 function packageScopedPath(basePath: string, packagePath: string) {
   const scopedRoot = resolve(basePath);
   const candidate = resolve(scopedRoot, packagePath);
@@ -464,6 +523,7 @@ async function readKnowledgeRules(basePath: string, catalogPath: string | undefi
     const ruleFile = await readJsonFile<{
       schemaVersion?: number;
       productId?: string;
+      productName?: string;
       detectors?: unknown[];
       extractors?: unknown[];
       phaseModel?: unknown[];
@@ -471,12 +531,27 @@ async function readKnowledgeRules(basePath: string, catalogPath: string | undefi
     if (ruleFile.schemaVersion !== 1 || ruleFile.productId !== product.id) {
       throw new Error(`Invalid rules file for ${product.id}.`);
     }
+    if (
+      typeof ruleFile.productName !== "string" ||
+      !Array.isArray(ruleFile.detectors) ||
+      !ruleFile.detectors.every(isPatternRule) ||
+      !Array.isArray(ruleFile.extractors) ||
+      !ruleFile.extractors.every(isExtractorRule) ||
+      !Array.isArray(ruleFile.phaseModel) ||
+      !ruleFile.phaseModel.every(isPhaseRule)
+    ) {
+      throw new Error(`Invalid rule structure for ${product.id}.`);
+    }
     products.push({
       id: product.id,
+      productName: ruleFile.productName,
       path: product.path,
-      detectors: Array.isArray(ruleFile.detectors) ? ruleFile.detectors.length : 0,
-      extractors: Array.isArray(ruleFile.extractors) ? ruleFile.extractors.length : 0,
-      phaseModel: Array.isArray(ruleFile.phaseModel) ? ruleFile.phaseModel.length : 0
+      detectors: ruleFile.detectors.length,
+      extractors: ruleFile.extractors.length,
+      phaseModel: ruleFile.phaseModel.length,
+      detectorRules: ruleFile.detectors,
+      extractorRules: ruleFile.extractors,
+      phaseRules: ruleFile.phaseModel
     });
   }
 

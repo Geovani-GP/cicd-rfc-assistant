@@ -4686,6 +4686,102 @@ export function App() {
     return [`## ${title}`, content.trim() || "<empty>"].join("\n");
   }
 
+  function regexWithGlobal(pattern: string, flags = "i") {
+    const cleanFlags = Array.from(new Set(`${flags}g`.replace(/[^dgimsuvy]/g, "").split(""))).join("");
+    return new RegExp(pattern, cleanFlags);
+  }
+
+  function firstCapturedValue(match: RegExpMatchArray) {
+    return match.slice(1).find((value) => value?.trim())?.trim() ?? match[0]?.trim() ?? "";
+  }
+
+  function normalizedDiagnosticValues(values: string[], normalize: string[] = []) {
+    const requireUnderscore = normalize.includes("require-underscore");
+    const splitPipeComma = normalize.includes("split-pipe-comma");
+    const uppercaseKey = normalize.includes("uppercase-key");
+    const candidates = splitPipeComma
+      ? values.flatMap((value) => value.split(/\s*\|\s*|,\s*/))
+      : values;
+    const byKey = new Map<string, string>();
+    for (const candidate of candidates) {
+      const value = candidate.replace(/^\d+\.\s*/, "").replace(/\s+/g, " ").trim();
+      if (!value || (requireUnderscore && !value.includes("_"))) continue;
+      const key = uppercaseKey ? value.toUpperCase() : value.toLowerCase();
+      byKey.set(key, value);
+    }
+    return Array.from(byKey.values()).slice(0, 20);
+  }
+
+  function productMatchesRule(productName: string, rule: NonNullable<RuntimeKnowledgeCatalog["rules"]>["products"][number]) {
+    const normalizedProduct = productName.trim().toLowerCase();
+    return normalizedProduct === rule.productName.toLowerCase() ||
+      normalizedProduct === rule.id.toLowerCase() ||
+      (normalizedProduct === "base de datos" && rule.id === "database");
+  }
+
+  function buildExternalRulesDiagnostic(sourceText: string, detectedPhaseCount: number) {
+    const rulesCatalog = knowledgeCatalog.rules;
+    if (!rulesCatalog) return "External rules package: <none>";
+    if (!sourceText.trim()) return `External rules package: ${rulesCatalog.knowledgeVersion}\nSource text: <empty>`;
+
+    const detectorResults = rulesCatalog.products.map((product) => {
+      let score = 0;
+      const matches: string[] = [];
+      for (const detector of product.detectorRules) {
+        try {
+          const regex = new RegExp(detector.pattern, detector.flags || "i");
+          if (regex.test(sourceText)) {
+            score += detector.weight ?? 1;
+            matches.push(detector.id);
+          }
+        } catch {
+          matches.push(`${detector.id}: invalid pattern`);
+        }
+      }
+      return { product, score, matches };
+    }).sort((left, right) => right.score - left.score);
+
+    const selectedRule = rulesCatalog.products.find((rule) => productMatchesRule(actionProduct, rule)) ?? detectorResults.find((item) => item.score > 0)?.product;
+    const extracted = selectedRule
+      ? selectedRule.extractorRules.map((extractor) => {
+          const values: string[] = [];
+          for (const pattern of extractor.patterns) {
+            try {
+              const regex = regexWithGlobal(pattern.pattern, pattern.flags || "i");
+              for (const match of sourceText.matchAll(regex)) {
+                values.push(firstCapturedValue(match));
+              }
+            } catch {
+              values.push(`<invalid pattern: ${pattern.id}>`);
+            }
+          }
+          return {
+            target: extractor.target,
+            values: normalizedDiagnosticValues(values, extractor.normalize)
+          };
+        }).filter((item) => item.values.length)
+      : [];
+
+    const top = detectorResults[0];
+    const selectedDetector = selectedRule ? detectorResults.find((item) => item.product.id === selectedRule.id) : null;
+    const phaseDelta = selectedRule ? selectedRule.phaseRules.length - detectedPhaseCount : 0;
+
+    return [
+      `External rules package: ${rulesCatalog.knowledgeVersion}`,
+      `Current parser product: ${actionProduct || "<empty>"}`,
+      top ? `Top rules detector: ${top.product.productName} (${top.product.id}) | Score: ${top.score} | Matches: ${top.matches.join(", ") || "<none>"}` : "Top rules detector: <none>",
+      selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedDetector?.score ?? 0}` : "Selected rules product: <none>",
+      selectedRule ? `Phase model comparison: parser=${detectedPhaseCount}, rules=${selectedRule.phaseRules.length}, delta=${phaseDelta}` : "",
+      selectedRule ? `Rules phase model:\n${selectedRule.phaseRules.map((phase) => `- ${phase.title} (${phase.id}, ${phase.defaultIncluded ? "enabled" : "disabled"})`).join("\n")}` : "",
+      extracted.length
+        ? [
+            "Rules extracted items:",
+            ...extracted.map((item) => `- ${item.target}: ${item.values.join(", ")}`)
+          ].join("\n")
+        : "Rules extracted items: <none>"
+    ].filter(Boolean).join("\n");
+  }
+
   function buildActionPlanSupportOutput() {
     const sourceText = manualDetectionSourceText();
     const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
@@ -4753,6 +4849,7 @@ export function App() {
     const comparisonInfo = actionArtifactRows.length
       ? actionArtifactRows.map((row) => `- Document: ${row.documentName} | Loaded: ${row.artifactName} | Version: ${row.version} | Status: ${row.status}`).join("\n")
       : "<none>";
+    const externalRulesDiagnostic = buildExternalRulesDiagnostic(sourceText, detectedPhases.length);
 
     const metadata = [
       `Generated at: ${new Date().toISOString()}`,
@@ -4783,6 +4880,7 @@ export function App() {
       supportSection("Manual Instructions Field", manualInstructions),
       supportSection("Converter Source Text", sourceText),
       supportSection("Detected Manual Phases", phaseText),
+      supportSection("External Rules Diagnostic", externalRulesDiagnostic),
       supportSection("Generated Action Plan", actionPlan),
       "===================================================================="
     ].join("\n\n"));
