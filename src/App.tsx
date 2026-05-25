@@ -258,6 +258,17 @@ function escapeRegexLiteral(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function compareKnowledgeVersions(left: string, right: string) {
+  const leftParts = left.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const rightParts = right.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
+
 function createClientId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -844,6 +855,7 @@ const copy = {
     converterCheckUpdate: "Buscar actualizacion",
     converterInstallRemote: "Actualizar transformadores",
     converterUpdateAvailable: "Actualizacion disponible",
+    converterUpToDate: "Esta actualizado, no es necesario actualizar.",
     converterNoUpdateUrl: "Endpoint de Cloudflare no configurado.",
     converterUpdate: "Actualizar",
     converterRollback: "Version anterior",
@@ -1127,6 +1139,7 @@ const copy = {
     converterCheckUpdate: "Check update",
     converterInstallRemote: "Update transformers",
     converterUpdateAvailable: "Update available",
+    converterUpToDate: "Already up to date, no update needed.",
     converterNoUpdateUrl: "Cloudflare endpoint is not configured.",
     converterUpdate: "Update",
     converterRollback: "Previous version",
@@ -1410,6 +1423,7 @@ const copy = {
     converterCheckUpdate: "Buscar atualizacao",
     converterInstallRemote: "Atualizar transformadores",
     converterUpdateAvailable: "Atualizacao disponivel",
+    converterUpToDate: "Esta atualizado, nao e necessario atualizar.",
     converterNoUpdateUrl: "Endpoint do Cloudflare nao configurado.",
     converterUpdate: "Atualizar",
     converterRollback: "Versao anterior",
@@ -2649,6 +2663,10 @@ export function App() {
     () => new Map((knowledgeCatalog.rules?.products ?? []).map((rule) => [rule.id, rule])),
     [knowledgeCatalog.rules]
   );
+  const remoteKnowledgeUpdateAvailable = Boolean(
+    remoteKnowledgeVersion &&
+    compareKnowledgeVersions(remoteKnowledgeVersion, knowledgeCatalog.knowledgeVersion) > 0
+  );
   const actionTemplateOptions = useMemo<ActionTemplateOption[]>(
     () => knowledgeCatalog.templates as ActionTemplateOption[],
     [knowledgeCatalog.templates]
@@ -3710,7 +3728,11 @@ export function App() {
     const manifest = await runTask(() => desktopApi.checkKnowledgeUpdate(payload));
     if (!manifest) return;
     setRemoteKnowledgeVersion(manifest.knowledgeVersion);
-    setMessage(`${t.converterUpdateAvailable}: ${manifest.knowledgeVersion}`);
+    if (compareKnowledgeVersions(manifest.knowledgeVersion, knowledgeCatalog.knowledgeVersion) > 0) {
+      setMessage(`${t.converterUpdateAvailable}: ${manifest.knowledgeVersion}`);
+    } else {
+      setMessage(t.converterUpToDate);
+    }
   }
 
   async function installRemoteKnowledgeUpdate() {
@@ -5876,14 +5898,18 @@ export function App() {
               <div className="clone-box">
                 <p>{t.converterUpdateUrl}: {cloudflareKnowledgeUpdateUrl}</p>
                 {remoteKnowledgeVersion && (
-                  <p>{t.converterUpdateAvailable}: {remoteKnowledgeVersion}</p>
+                  <p>
+                    {remoteKnowledgeUpdateAvailable
+                      ? `${t.converterUpdateAvailable}: ${remoteKnowledgeVersion}`
+                      : t.converterUpToDate}
+                  </p>
                 )}
                 <div className="inline-actions converter-package-actions">
                   <button className="secondary" onClick={checkRemoteKnowledgeUpdate}>
                     <RefreshCw size={16} />
                     {t.converterCheckUpdate}
                   </button>
-                  <button className="primary" onClick={installRemoteKnowledgeUpdate}>
+                  <button className="primary" onClick={installRemoteKnowledgeUpdate} disabled={!remoteKnowledgeUpdateAvailable}>
                     <Download size={16} />
                     {t.converterInstallRemote}
                   </button>
