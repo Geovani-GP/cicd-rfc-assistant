@@ -3186,7 +3186,7 @@ export function App() {
       : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
     if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT") {
-      const loadedArtifactText = actionArtifactFiles.map((file) => file.name).join("\n");
+      const loadedArtifactText = actionProduct === "MFT" ? "" : actionArtifactFiles.map((file) => file.name).join("\n");
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
       return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
         .filter((value) => value.trim())
