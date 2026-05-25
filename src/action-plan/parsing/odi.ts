@@ -97,8 +97,16 @@ function odiObjectNames(text: string) {
   const exported = exportedOdiObjects(text);
   const matches = text.match(objectPattern()) ?? [];
   const values = exported.length ? exported : matches;
-  return uniqueValues(values)
+  return uniqueValues(values.map(normalizeOdiObjectName))
     .filter((item) => item.length >= 5);
+}
+
+function normalizeOdiObjectName(value: string) {
+  return normalizeWhitespace(value)
+    .replace(/\.xml$/i, "")
+    .replace(/^MAP_(MAP_)/i, "$1")
+    .replace(/^PACK_(PKG_)/i, "$1")
+    .replace(/^PKG_(PKG_)/i, "$1");
 }
 
 function componentValues(text: string, label: string) {
@@ -115,14 +123,14 @@ function odiArtifacts(text: string) {
 
 function odiMappings(text: string) {
   return uniqueValues([
-    ...componentValues(text, "ODI Mapping"),
+    ...componentValues(text, "ODI Mapping").map(normalizeOdiObjectName),
     ...odiObjectNames(text).filter((item) => /^MAP_/i.test(item))
   ]);
 }
 
 function odiPackages(text: string) {
   return uniqueValues([
-    ...componentValues(text, "ODI Package"),
+    ...componentValues(text, "ODI Package").map(normalizeOdiObjectName),
     ...odiObjectNames(text).filter((item) => /^PKG_/i.test(item))
   ]);
 }
@@ -155,7 +163,8 @@ function odiProject(text: string) {
 }
 
 function odiFolder(text: string) {
-  return componentValues(text, "ODI Folder")[0] || firstMatch(text, [/\bPRY_[A-Z0-9_]+\.([A-Z0-9_ ]+)\./i]);
+  return componentValues(text, "ODI Folder")[0] ||
+    firstMatch(text, [/\bPRY_[A-Z0-9_]+\s*[-.>]+\s*([A-Z0-9_ ]*COMMONS)\b/i, /\bPRY_[A-Z0-9_]+\.([A-Z0-9_ ]*COMMONS)\./i]);
 }
 
 function odiSqlScripts(text: string) {
@@ -170,10 +179,11 @@ function odiProjectPaths(text: string) {
 }
 
 function odiScenario(text: string) {
+  const joinedText = text.replace(/([A-Z0-9])\s*\n\s*(_[A-Z0-9_]+)/g, "$1$2");
   return firstMatch(text, [
     /Regenerate\s+([A-Z0-9_]+\s+Version\s+\d+)/i,
     /Right click on the\s+([A-Z0-9_]+\s+Version\s+\d+)\s+scenario/i
-  ]);
+  ]) || firstMatch(joinedText, [/\b(SCN_[A-Z0-9_]+)\b/i]);
 }
 
 function odiSchema(text: string) {
@@ -186,8 +196,8 @@ export function odiConfigurationItems(text: string) {
     const mappings = odiMappings(text);
     const packages = odiPackages(text);
     const scenarios = odiScenarios(text);
+    if (artifacts.length) return artifacts;
     const items = [
-      ...artifacts,
       ...mappings.map((item) => `Mapping: ${item}`),
       ...packages.map((item) => `Package: ${item}`),
       ...scenarios.map((item) => `Scenario: ${item}`),

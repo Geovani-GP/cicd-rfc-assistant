@@ -2711,6 +2711,10 @@ export function App() {
     [knowledgeCatalog.templates]
   );
   function runtimeConfigurationItemsForProduct(productName: string, text: string) {
+    if (productName === "ODI Studio") {
+      const localItems = configurationItemsForProduct(productName, text);
+      if (localItems.length) return localItems;
+    }
     const externalItems = externalConfigurationItemsForProduct(productName, text, knowledgeCatalog.rules);
     if (externalItems?.length) return externalItems;
     return configurationItemsForProduct(productName, text);
@@ -3365,6 +3369,7 @@ export function App() {
     if (artifactTextCanBeFedFromInspection(value)) return true;
     const enteredArtifacts = artifactLinesFromText(value).filter((item) => /\.(?:iar|par|zip|jar|sql|csv|xml|asc)$/i.test(item));
     if (!enteredArtifacts.length) return true;
+    if (actionProduct === "ODI Studio" && inspectedArtifacts.length > enteredArtifacts.length) return true;
     const loadedKeys = inspectedArtifacts.map(normalizeArtifactCompareKey);
     return enteredArtifacts.some((artifact) => !loadedKeys.some((key) => artifactKeysMatch(normalizeArtifactCompareKey(artifact), key)));
   }
@@ -4924,6 +4929,9 @@ export function App() {
     setArtifactText((current) => {
       const inspectedArtifacts = inspectedActionInstallableArtifacts(filesForArtifacts, nextInspections);
       if (!artifactTextShouldUseInspectedArtifacts(current, inspectedArtifacts)) return current;
+      if (actionProduct === "ODI Studio") {
+        return dedupeArtifactNames([...artifactLinesFromText(current), ...inspectedArtifacts]).join("\n");
+      }
       return inspectedArtifacts.length ? inspectedArtifacts.join("\n") : current;
     });
   }

@@ -1369,7 +1369,8 @@ function inspectOdiXmlBuffer(buffer: Buffer, artifactName: string) {
     if (mapping) pushUnique("odiMapping", mapping);
   }
 
-  const projectFolder = Array.from(xml.matchAll(/<!\[CDATA\[(PRY_[A-Z0-9_]+)\.([A-Z0-9_ ]+)(?:\.|])/gi))[0];
+  const projectFolder = Array.from(xml.matchAll(/<!\[CDATA\[(PRY_[A-Z0-9_]+)\.([A-Z0-9_ ]+)(?:\.|])/gi))
+    .find((match) => /\bCOMMONS\b|\s/.test(match[2]) && !/^V[A-Z0-9_]*$/i.test(match[2]));
   const repositoryVersion = firstXmlFieldValue(xml, "RepositoryVersion") || xmlAttribute(xml, "RepositoryVersion");
   const odiVersion = firstXmlFieldValue(xml, "OdiVersion");
   const projects: InspectedProject[] = projectFolder
