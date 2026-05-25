@@ -214,6 +214,11 @@ function externalConfigurationItemsForProduct(productName: string, text: string,
   if (!rulesCatalog || !["OIC", "MFT"].includes(productName)) return null;
   const selectedRule = rulesCatalog.products.find((rule) => runtimeProductMatchesRule(productName, rule));
   if (!selectedRule) return null;
+  const normalizedProduct = productName.trim().toLowerCase();
+  const hasOicInstallablePackage = normalizedProduct === "oic" && (
+    /^Artifact file:\s*[A-Z0-9][A-Z0-9_.-]+\.iar$/im.test(text) ||
+    installableArtifactNames(text).some((artifact) => /\.iar$/i.test(artifact))
+  );
   const extracted = selectedRule.extractorRules.map((extractor) => {
     const values: string[] = [];
     for (const pattern of extractor.patterns) {
@@ -228,7 +233,8 @@ function externalConfigurationItemsForProduct(productName: string, text: string,
       target: extractor.target,
       values: normalizeExternalRuleValues(values, extractor.normalize)
     };
-  }).filter((item) => item.values.length);
+  }).filter((item) => item.values.length)
+    .filter((item) => !(hasOicInstallablePackage && item.target === "configurationItems.lookups"));
   return labelExternalConfigurationItems(productName, extracted);
 }
 
@@ -4515,8 +4521,9 @@ export function App() {
           ).values()
         )
       : enteredInstallableArtifacts;
+    const hasOicInstallableArtifacts = actionProduct === "OIC" && oicInstallableArtifacts.length > 0;
     const databaseItems = actionProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
-    const oicConfigurationItems = actionProduct === "OIC" ? runtimeConfigurationItemsForProduct(actionProduct, sourceText) : [];
+    const oicConfigurationItems = actionProduct === "OIC" && !hasOicInstallableArtifacts ? runtimeConfigurationItemsForProduct(actionProduct, sourceText) : [];
     const isOdiPlan = isOdiManualPlan(actionProduct, sourceText);
     const isOsbPlan = isOsbManualPlan(actionProduct, sourceText);
     const isJavaPlan = isJavaManualPlan(actionProduct, sourceText);
@@ -4533,26 +4540,26 @@ export function App() {
           ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : databaseItems.length
           ? databaseItems
-        : oicConfigurationItems.length
-          ? oicConfigurationItems
         : sourceInstallableArtifacts.length
           ? sourceInstallableArtifacts
+        : oicConfigurationItems.length
+          ? oicConfigurationItems
           : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
     const artifacts = enteredArtifacts.length
       ? databaseItems.length
         ? databaseItems
-        : oicConfigurationItems.length
-          ? oicConfigurationItems
+        : oicInstallableArtifacts.length
+          ? oicInstallableArtifacts
         : isOdiPlan
           ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isOsbPlan
           ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
         : isJavaPlan
           ? runtimeConfigurationItemsForProduct(actionProduct, sourceText)
-        : oicInstallableArtifacts.length
-        ? oicInstallableArtifacts
         : sourceHasInstallableArtifacts
           ? sourceInstallableArtifacts
+        : oicConfigurationItems.length
+          ? oicConfigurationItems
           : enteredArtifacts
       : detectedArtifacts;
     const isMftPlan = isMftManualPlan(actionProduct, sourceText);
