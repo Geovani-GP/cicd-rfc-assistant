@@ -169,6 +169,11 @@ type KnowledgePhaseRule = {
   defaultIncluded: boolean;
 };
 
+type KnowledgeSafetyRule = {
+  redactPatterns?: string[];
+  evidenceExclusions?: string[];
+};
+
 type KnowledgeRuleProduct = {
   id: string;
   productName: string;
@@ -179,6 +184,7 @@ type KnowledgeRuleProduct = {
   detectorRules: KnowledgePatternRule[];
   extractorRules: KnowledgeExtractorRule[];
   phaseRules: KnowledgePhaseRule[];
+  safety?: KnowledgeSafetyRule;
 };
 
 type KnowledgeRulesCatalog = {
@@ -493,6 +499,15 @@ function isPhaseRule(value: unknown): value is KnowledgePhaseRule {
   );
 }
 
+function isSafetyRule(value: unknown): value is KnowledgeSafetyRule {
+  const item = value as KnowledgeSafetyRule;
+  return Boolean(
+    item &&
+    (item.redactPatterns === undefined || (Array.isArray(item.redactPatterns) && item.redactPatterns.every((entry) => typeof entry === "string"))) &&
+    (item.evidenceExclusions === undefined || (Array.isArray(item.evidenceExclusions) && item.evidenceExclusions.every((entry) => typeof entry === "string")))
+  );
+}
+
 function packageScopedPath(basePath: string, packagePath: string) {
   const scopedRoot = resolve(basePath);
   const candidate = resolve(scopedRoot, packagePath);
@@ -527,6 +542,7 @@ async function readKnowledgeRules(basePath: string, catalogPath: string | undefi
       detectors?: unknown[];
       extractors?: unknown[];
       phaseModel?: unknown[];
+      safety?: unknown;
     }>(rulePath);
     if (ruleFile.schemaVersion !== 1 || ruleFile.productId !== product.id) {
       throw new Error(`Invalid rules file for ${product.id}.`);
@@ -538,7 +554,8 @@ async function readKnowledgeRules(basePath: string, catalogPath: string | undefi
       !Array.isArray(ruleFile.extractors) ||
       !ruleFile.extractors.every(isExtractorRule) ||
       !Array.isArray(ruleFile.phaseModel) ||
-      !ruleFile.phaseModel.every(isPhaseRule)
+      !ruleFile.phaseModel.every(isPhaseRule) ||
+      (ruleFile.safety !== undefined && !isSafetyRule(ruleFile.safety))
     ) {
       throw new Error(`Invalid rule structure for ${product.id}.`);
     }
@@ -551,7 +568,8 @@ async function readKnowledgeRules(basePath: string, catalogPath: string | undefi
       phaseModel: ruleFile.phaseModel.length,
       detectorRules: ruleFile.detectors,
       extractorRules: ruleFile.extractors,
-      phaseRules: ruleFile.phaseModel
+      phaseRules: ruleFile.phaseModel,
+      safety: ruleFile.safety
     });
   }
 

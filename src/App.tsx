@@ -229,6 +229,12 @@ function externalPhaseModelForProduct(productName: string, rulesCatalog?: Knowle
   return selectedRule?.phaseRules ?? null;
 }
 
+function externalSafetyRulesForProduct(productName: string, rulesCatalog?: KnowledgeRulesCatalog) {
+  if (!rulesCatalog) return null;
+  const selectedRule = rulesCatalog.products.find((rule) => runtimeProductMatchesRule(productName, rule));
+  return selectedRule?.safety ?? null;
+}
+
 function applyExternalPhaseModel(phases: ManualActionPhase[], phaseRules: KnowledgeRuleProduct["phaseRules"] | null) {
   if (!phaseRules?.length) return phases;
   const phaseById = new Map(phases.map((phase) => [phase.id, phase]));
@@ -245,6 +251,10 @@ function applyExternalPhaseModel(phases: ManualActionPhase[], phaseRules: Knowle
   }
   const remaining = phases.filter((phase) => !usedIds.has(phase.id));
   return modeled.length ? [...modeled, ...remaining] : phases;
+}
+
+function escapeRegexLiteral(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function createClientId(prefix: string) {
@@ -3510,19 +3520,19 @@ export function App() {
       pipeline: executionMode === "cicd" ? pipelineDisplayName : "",
       run: executionMode === "cicd" ? pipelineRunValue.trim() : "",
       runUrl: executionMode === "cicd" ? pipelineDisplayUrl : "",
-      message: executionMode === "cicd" ? documentPipelineRfcMessage : "",
+      message: executionMode === "cicd" ? redactSupportOutputText(documentPipelineRfcMessage) : "",
       steps: documentSteps.slice(0, exportStepLimit).map((step, index) => {
         const stepKey = `${activeStep}-${trackingEnvironment}-${index}`;
         return {
           index: index + 1,
-          title: step.title,
-          comment: [
+          title: redactSupportOutputText(step.title),
+          comment: redactSupportOutputText([
             step.detail,
             pipelineStepFailures[stepKey] ? documentCopy.pipeline.failedStepPrefix : "",
             pipelineStepComments[stepKey]
           ]
             .filter((value) => value?.trim())
-            .join("\n\n"),
+            .join("\n\n")),
           images: evidenceItems
             .filter(
               (item) =>
@@ -4804,10 +4814,45 @@ export function App() {
   }
 
   function redactSupportOutputText(value: string) {
-    return value
+    const exactPersonalValues = [profileName, profileEmail, profilePhone]
+      .map((item) => item.trim())
+      .filter((item) => item && item !== defaultProfile.name);
+    const safetyTerms = [
+      "password",
+      "pwd",
+      "pass",
+      "token",
+      "secret",
+      "credential",
+      "email",
+      "correo",
+      "phone",
+      "telefono",
+      "teléfono",
+      "contact",
+      "contacto",
+      "prepared by",
+      "solicitante",
+      "requester",
+      ...(externalSafetyRulesForProduct(actionProduct, knowledgeCatalog.rules)?.redactPatterns ?? [])
+    ];
+    let redacted = value
       .replace(/\b((?:new\s+|confirm\s+)?password\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
       .replace(/\b((?:pwd|pass)\s*[:=]\s*)([^\n\r]+)/gi, "$1<REDACTED>")
-      .replace(/(<[^>\n\r]*password[^>\n\r]*>)(.*?)(<\/[^>\n\r]+>)/gi, "$1<REDACTED>$3");
+      .replace(/\b(password\s+for\s+this\s+information,\s*)([^\n\r]+)/gi, "$1<REDACTED>")
+      .replace(/(<[^>\n\r]*password[^>\n\r]*>)(.*?)(<\/[^>\n\r]+>)/gi, "$1<REDACTED>$3")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<REDACTED_EMAIL>")
+      .replace(/(?:\+\d{1,3}[\s()-]*)?(?:\d[\s()-]*){8,}\d/g, "<REDACTED_PHONE>")
+      .replace(/\/Users\/[^/\s]+/g, "/Users/<REDACTED_USER>")
+      .replace(/\\Users\\[^\\\s]+/g, "\\Users\\<REDACTED_USER>");
+    for (const term of Array.from(new Set(safetyTerms.map((item) => item.trim()).filter(Boolean)))) {
+      const label = escapeRegexLiteral(term);
+      redacted = redacted.replace(new RegExp(`\\b(${label}\\b\\s*[:=]\\s*)([^\\n\\r]+)`, "gi"), "$1<REDACTED>");
+    }
+    for (const personalValue of exactPersonalValues) {
+      redacted = redacted.replace(new RegExp(escapeRegexLiteral(personalValue), "gi"), "<REDACTED_USER>");
+    }
+    return redacted;
   }
 
   function supportSection(title: string, content: string) {
@@ -4880,6 +4925,12 @@ export function App() {
     const top = detectorResults[0];
     const selectedDetector = selectedRule ? detectorResults.find((item) => item.product.id === selectedRule.id) : null;
     const phaseDelta = selectedRule ? selectedRule.phaseRules.length - detectedPhaseCount : 0;
+    const safetySummary = selectedRule?.safety
+      ? [
+          `Safety redact patterns: ${selectedRule.safety.redactPatterns?.join(", ") || "<none>"}`,
+          `Safety evidence exclusions: ${selectedRule.safety.evidenceExclusions?.join(", ") || "<none>"}`
+        ].join("\n")
+      : "";
 
     return [
       `External rules package: ${rulesCatalog.knowledgeVersion}`,
@@ -4888,6 +4939,7 @@ export function App() {
       selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedDetector?.score ?? 0}` : "Selected rules product: <none>",
       selectedRule ? `Phase model comparison: parser=${detectedPhaseCount}, rules=${selectedRule.phaseRules.length}, delta=${phaseDelta}` : "",
       selectedRule ? `Rules phase model:\n${selectedRule.phaseRules.map((phase) => `- ${phase.title} (${phase.id}, ${phase.defaultIncluded ? "enabled" : "disabled"})`).join("\n")}` : "",
+      safetySummary,
       extracted.length
         ? [
             "Rules extracted items:",
@@ -5064,7 +5116,7 @@ export function App() {
       .reverse()
       .map((entry) => `[${new Date(entry.at).toLocaleString()}] ${stepTitle(entry.step)}: ${entry.text}`)
       .join("\n");
-    await navigator.clipboard?.writeText(text);
+    await navigator.clipboard?.writeText(redactSupportOutputText(text));
     setMessage(t.evidence.logCopied);
   }
 

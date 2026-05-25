@@ -153,6 +153,10 @@ export type RuntimeKnowledgeCatalog = {
         title: string;
         defaultIncluded: boolean;
       }>;
+      safety?: {
+        redactPatterns?: string[];
+        evidenceExclusions?: string[];
+      };
     }>;
   };
   basePath: string;
