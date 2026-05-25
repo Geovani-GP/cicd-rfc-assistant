@@ -4945,7 +4945,7 @@ export function App() {
           ? sourceInstallableArtifacts
           : enteredArtifacts
       : detectedManualArtifacts;
-    const artifacts = actionMethod === "manual" ? rawArtifacts : repairedArtifactsForActionPlan(rawArtifacts);
+    const artifacts = actionProduct === "OIC" ? repairedArtifactsForActionPlan(rawArtifacts) : rawArtifacts;
     const repoName = selectedRepo?.name ?? "<Repository>";
     const branchName = rfc.trim() || "<RFC>";
     const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <artifact>";
@@ -5145,6 +5145,13 @@ export function App() {
     ].filter(Boolean).join("\n");
   }
 
+  function currentActionPlanForSupportOutput(sourceText: string, detectedPhases: ManualActionPhase[], disabledKeys: string[]) {
+    if (actionPlanConfirmed) return actionPlan;
+    if (actionMethod !== "manual" || !sourceText.trim() || !detectedPhases.length) return actionPlan;
+    const enabledPhases = detectedPhases.filter((phase, index) => !disabledKeys.includes(manualPhaseKey(phase, index)));
+    return enabledPhases.length ? buildManualActionPlan(enabledPhases) : actionPlan;
+  }
+
   function buildActionPlanSupportOutput() {
     const sourceText = manualDetectionSourceText();
     const currentSourceKey = manualPhaseSourceKeyFor(sourceText);
@@ -5213,6 +5220,7 @@ export function App() {
       ? actionArtifactRows.map((row) => `- Document: ${row.documentName} | Loaded: ${row.artifactName} | Version: ${row.version} | Status: ${row.status}`).join("\n")
       : "<none>";
     const externalRulesDiagnostic = buildExternalRulesDiagnostic(sourceText, detectedPhases.length);
+    const generatedActionPlan = currentActionPlanForSupportOutput(sourceText, detectedPhases, disabledKeys);
 
     const metadata = [
       `Generated at: ${new Date().toISOString()}`,
@@ -5244,7 +5252,7 @@ export function App() {
       supportSection("Converter Source Text", sourceText),
       supportSection("Detected Manual Phases", phaseText),
       supportSection("External Rules Diagnostic", externalRulesDiagnostic),
-      supportSection("Generated Action Plan", actionPlan),
+      supportSection("Generated Action Plan", generatedActionPlan),
       "===================================================================="
     ].join("\n\n"));
   }
