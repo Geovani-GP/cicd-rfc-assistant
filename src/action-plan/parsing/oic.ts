@@ -13,6 +13,14 @@ import {
 } from "./common";
 import type { ManualActionPhase } from "./types";
 
+function firstMatch(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
+  return "";
+}
+
 function oicBackupFallback(ignoreLookups = false, integrations: string[] = []) {
   const integrationLine = integrations.length
     ? `If ${integrations.join(" or ")} already exists, export the current integration before deactivating or deleting it.`
@@ -46,6 +54,31 @@ function hasOicLookupOnlyInstructions(text: string) {
   return /\bLookups?>\s*OIC\b|\bImport\s+Lookups?\b|\bInstallation Instructions for Import Lookups?\b|\bExport General Lookup\b|\bImport General Lookup\b/i.test(text) &&
     /\blookups?\b[\s\S]{0,160}\b(?:Export CSV|Import and Replace|Import button|Choose File)\b|\b(?:Export CSV|Import and Replace)\b[\s\S]{0,160}\blookups?\b/i.test(text) &&
     !/\bInstallation artifacts\b|\.iar\b|\bActivate\b[\s\S]{0,40}\bintegration\b/i.test(text);
+}
+
+function hasVisualBuilderExportWithDataInstructions(text: string) {
+  return /\bVisual Builder\b/i.test(text) &&
+    /\bExport with Data\b|\bexports?\b[\s\S]{0,120}\bobjects?\s+Visual Builder\b|\bVisual Builder\b[\s\S]{0,160}\bexport/i.test(text) &&
+    !/\bImport\b[\s\S]{0,80}\bVisual Builder\b|\bdeploy\b|\bactivate\b/i.test(text);
+}
+
+function visualBuilderProjectName(text: string) {
+  return firstMatch(text, [
+    /\bproject named:\s*([A-Za-z0-9_. -]+?)(?:\s+version\b|\s+on\b|\.|\n|$)/i,
+    /\bproject\s+([A-Za-z0-9_. -]+?)\s+version\s+\d+(?:\.\d+)+/i
+  ]);
+}
+
+function visualBuilderProjectVersion(text: string) {
+  return firstMatch(text, [/\bversion\s+(\d+(?:\.\d+)+)\b/i]);
+}
+
+function visualBuilderProjectStatus(text: string) {
+  return firstMatch(text, [/\bon\s+([A-Za-z ]+?)\s+Status\b/i, /\bStatus\s*:?\s*([A-Za-z ]+)/i]);
+}
+
+function visualBuilderOicUrl(text: string) {
+  return cleanOicConnectionValue(firstMatch(text, [/\bLogin to OIC Instance\s*\((https?:\/\/[^)\s]+)\)/i, /\b(https?:\/\/[^\s)]+\/ic\/home\/?)/i]));
 }
 
 function oicInstallationFallback(
@@ -574,6 +607,16 @@ function oicLookupNames(text: string) {
 }
 
 export function oicConfigurationItems(text: string) {
+  if (hasVisualBuilderExportWithDataInstructions(text)) {
+    const project = visualBuilderProjectName(text);
+    const version = visualBuilderProjectVersion(text);
+    const status = visualBuilderProjectStatus(text);
+    return [
+      project ? `Visual Builder project: ${project}` : "Visual Builder export with data",
+      version ? `Version: ${version}` : "",
+      status ? `Status: ${status}` : ""
+    ].filter(Boolean);
+  }
   if (hasOicLookupOnlyInstructions(text)) return oicLookupNames(text).map((lookup) => `Lookup: ${lookup}`);
   if (!hasOicConnectionOnlyInstructions(text)) return [];
   return oicConnectionDetails(text).map((connection) => `Connection: ${connection.name}`);
@@ -678,6 +721,101 @@ function buildOicLookupOnlyPlan(text: string, selectedEnvironment: string): Manu
         "- Final lookup validation.",
         "",
         "Share final execution result with the RFC requester/customer."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildVisualBuilderExportWithDataPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "Production OIC instance";
+  const oicUrl = visualBuilderOicUrl(text) || oicAdminConsoleUrlForTarget(text, selectedEnvironment) || "<Production OIC URL>";
+  const project = visualBuilderProjectName(text) || "<VISUAL_BUILDER_PROJECT>";
+  const version = visualBuilderProjectVersion(text) || "<VERSION>";
+  const status = visualBuilderProjectStatus(text) || "Live";
+  const projectLines = [
+    `- Project: ${project}`,
+    `- Version: ${version}`,
+    `- Status: ${status}`
+  ].join("\n");
+  const indentedProjectLines = projectLines.replace(/^- /gm, "   - ");
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        `Confirm approved access to the source OIC / Visual Builder environment: ${target}.`,
+        `OIC URL: ${oicUrl}`,
+        "Confirm the RFC scope is export-only for Visual Builder objects with data.",
+        "Confirm the target Visual Builder project before execution:",
+        projectLines,
+        "Do not capture or expose password values, session tokens, or personal credential details in RFC evidence."
+      ].join("\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "No system change is being applied; backup is not required.",
+        "Capture pre-export evidence showing:",
+        "- Source OIC / Visual Builder environment.",
+        ...projectLines.split("\n")
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Export Steps",
+      content: [
+        `1. Login to the OIC instance:\n   - ${oicUrl}`,
+        "2. Open the Navigation Menu.",
+        "3. Select Visual Builder.",
+        "4. Locate and select the Visual Builder project:",
+        indentedProjectLines,
+        "5. Open the project actions menu using the three-points icon on the right side.",
+        "6. Select Export with Data.",
+        "7. Save the generated export file(s) to the local working folder.",
+        "8. Validate that the export completed successfully and the expected file(s) were generated.",
+        "9. Attach the exported file(s) to the RFC."
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for Visual Builder export-only activity.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Confirm the Visual Builder export completed without errors.",
+        "Confirm the generated export file(s) are available locally.",
+        "Confirm the exported file(s) were attached to the RFC.",
+        "Confirm no deployment, import, activation, or runtime configuration change was performed."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the export fails, stop execution and capture the error message.",
+        "Do not retry with different project/version values unless approved by the requester.",
+        "Escalate to the OIC / Visual Builder owner if the project is missing, not Live, or Export with Data is unavailable."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- OIC / Visual Builder source environment.",
+        "- Visual Builder project selected.",
+        ...projectLines.split("\n"),
+        "- Export with Data action.",
+        "- Export completion / generated file(s).",
+        "- Exported file(s) attached to the RFC.",
+        "Do not attach credential or password evidence."
       ].join("\n")
     }
   ];
@@ -1220,6 +1358,7 @@ function buildOicTracingPlan(text: string, selectedEnvironment: string): ManualA
 }
 
 export function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
+  if (hasVisualBuilderExportWithDataInstructions(text)) return buildVisualBuilderExportWithDataPlan(text, selectedEnvironment);
   if (hasOicLookupOnlyInstructions(text)) return buildOicLookupOnlyPlan(text, selectedEnvironment);
   if (hasOicConnectionOnlyInstructions(text)) return buildOicConnectionOnlyPlan(text, selectedEnvironment);
   if (hasOicResetPasswordInstructions(text)) return buildOicResetPasswordPlan(text, selectedEnvironment);
