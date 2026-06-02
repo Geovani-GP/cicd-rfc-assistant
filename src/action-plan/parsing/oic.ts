@@ -498,7 +498,7 @@ function connectionReferenceDetails(
   } else if (key === "ERP_SCHEDULE_SERVICE") {
     displayName = "ERP_Schedule_Service";
     type = "SOAP Services Catalog WSDL";
-    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || (erpHost ? `${erpHost}/fscmService/ServiceCatalogService?WSDL` : targetPending);
+    endpoint = erpHost ? `${erpHost}/fscmService/ServiceCatalogService?WSDL` : targetPending;
     security = /Username Password Token/i.test(tableSection) ? "Username Password Token" : "Basic Authentication";
     username = oicConnectionLineValue(tableSection, "Username") || "ORA_SYSTEM_USER_MX";
     accessType = "Public gateway";
@@ -512,7 +512,7 @@ function connectionReferenceDetails(
   } else if (key === "REPORT_SERVICE_SOAP_API") {
     displayName = "REPORT SERVICE SOAP CONNECTION ERP";
     type = "SOAP / ReportService WSDL";
-    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || (erpHost ? `${erpHost}/xmlpserver/services/v2/ReportService?wsdl` : targetPending);
+    endpoint = erpHost ? `${erpHost}/xmlpserver/services/v2/ReportService?wsdl` : targetPending;
     security = "No Security Policy";
   } else if (key === "AR_DIFERENT_PAYMETS") {
     type = "Imported REST/service connection";
