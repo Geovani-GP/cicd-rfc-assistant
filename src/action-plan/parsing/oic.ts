@@ -363,6 +363,66 @@ function connectionConfigurationNotes(text: string, connections: string[], optio
   return notes.join("\n\n");
 }
 
+function oicTableEnvironmentLabel(selectedEnvironment: string, targetInstance: string) {
+  const normalizedEnvironment = normalizeEnvironmentName(selectedEnvironment);
+  const normalizedInstance = normalizeEnvironmentName(targetInstance);
+  if (normalizedEnvironment === "DEV" || normalizedEnvironment === "DEVELOPMENT" || /DE$/i.test(targetInstance)) return "Dev";
+  if (normalizedEnvironment === "REG" || normalizedEnvironment === "REGRESSION" || /RE$/i.test(targetInstance)) return "Regression";
+  if (normalizedEnvironment === "TEST" || normalizedEnvironment === "PREPROD" || normalizedEnvironment === "TE" || /TE$/i.test(targetInstance) || normalizedInstance.endsWith("TE")) return "Test";
+  if (normalizedEnvironment === "PROD" || normalizedEnvironment === "PRODUCTION" || normalizedEnvironment === "PR" || /PR$/i.test(targetInstance)) return "Prod";
+  return selectedEnvironment || "target";
+}
+
+function oicConnectionTableSection(text: string, key: string) {
+  const normalizedKey = key.toUpperCase();
+  const configurationStart = text.search(/\bConfiguration of connections\b/i);
+  const lookupStart = configurationStart >= 0 ? text.slice(configurationStart).search(/\bLookup import\b|\bActivation of integrations\b|\bSchedule activation\b/i) : -1;
+  const source = configurationStart >= 0
+    ? text.slice(configurationStart, lookupStart > 0 ? configurationStart + lookupStart : undefined)
+    : text;
+  const patterns: Array<[RegExp, RegExp]> = [
+    [/ERP\s+SERVICE\s+API[\s\S]*?\(ERP Adapter\)/i, /\bGB_FINANCIALS_MX\b/i],
+    [/\bGB_FINANCIALS_MX\b/i, /\bGB_AR_BDU_SERVICE\b/i],
+    [/\bGB_AR_BDU_SERVICE\b/i, /\bERP_Schedule_Service\b/i],
+    [/\bERP_Schedule_Service\b/i, /\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i]
+  ];
+  const index = normalizedKey === "ERP_ADAPTER"
+    ? 0
+    : normalizedKey === "GB_FINANCIALS_MX"
+      ? 1
+      : normalizedKey === "GB_AR_BDU_SERVICE"
+        ? 2
+        : normalizedKey === "ERP_SCHEDULE_SERVICE"
+          ? 3
+          : -1;
+  if (index < 0) return "";
+  const [startPattern, endPattern] = patterns[index];
+  const start = source.search(startPattern);
+  if (start < 0) return "";
+  const rest = source.slice(start);
+  const end = rest.search(endPattern);
+  return end > 0 ? rest.slice(0, end) : rest;
+}
+
+function oicEnvironmentValueFromSection(section: string, environmentLabel: string) {
+  if (!section || !environmentLabel) return "";
+  const label = environmentLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = section.match(new RegExp(`\\bo\\s+${label}\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*o\\s+(?:Dev|Regression|Test|Prod)\\s*:|\\n\\s*•|\\n\\s*\\d+\\.|$)`, "i"));
+  return cleanOicConnectionValue(match?.[1] ?? "");
+}
+
+function oicConnectionLineValue(section: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = section.match(new RegExp(`•\\s*${escaped}\\s*:\\s*([^\\n\\r]+)`, "i"));
+  return cleanOicConnectionValue(match?.[1] ?? "");
+}
+
+function canonicalOicConnectionName(connection: string) {
+  const key = connection.toUpperCase();
+  if (key === "ERP_SCHEDULE_SERVICE") return "ERP_Schedule_Service";
+  return connection;
+}
+
 function connectionReferenceDetails(
   connection: string,
   text: string,
@@ -378,16 +438,53 @@ function connectionReferenceDetails(
   const erpHost = cleanFusionHost(environmentValue(environmentBlock, "ERP Host"));
   const oecHost = cleanFusionHost(environmentValue(environmentBlock, "OEC Host"));
   const cdmHost = cleanFusionHost(environmentValue(environmentBlock, "CDM Host"));
+  const environmentLabel = oicTableEnvironmentLabel(selectedEnvironment, targetInstance);
+  const tableSection = oicConnectionTableSection(text, key);
   const credentials = scope.requiresOnlineCredentialSession
     ? "Coordinate a working session with the password administrator for username/password entry or validation."
     : "Use the approved secure channel for username/password.";
   const status = "Validate first; configure only if missing or test fails.";
 
+  let displayName = canonicalOicConnectionName(connection);
   let type = "Confirm adapter type from the imported integration.";
   let endpoint = targetPending;
   let security = "Confirm security policy from the imported connection.";
+  let accessType = "";
+  let username = "";
+  const extraLines: string[] = [];
 
-  if (/\bOIC\b.*\bSERVICE\b.*\bAPI\b|\bOIC_SERVICE_REST_API\b/.test(key)) {
+  if (key === "ERP_ADAPTER") {
+    displayName = "ERP_ADAPTER";
+    type = "REST API Base URL";
+    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || erpHost || targetPending;
+    security = "Basic Authentication";
+    username = oicConnectionLineValue(tableSection, "Username") || "ORA_SYSTEM_USER_MX";
+  } else if (key === "GB_FINANCIALS_MX") {
+    type = "Database Adapter";
+    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || targetPending;
+    const serviceName = (() => {
+      const serviceNameStart = tableSection.search(/Service Name:/i);
+      return serviceNameStart >= 0 ? oicEnvironmentValueFromSection(tableSection.slice(serviceNameStart), environmentLabel) : "";
+    })();
+    const port = oicConnectionLineValue(tableSection, "Port") || "1521";
+    if (port) extraLines.push(`  Port: ${port}`);
+    if (serviceName) extraLines.push(`  Service Name: ${serviceName}`);
+    security = "Username Password Token";
+    username = oicConnectionLineValue(tableSection, "Username") || "GB_FINANCIALS_MX";
+    accessType = "Public gateway";
+  } else if (key === "GB_AR_BDU_SERVICE") {
+    type = "Imported REST/service connection";
+    endpoint = targetPending;
+    security = "OAuth 2.0 or Basic Authentication";
+    accessType = "Select the corresponding agent group / Public gateway as applicable in target OIC.";
+  } else if (key === "ERP_SCHEDULE_SERVICE") {
+    displayName = "ERP_Schedule_Service";
+    type = "SOAP Services Catalog WSDL";
+    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || (erpHost ? `${erpHost}/fscmService/ServiceCatalogService?WSDL` : targetPending);
+    security = "Basic Authentication";
+    username = oicConnectionLineValue(tableSection, "Username") || "ORA_SYSTEM_USER_MX";
+    accessType = "Public gateway";
+  } else if (/\bOIC\b.*\bSERVICE\b.*\bAPI\b|\bOIC_SERVICE_REST_API\b/.test(key)) {
     type = "REST API Base URL";
     endpoint = oicUrl || targetPending;
     security = "Basic Authentication";
@@ -411,13 +508,16 @@ function connectionReferenceDetails(
   }
 
   return [
-    `- ${connection}`,
+    `- ${displayName}`,
     `  Status: ${status}`,
     `  Type: ${type}`,
     `  Target URL/WSDL/Host: ${endpoint}`,
+    accessType ? `  Access type: ${accessType}` : "",
     `  Security: ${security}`,
+    username ? `  Username: ${username}` : "",
+    ...extraLines,
     `  Credentials: ${credentials}`
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function connectionReferenceBlock(
