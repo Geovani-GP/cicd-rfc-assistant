@@ -1536,7 +1536,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
   const scheduleNotApplicable = !metadata.schedules.length && oicScheduleContentIsNotApplicable(scheduleContent);
   const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
   const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
-  const prepareContent = (content: string) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content, { omitWsdlFileExamples: Boolean(loadedArtifacts.length) }), selectedEnvironment);
+  const prepareContent = (content: string, options: { dedupe?: boolean } = {}) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content, { omitWsdlFileExamples: Boolean(loadedArtifacts.length) }), selectedEnvironment, options);
   const preInstallClean = /^pre$/i.test(preInstallContent.trim()) ? "" : preInstallContent;
   const useScopedInstallation = scope.ignoreDashboard || scope.ignoreLookups;
   const scopedInstallationContent = useScopedInstallation
@@ -1561,7 +1561,7 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         scope.requiresOnlineCredentialSession && !metadata.connections.length ? "Execution requires an online session with the RFC owner and password administrator to provide/validate credentials through the approved secure channel." : "",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         preInstallClean
-      ].filter(Boolean).join("\n\n"))
+      ].filter(Boolean).join("\n\n"), { dedupe: false })
     },
     {
       id: "backup",

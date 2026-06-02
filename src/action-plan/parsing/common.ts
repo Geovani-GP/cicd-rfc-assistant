@@ -376,10 +376,10 @@ function filterEnvironmentCredentialBlocks(content: string, selectedEnvironment:
   return output.join("\n");
 }
 
-export function prepareManualPhaseContent(content: string, selectedEnvironment: string) {
+export function prepareManualPhaseContent(content: string, selectedEnvironment: string, options: { dedupe?: boolean } = {}) {
   const normalized = normalizeManualBullets(content);
   const blockFiltered = filterEnvironmentCredentialBlocks(normalized, selectedEnvironment);
-  return normalizeManualSection(filterEnvironmentSpecificLines(blockFiltered, selectedEnvironment).split("\n"));
+  return normalizeManualSection(filterEnvironmentSpecificLines(blockFiltered, selectedEnvironment).split("\n"), options);
 }
 
 export function hasNumberedInstructionSteps(text: string) {
