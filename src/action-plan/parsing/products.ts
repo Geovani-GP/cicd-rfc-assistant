@@ -1,7 +1,7 @@
 import { buildDatabaseSqlPlan, hasDatabaseInstructions } from "./database";
 import { buildJavaWeblogicPlan, hasJavaWeblogicInstructions, javaConfigurationItems } from "./java";
 import { buildMftConfigurationPlan, hasMftInstructions, mftConfigurationItems, mftManualPlanMetadata } from "./mft";
-import { buildOdiTopologyPlan, hasOdiInstructions, odiConfigurationItems, odiManualPlanMetadata } from "./odi";
+import { buildOdiTopologyPlan, hasOdiInstructions, isOdiProductName, odiConfigurationItems, odiManualPlanMetadata } from "./odi";
 import { buildManualPhasesFromDocument, oicConfigurationItems } from "./oic";
 import { buildOsbConfigurationPlan, hasOsbInstructions, osbConfigurationItems } from "./osb";
 import type { ManualActionPhase } from "./types";
@@ -15,7 +15,7 @@ export function isDatabaseManualPlan(productName: string, text: string) {
 }
 
 export function isOdiManualPlan(productName: string, text: string) {
-  return productName === "ODI Studio" && hasOdiInstructions(text);
+  return isOdiProductName(productName) && hasOdiInstructions(text);
 }
 
 export function isOsbManualPlan(productName: string, text: string) {

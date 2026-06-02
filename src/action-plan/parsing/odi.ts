@@ -23,6 +23,10 @@ function uniqueValues(values: string[]) {
   return Array.from(byKey.values());
 }
 
+export function isOdiProductName(productName: string) {
+  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator)$/i.test(productName.trim());
+}
+
 function odiSummary(text: string) {
   return firstMatch(text, [/Summary\s+(.+?)(?:\n|Description\b)/is]);
 }
@@ -296,9 +300,8 @@ function buildOdiJeeAgentRemediationPlan(text: string, selectedEnvironment: stri
         `- From: ${jarSource}`,
         `- To: ${jarTarget}`,
         "",
-        "4. Update the domain environment script according to KB183202 section \"For ODI JEE Agent\":",
+        "4. Update setDomainEnv.sh according to KB183202 section \"For ODI JEE Agent\" to ensure commons-vfs2-2.2.jar is available in the OracleDIAgent runtime classpath.",
         `- ${setDomainEnv}`,
-        "- Ensure the OracleDIAgent classpath loads the Domain Home lib commons-vfs2 jar.",
         "- Preserve the original script formatting and existing environment-specific values.",
         "",
         "5. Clear WebLogic cache according to KB90003 for the affected ODI managed servers.",
@@ -617,7 +620,7 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
 }
 
 export function odiManualPlanMetadata(productName: string, environmentName: string, instanceName: string, instructions: string) {
-  if (productName === "ODI Studio" && hasOdiJeeAgentRemediation(instructions)) {
+  if (isOdiProductName(productName) && hasOdiJeeAgentRemediation(instructions)) {
     const instance = odiTargetInstance(instructions) || instanceName;
     const hosts = odiMiddlewareHosts(instructions);
     const domainHome = odiDomainHome(instructions);
@@ -645,7 +648,7 @@ export function odiManualPlanMetadata(productName: string, environmentName: stri
       "OdiSftp scenarios run without ODI-17514 or ClassNotFoundException for org.apache.commons.vfs2.UserAuthenticator."
     ].filter(Boolean).join("\n");
   }
-  if (productName !== "ODI Studio" || !hasOdiComponentImportInstructions(instructions)) return "";
+  if (!isOdiProductName(productName) || !hasOdiComponentImportInstructions(instructions)) return "";
   const artifacts = odiArtifacts(instructions);
   const mappings = odiMappings(instructions);
   const packages = odiPackages(instructions);

@@ -141,9 +141,13 @@ type KnowledgeDetectorResult = { product: KnowledgeRuleProduct; score: number; m
 
 function runtimeProductMatchesRule(productName: string, rule: KnowledgeRuleProduct) {
   const normalizedProduct = productName.trim().toLowerCase();
+  const normalizedRuleProduct = rule.productName.toLowerCase();
+  const isOdiAlias = ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator"].includes(normalizedProduct) &&
+    ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator"].includes(normalizedRuleProduct);
   return normalizedProduct === rule.productName.toLowerCase() ||
     normalizedProduct === rule.id.toLowerCase() ||
-    (normalizedProduct === "base de datos" && rule.id === "database");
+    (normalizedProduct === "base de datos" && rule.id === "database") ||
+    isOdiAlias;
 }
 
 function detectKnowledgeRuleProducts(sourceText: string, rulesCatalog?: KnowledgeRulesCatalog): KnowledgeDetectorResult[] {
@@ -172,6 +176,10 @@ function hasStrongOicSignals(text: string) {
 
 function hasStrongOdiSignals(text: string) {
   return /\bOdiSftp\b|\bODI JEE Agent\b|\bOracleDIAgent\b|\bKB183202\b|\bsetDomainEnv\.sh\b|\bGBODI[A-Z0-9_-]+\b/i.test(text);
+}
+
+function isOdiProduct(productName: string) {
+  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator)$/i.test(productName.trim());
 }
 
 function externalRegexWithGlobal(pattern: string, flags = "i") {
@@ -1989,7 +1997,7 @@ type ActionTemplateOption = { id: ActionTemplateId; product?: string; label: str
 
 function actionTemplateMatchesProduct(templateId: ActionTemplateId, product: string, options: ActionTemplateOption[]) {
   const option = options.find((item) => item.id === templateId);
-  return !option?.product || option.product === product;
+  return !option?.product || option.product === product || (isOdiProduct(option.product) && isOdiProduct(product));
 }
 
 function actionTemplateHint(templateId: ActionTemplateId, options: ActionTemplateOption[]) {
@@ -2741,7 +2749,7 @@ export function App() {
     [knowledgeCatalog.templates]
   );
   function runtimeConfigurationItemsForProduct(productName: string, text: string) {
-    if (productName === "ODI Studio") {
+    if (isOdiProduct(productName)) {
       const localItems = configurationItemsForProduct(productName, text);
       if (localItems.length) return localItems;
     }
@@ -2756,7 +2764,7 @@ export function App() {
   function effectiveActionProductForText(text: string) {
     if (actionTemplateId !== "auto") return actionProduct;
     if (hasStrongOicSignals(text)) return actionProduct === "OIC" || !actionProduct ? "OIC" : actionProduct;
-    if (hasStrongOdiSignals(text)) return actionProduct === "ODI Studio" || !actionProduct ? "ODI Studio" : actionProduct;
+    if (hasStrongOdiSignals(text)) return isOdiProduct(actionProduct) || !actionProduct ? "Oracle Data Integration (ODI)" : actionProduct;
     const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
     const top = detectorResults[0];
     if (!top || top.score <= 0) return actionProduct;
@@ -3254,7 +3262,7 @@ export function App() {
       ? `${documentText}\n\nRFC complementary instructions:\n${editedText}`
       : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
-    const includeActionContext = actionTemplateId === "auto" || actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT" || actionProduct === "ODI Studio";
+    const includeActionContext = actionTemplateId === "auto" || actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT" || isOdiProduct(actionProduct);
     if (includeActionContext) {
       const loadedArtifactText = actionProduct === "MFT" ? "" : actionArtifactFiles.map((file) => file.name).join("\n");
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
@@ -3413,7 +3421,7 @@ export function App() {
     if (artifactTextCanBeFedFromInspection(value)) return true;
     const enteredArtifacts = artifactLinesFromText(value).filter((item) => /\.(?:iar|par|zip|jar|sql|csv|xml|asc)$/i.test(item));
     if (!enteredArtifacts.length) return true;
-    if (actionProduct === "ODI Studio" && inspectedArtifacts.length > enteredArtifacts.length) return true;
+    if (isOdiProduct(actionProduct) && inspectedArtifacts.length > enteredArtifacts.length) return true;
     const loadedKeys = inspectedArtifacts.map(normalizeArtifactCompareKey);
     return enteredArtifacts.some((artifact) => !loadedKeys.some((key) => artifactKeysMatch(normalizeArtifactCompareKey(artifact), key)));
   }
@@ -4995,7 +5003,7 @@ export function App() {
     setArtifactText((current) => {
       const inspectedArtifacts = inspectedActionInstallableArtifacts(filesForArtifacts, nextInspections);
       if (!artifactTextShouldUseInspectedArtifacts(current, inspectedArtifacts)) return current;
-      if (actionProduct === "ODI Studio") {
+      if (isOdiProduct(actionProduct)) {
         return dedupeArtifactNames([...artifactLinesFromText(current), ...inspectedArtifacts]).join("\n");
       }
       return inspectedArtifacts.length ? inspectedArtifacts.join("\n") : current;
@@ -6368,7 +6376,7 @@ export function App() {
                   <option value="Base de datos">Base de datos</option>
                   <option value="SOA">SOA</option>
                   <option value="JAVA">JAVA</option>
-                  <option value="ODI Studio">ODI Studio</option>
+                  <option value="Oracle Data Integration (ODI)">Oracle Data Integration (ODI)</option>
                   <option value="OSB">OSB</option>
                 </select>
               </label>
@@ -7416,7 +7424,7 @@ export function App() {
                   <option value="Base de datos">Base de datos</option>
                   <option value="SOA">SOA</option>
                   <option value="JAVA">JAVA</option>
-                  <option value="ODI Studio">ODI Studio</option>
+                  <option value="Oracle Data Integration (ODI)">Oracle Data Integration (ODI)</option>
                   <option value="OSB">OSB</option>
                 </select>
               </label>

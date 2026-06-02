@@ -27,7 +27,7 @@
     },
     {
       "id": "odi",
-      "name": "ODI Studio",
+      "name": "Oracle Data Integration (ODI)",
       "version": "2026.05.19-00",
       "previous": "2026.05.19-00",
       "modules": ["manual-action-plan", "topology", "password-encryption"]
