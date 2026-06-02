@@ -4552,6 +4552,14 @@ export function App() {
 
   function prepareManualDocumentReview(document: ActionSourceDocument) {
     const text = document.text.trim();
+    const currentDocumentId = [actionSourceDocument?.path, actionSourceDocument?.name].filter(Boolean).join("|");
+    const nextDocumentId = [document.path, document.name].filter(Boolean).join("|");
+    if (nextDocumentId && nextDocumentId !== currentDocumentId) {
+      clearActionArtifacts();
+      setActionPlan("");
+      setActionPlanConfirmed(false);
+      setActionPlanConfirmedAt("");
+    }
     setActionSourceDocument(document);
     setManualInstructions(text);
     setManualSourceText(text);
