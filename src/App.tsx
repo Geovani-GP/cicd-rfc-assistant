@@ -2562,6 +2562,7 @@ export function App() {
   const [expandedFiles, setExpandedFiles] = useState<string[]>([]);
   const [artifactInspections, setArtifactInspections] = useState<ArtifactInspection[]>([]);
   const [actionArtifactModalOpen, setActionArtifactModalOpen] = useState(false);
+  const [pendingActionPlanRegeneration, setPendingActionPlanRegeneration] = useState(0);
   const [actionArtifactFiles, setActionArtifactFiles] = useState<SelectedFile[]>([]);
   const [isDraggingActionArtifacts, setIsDraggingActionArtifacts] = useState(false);
   const [expandedActionArtifactFiles, setExpandedActionArtifactFiles] = useState<string[]>([]);
@@ -4859,6 +4860,14 @@ export function App() {
     setExpandedActionArtifactFiles([]);
   }
 
+  function closeActionArtifactModal() {
+    setActionArtifactModalOpen(false);
+    setIsDraggingActionArtifacts(false);
+    if (actionArtifactFiles.length || artifactText.trim() || manualDetectionSourceText().trim()) {
+      setPendingActionPlanRegeneration((current) => current + 1);
+    }
+  }
+
   function clearPackage() {
     setFiles([]);
     setArtifactInspections([]);
@@ -5608,6 +5617,20 @@ export function App() {
       setPipelineStepIndex(Math.max(0, currentPipelineSteps.length - 1));
     }
   }, [currentPipelineSteps.length, pipelineStepIndex]);
+
+  useEffect(() => {
+    if (!pendingActionPlanRegeneration || actionArtifactModalOpen || busy) return;
+    setPendingActionPlanRegeneration(0);
+    if (!actionArtifactFiles.length && !artifactText.trim() && !manualDetectionSourceText().trim()) return;
+    generateActionPlan();
+  }, [
+    pendingActionPlanRegeneration,
+    actionArtifactModalOpen,
+    busy,
+    actionArtifactFiles,
+    actionArtifactInspections,
+    artifactText
+  ]);
 
   useEffect(() => {
     if (manualPhaseTextareaRef.current) manualPhaseTextareaRef.current.scrollTop = 0;
@@ -7229,14 +7252,14 @@ export function App() {
       )}
 
       {actionArtifactModalOpen && (
-        <div className="modal-backdrop" onMouseDown={() => setActionArtifactModalOpen(false)}>
+        <div className="modal-backdrop" onMouseDown={closeActionArtifactModal}>
           <section className="workspace-modal action-artifact-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-head">
               <div>
                 <h2>{a.artifactInspectorTitle}</h2>
                 <p>{a.artifactInspectorBody}</p>
               </div>
-              <button className="icon-close" onClick={() => setActionArtifactModalOpen(false)}>
+              <button className="icon-close" onClick={closeActionArtifactModal}>
                 <X size={18} />
               </button>
             </div>
