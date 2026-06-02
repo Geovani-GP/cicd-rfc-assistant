@@ -81,8 +81,12 @@ function visualBuilderOicUrl(text: string) {
   return cleanOicConnectionValue(firstMatch(text, [/\bLogin to OIC Instance\s*\((https?:\/\/[^)\s]+)\)/i, /\b(https?:\/\/[^\s)]+\/ic\/home\/?)/i]));
 }
 
-function danielaCredentialSessionMessage() {
-  return "Customer action required: coordinate a working session with Daniela Gomez, password administrator, to enter or validate connection credentials during execution. Do not request, capture, or document password values in the RFC.";
+function credentialSessionMessage() {
+  return "Customer action required: coordinate a working session with the password administrator to enter or validate connection credentials during execution. Do not request, capture, or document password values in the RFC.";
+}
+
+function isOicManagedConnection(value: string) {
+  return /^PRESEEDED_/i.test(value) || /^COLLOCATED/i.test(value) || /^LOCAL(?:_|\s)/i.test(value);
 }
 
 function oicInstallationFallback(
@@ -104,8 +108,8 @@ function oicInstallationFallback(
     metadata.connections.length
       ? `${scope.commonConnectionsMayExist ? "Validate" : "Configure and validate"} the required connection(s):\n${asBullets(metadata.connections)}`
       : "",
-    metadata.connections.length ? danielaCredentialSessionMessage() : "",
-    scope.commonConnectionsMayExist ? "Configure only missing or failing connections using credentials entered during the approved Daniela Gomez working session." : "",
+    metadata.connections.length ? credentialSessionMessage() : "",
+    scope.commonConnectionsMayExist ? "Configure only missing or failing connections using credentials entered during the approved password administrator working session." : "",
     scope.ignoreLookups ? "Do not execute lookup import/configuration steps." : "",
     scope.ignoreDashboard ? "Do not execute Dashboard / Visual Builder validation steps." : "",
     metadata.integrations.length ? `Activate ${metadata.integrations.join(" and ")}.` : "Activate the imported integration.",
@@ -116,11 +120,12 @@ function oicInstallationFallback(
 
 function oicScopeOverrides(text: string) {
   const hasConnectionCredentialScope = /\bconnections?\b/i.test(text) && /\b(?:passwords?|credentials?|username|security policy|authentication)\b/i.test(text);
+  const lookupImportIsOptional = /\blookups?\b[\s\S]{0,220}\bnot mandatory unless explicitly required\b|\bOnly import the lookups specified in the RFC\b/i.test(text);
   return {
     ignoreDashboard: /\b(?:ignore|exclude|do not (?:install|validate|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\b(?:dashboard|visual builder)\b|\b(?:dashboard|visual builder)\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
-    ignoreLookups: /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
+    ignoreLookups: lookupImportIsOptional || /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
     commonConnectionsMayExist: /\bconnections?\b[\s\S]{0,160}\b(?:common use|already configured|could be already configured|ignore them if that's the case)\b/i.test(text),
-    requiresOnlineCredentialSession: hasConnectionCredentialScope || /\b(?:credentials?|passwords?)\b[\s\S]{0,180}\b(?:Daniela Gomez|session|secure channel|owner)\b|\bDaniela Gomez\b/i.test(text)
+    requiresOnlineCredentialSession: hasConnectionCredentialScope || /\b(?:credentials?|passwords?)\b[\s\S]{0,180}\b(?:session|secure channel|owner|administrator)\b/i.test(text)
   };
 }
 
@@ -352,7 +357,7 @@ function connectionConfigurationNotes(text: string, connections: string[], optio
   if (includeConnections && connections.length) notes.push(`Required connection(s):\n${asBullets(connections)}`);
   if (wsdlFiles.length) notes.push(`WSDL file(s) referenced by the connection configuration:\n${asBullets(wsdlFiles)}`);
   if (hasUsernamePasswordToken) notes.push("Security policy: Username Password Token.");
-  notes.push(danielaCredentialSessionMessage());
+  notes.push(credentialSessionMessage());
   return notes.join("\n\n");
 }
 
@@ -372,7 +377,7 @@ function connectionReferenceDetails(
   const oecHost = cleanFusionHost(environmentValue(environmentBlock, "OEC Host"));
   const cdmHost = cleanFusionHost(environmentValue(environmentBlock, "CDM Host"));
   const credentials = scope.requiresOnlineCredentialSession
-    ? "Coordinate a working session with Daniela Gomez, password administrator, for username/password entry or validation."
+    ? "Coordinate a working session with the password administrator for username/password entry or validation."
     : "Use the approved secure channel for username/password.";
   const status = "Validate first; configure only if missing or test fails.";
 
@@ -841,7 +846,7 @@ function buildOicConnectionOnlyPlan(text: string, selectedEnvironment: string): 
     connection.username ? `  Username: ${connection.username}` : "",
     connection.accessType ? `  Access type: ${connection.accessType}` : "",
     connection.selectedAgentGroup ? `  Selected agent group: ${connection.selectedAgentGroup}` : "",
-    `  Credentials: ${danielaCredentialSessionMessage()}`
+    `  Credentials: ${credentialSessionMessage()}`
   ].filter(Boolean).join("\n")).join("\n\n");
 
   return [
@@ -852,7 +857,7 @@ function buildOicConnectionOnlyPlan(text: string, selectedEnvironment: string): 
         `Validate access to the target OIC environment before starting: ${target}.`,
         `OIC Admin Console: ${oicUrl}`,
         "Requester/Oracle Consulting must provide or confirm all connection endpoint values and credentials for the target environment before RFS/execution.",
-        danielaCredentialSessionMessage(),
+        credentialSessionMessage(),
         "Do not use connection values from a different environment unless explicitly confirmed by the RFC owner.",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         "",
@@ -883,7 +888,7 @@ function buildOicConnectionOnlyPlan(text: string, selectedEnvironment: string): 
           "   - Search for the connection by name.",
           "   - Open/Edit the connection.",
           "   - Validate or update the non-sensitive connection properties listed in the prerequisites.",
-          "   - Enter credentials only during the coordinated working session with Daniela Gomez.",
+          "   - Enter credentials only during the coordinated working session with the password administrator.",
           "   - Click Test and confirm the result reaches 100%.",
           "   - If the test fails, correct the configuration using the approved values and test again.",
           "   - Click Save after successful test.",
@@ -971,7 +976,7 @@ function oicDetectedMetadata(text: string) {
   const connections = uniqueValues([
     ...linesMatching(text, /^connection:\s*([A-Z0-9_ .-]+)/i),
     ...connectionCandidatesFromText(text)
-  ]);
+  ]).filter((connection) => !isOicManagedConnection(connection));
   const dvms = linesMatching(text, /^dvm:\s*([A-Z0-9_ .-]+)/i);
   const schedules = uniqueValues([...linesMatching(text, /^schedule:\s*([A-Z0-9_ .-]+)/i), ...oicScheduledIntegrationCandidates(text)]);
   return { integrations: uniqueValues(integrations), connections, dvms, schedules };
@@ -1448,10 +1453,10 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         asBullets(artifacts),
         detectedBlock("Integrations detected", metadata.integrations),
         detectedBlock("Connections detected", metadata.connections),
-        metadata.connections.length ? danielaCredentialSessionMessage() : "",
+        metadata.connections.length ? credentialSessionMessage() : "",
         connectionReference,
         scope.ignoreLookups ? "" : detectedBlock("DVM/lookups detected", metadata.dvms),
-        scope.requiresOnlineCredentialSession && !metadata.connections.length ? "Execution requires an online session with the RFC owner and Daniela Gomez to provide/validate credentials through the approved secure channel." : "",
+        scope.requiresOnlineCredentialSession && !metadata.connections.length ? "Execution requires an online session with the RFC owner and password administrator to provide/validate credentials through the approved secure channel." : "",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         preInstallClean
       ].filter(Boolean).join("\n\n"))

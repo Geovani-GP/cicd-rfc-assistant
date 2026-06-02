@@ -610,7 +610,7 @@ function manualPhaseDisabledKeysForDefaults(phases: ManualActionPhase[]) {
 }
 
 function oicManualScopeIgnoresLookups(text: string) {
-  return /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text);
+  return /\blookups?\b[\s\S]{0,220}\bnot mandatory unless explicitly required\b|\bOnly import the lookups specified in the RFC\b|\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text);
 }
 
 function stableTextHash(value: string) {
