@@ -5337,8 +5337,14 @@ export function App() {
         .filter((item) => !(hasOicInstallablePackage && item.target === "configurationItems.lookups"))
       : [];
 
-    const top = detectorResults[0];
     const selectedDetector = selectedRule ? detectorResults.find((item) => item.product.id === selectedRule.id) : null;
+    const hasLocalOdiOverride = isOdiProduct(effectiveProduct) && hasOdiJeeAgentRemediationSignals(sourceText);
+    const top = hasLocalOdiOverride && selectedDetector ? selectedDetector : detectorResults[0];
+    const topScore = hasLocalOdiOverride && selectedDetector ? "local override" : `${top?.score ?? 0}`;
+    const topMatches = hasLocalOdiOverride && selectedDetector ? "local-odi-remediation" : top?.matches.join(", ") || "<none>";
+    const selectedScore = hasLocalOdiOverride && selectedRule && runtimeProductMatchesRule("Oracle Data Integration (ODI)", selectedRule)
+      ? "local override"
+      : `${selectedDetector?.score ?? 0}`;
     const selectedActionDetector = detectorResults.find((item) => runtimeProductMatchesRule(actionProduct, item.product));
     const phaseDelta = selectedRule ? selectedRule.phaseRules.length - detectedPhaseCount : 0;
     const safetySummary = selectedRule?.safety
@@ -5352,8 +5358,8 @@ export function App() {
       `External rules package: ${rulesCatalog.knowledgeVersion}`,
       `Current parser product: ${actionProduct || "<empty>"}`,
       effectiveProduct !== actionProduct ? `Effective parser product: ${effectiveProduct} (auto-detect override; selected product score=${selectedActionDetector?.score ?? 0})` : "",
-      top ? `Top rules detector: ${top.product.productName} (${top.product.id}) | Score: ${top.score} | Matches: ${top.matches.join(", ") || "<none>"}` : "Top rules detector: <none>",
-      selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedDetector?.score ?? 0}` : "Selected rules product: <none>",
+      top ? `Top rules detector: ${top.product.productName} (${top.product.id}) | Score: ${topScore} | Matches: ${topMatches}` : "Top rules detector: <none>",
+      selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedScore}` : "Selected rules product: <none>",
       selectedRule ? `Phase model comparison: parser=${detectedPhaseCount}, rules=${selectedRule.phaseRules.length}, delta=${phaseDelta}` : "",
       selectedRule ? `Rules phase model:\n${selectedRule.phaseRules.map((phase) => `- ${phase.title} (${phase.id}, ${phase.defaultIncluded ? "enabled" : "disabled"})`).join("\n")}` : "",
       safetySummary,
