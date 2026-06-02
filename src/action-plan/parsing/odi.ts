@@ -59,16 +59,21 @@ function odiUser(text: string) {
 function odiAgent(text: string) {
   return firstMatch(text, [
     /select the\s+([A-Za-z0-9_.-]*Agent[A-Za-z0-9_.-]*)/i,
+    /\b(OracleDIAgent)\b/i,
     /agent(?:\s+is|:)\s+([A-Za-z0-9_.-]+)/i
   ]) || "OracleDIAgent";
 }
 
 export function hasOdiInstructions(text: string) {
-  return /\bODI\b|ODI Studio|SUPERVISOR|Topology|Physical Architecture|RESTful Service|Data Server|ODI integration components|Connect to Repository|Regenerate .*scenario|SunopsisExport|SnpMapping|SnpPackage|ODI Mapping:|ODI Package:/i.test(text);
+  return /\bODI\b|ODI Studio|OdiSftp|OracleDIAgent|setDomainEnv\.sh|KB183202|SUPERVISOR|Topology|Physical Architecture|RESTful Service|Data Server|ODI integration components|Connect to Repository|Regenerate .*scenario|SunopsisExport|SnpMapping|SnpPackage|ODI Mapping:|ODI Package:/i.test(text);
 }
 
 function hasOdiComponentImportInstructions(text: string) {
   return /Backup ODI integration components|Import ODI integration components|Regenerate .*scenario|Objects to be Exported|Exporting the following objects|Artifact file:\s*[^\n\r]+\.xml|ODI Mapping:|ODI Package:|ODI Scenario:|SunopsisExport|SnpMapping|SnpPackage/i.test(text);
+}
+
+function hasOdiJeeAgentRemediation(text: string) {
+  return /KB183202|OdiSftp|OracleDIAgent|setDomainEnv\.sh|commons-vfs2|org\.apache\.commons\.vfs2\.UserAuthenticator|ODI JEE Agent/i.test(text);
 }
 
 function objectPattern() {
@@ -190,7 +195,195 @@ function odiSchema(text: string) {
   return firstMatch(text, [/schema\s+([A-Z0-9_]+)/i]);
 }
 
+function odiTargetInstance(text: string) {
+  return firstMatch(text, [
+    /Target instance:\s*([A-Z0-9_-]+)/i,
+    /\b(GBODI[A-Z0-9_-]+)\b/i
+  ]);
+}
+
+function odiMiddlewareHosts(text: string) {
+  return uniqueValues(Array.from(text.matchAll(/\b(oracle-odi-inst-[A-Za-z0-9-]+)\b/gi)).map((match) => match[1]));
+}
+
+function odiDomainHome(text: string) {
+  return firstMatch(text, [
+    /(\/[A-Za-z0-9_.-]+\/local\/config\/domains\/odi_domain)\b/i,
+    /(\/[^\s]+\/domains\/odi_domain)\b/i
+  ]) || "<DOMAIN_HOME>";
+}
+
+function odiCommonsVfsJarSource(text: string) {
+  return firstMatch(text, [
+    /(\/u01\/oracle\/mwh\/oracle_common\/modules\/thirdparty\/commons-vfs2-[0-9.]+\.jar)\b/i,
+    /(\/[^\s]+\/commons-vfs2-[0-9.]+\.jar)\b/i
+  ]) || "/u01/oracle/mwh/oracle_common/modules/thirdparty/commons-vfs2-2.2.jar";
+}
+
+function odiManagedServers(text: string) {
+  const explicit = uniqueValues(Array.from(text.matchAll(/\b(ODI_server\d+)\b/gi)).map((match) => match[1]));
+  return explicit.length ? explicit : ["ODI_server1", "ODI_server2"];
+}
+
+function buildOdiJeeAgentRemediationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const instance = odiTargetInstance(text) || "<ODI_INSTANCE>";
+  const domainHome = odiDomainHome(text);
+  const domainLib = domainHome === "<DOMAIN_HOME>" ? "<DOMAIN_HOME>/lib" : `${domainHome}/lib`;
+  const setDomainEnv = domainHome === "<DOMAIN_HOME>" ? "<DOMAIN_HOME>/bin/setDomainEnv.sh" : `${domainHome}/bin/setDomainEnv.sh`;
+  const jarSource = odiCommonsVfsJarSource(text);
+  const jarName = jarSource.split("/").pop() || "commons-vfs2-2.2.jar";
+  const jarTarget = `${domainLib}/${jarName}`;
+  const hosts = odiMiddlewareHosts(text);
+  const hostLines = hosts.length ? hosts.map((item) => `- ${item}`).join("\n") : "- Confirm ODI middleware host(s) for the target instance.";
+  const servers = odiManagedServers(text);
+  const serverLines = servers.map((item) => `- ${item}`).join("\n");
+  const agent = odiAgent(text);
+  const environment = selectedEnvironment || "<Environment>";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: prepareManualPhaseContent([
+        "Confirm approval to implement KB183202 remediation for ODI JEE Agent deployments.",
+        `Confirm target environment and instance:\n- Environment: ${environment}\n- Instance: ${instance}`,
+        `Confirm middleware host access:\n${hostLines}`,
+        "Confirm the required files and paths before execution:",
+        `- Source jar: ${jarSource}`,
+        `- Domain Home: ${domainHome}`,
+        `- Domain lib directory: ${domainLib}`,
+        `- Domain environment script: ${setDomainEnv}`,
+        "Confirm the current failure is consistent with:",
+        "- ODI-17514: Unrecognized Oracle Data Integrator built-in function: OdiSftp",
+        "- java.lang.ClassNotFoundException: org.apache.commons.vfs2.UserAuthenticator",
+        "Confirm maintenance window approval and restart authorization for the ODI managed servers.",
+        "Do not capture or expose OS, WebLogic, or repository password values."
+      ].join("\n"), selectedEnvironment)
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Capture current state before modifying the domain:",
+        `- Evidence that ${jarSource} exists.`,
+        "- Evidence that the jar contains org.apache.commons.vfs2.UserAuthenticator.",
+        `- Evidence of current Domain Home: ${domainHome}`,
+        `- Evidence of current Domain lib directory state: ${domainLib}`,
+        `- Evidence that ${setDomainEnv} currently references commons-vfs2.jar.`,
+        "",
+        "Backup the current setDomainEnv.sh before editing:",
+        `- Source: ${setDomainEnv}`,
+        "- Backup name/location: use the approved RFC backup naming convention.",
+        "",
+        "Capture current WebLogic/ODI managed server status before restart:",
+        serverLines
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Implementation Steps",
+      content: [
+        "Implement KB183202 remediation for ODI JEE Agent.",
+        "",
+        "1. Connect to the approved middleware host(s):",
+        hostLines,
+        "",
+        "2. Create the Domain Home lib directory if it does not exist:",
+        `- ${domainLib}`,
+        "- Required permissions: drwxr-x---",
+        "",
+        "3. Copy the commons-vfs2 jar to the Domain Home lib directory:",
+        `- From: ${jarSource}`,
+        `- To: ${jarTarget}`,
+        "",
+        "4. Update the domain environment script according to KB183202 section \"For ODI JEE Agent\":",
+        `- ${setDomainEnv}`,
+        "- Ensure the OracleDIAgent classpath loads the Domain Home lib commons-vfs2 jar.",
+        "- Preserve the original script formatting and existing environment-specific values.",
+        "",
+        "5. Clear WebLogic cache according to KB90003 for the affected ODI managed servers.",
+        "",
+        "6. Restart ODI managed servers to load the updated classpath:",
+        serverLines,
+        "",
+        "7. If KB183202 validation requires it, perform a controlled Admin Server restart only within the approved window.",
+        "",
+        `8. Validate ${agent} startup after restart.`
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable. This RFC remediates ODI JEE Agent classpath configuration and does not request ODI schedule activation.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate the ODI runtime after remediation:",
+        `1. Confirm the managed servers are RUNNING:\n${serverLines}`,
+        `2. Confirm ${agent} starts successfully.`,
+        "3. Execute the previously failing OdiSftp scenario.",
+        "4. Verify the ClassNotFoundException is no longer present:",
+        "- org.apache.commons.vfs2.UserAuthenticator",
+        "5. Verify ODI-17514 is no longer present:",
+        "- Unrecognized Oracle Data Integrator built-in function: OdiSftp",
+        "6. Confirm SFTP-related ODI jobs complete successfully."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If validation fails or the managed servers do not start correctly:",
+        "1. Stop the affected ODI managed servers.",
+        "2. Restore the original setDomainEnv.sh from the backup captured before the change.",
+        `3. Remove the copied jar from Domain Home lib if rollback requires it:\n- ${jarTarget}`,
+        "4. Clear WebLogic cache according to KB90003.",
+        "5. Restart the ODI managed servers:",
+        serverLines,
+        "6. Validate the environment returns to the pre-change state.",
+        "7. Capture the failure evidence and escalate to the ODI/WebLogic technical owner before retrying."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "- Pre-change jar/path validation.",
+        "- setDomainEnv.sh backup creation.",
+        `- ${domainLib} creation and permissions.`,
+        "- commons-vfs2 jar copy into Domain Home lib.",
+        "- setDomainEnv.sh update according to KB183202.",
+        "- WebLogic cache clear according to KB90003.",
+        "- ODI managed server restart and RUNNING state.",
+        `- ${agent} successful startup.`,
+        "- Successful OdiSftp scenario/job retest.",
+        "- Absence of ODI-17514 and ClassNotFoundException after the change.",
+        "",
+        "Do not attach screenshots or files exposing credentials, tokens, private keys, or personal data."
+      ].join("\n")
+    }
+  ];
+}
+
 export function odiConfigurationItems(text: string) {
+  if (hasOdiJeeAgentRemediation(text)) {
+    const instance = odiTargetInstance(text);
+    const domainHome = odiDomainHome(text);
+    const jarSource = odiCommonsVfsJarSource(text);
+    return [
+      instance ? `ODI Instance: ${instance}` : "",
+      "KB183202 ODI JEE Agent remediation",
+      `Domain Home: ${domainHome}`,
+      `setDomainEnv.sh: ${domainHome === "<DOMAIN_HOME>" ? "<DOMAIN_HOME>/bin/setDomainEnv.sh" : `${domainHome}/bin/setDomainEnv.sh`}`,
+      `Source jar: ${jarSource}`,
+      "WebLogic cache clear: KB90003",
+      ...odiManagedServers(text).map((server) => `Managed Server: ${server}`)
+    ].filter(Boolean);
+  }
   if (hasOdiComponentImportInstructions(text)) {
     const artifacts = odiArtifacts(text);
     const mappings = odiMappings(text);
@@ -328,6 +521,7 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
 }
 
 export function buildOdiTopologyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  if (hasOdiJeeAgentRemediation(text)) return buildOdiJeeAgentRemediationPlan(text, selectedEnvironment);
   if (hasOdiComponentImportInstructions(text)) return buildOdiComponentImportPlan(text, selectedEnvironment);
 
   const summary = normalizeWhitespace(odiSummary(text));
@@ -423,6 +617,34 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
 }
 
 export function odiManualPlanMetadata(productName: string, environmentName: string, instanceName: string, instructions: string) {
+  if (productName === "ODI Studio" && hasOdiJeeAgentRemediation(instructions)) {
+    const instance = odiTargetInstance(instructions) || instanceName;
+    const hosts = odiMiddlewareHosts(instructions);
+    const domainHome = odiDomainHome(instructions);
+    const jarSource = odiCommonsVfsJarSource(instructions);
+    return [
+      "Environment:",
+      `- ODI Instance: ${instance}`,
+      `- RFC Environment: ${environmentName}`,
+      hosts.length ? `- Middleware host(s): ${hosts.join(", ")}` : "",
+      "",
+      "Impact:",
+      "- ODI JEE Agent classpath will be remediated to restore OdiSftp execution.",
+      "- ODI managed servers will be restarted during the approved maintenance window.",
+      "",
+      "Scope:",
+      "- Implement KB183202 for ODI JEE Agent.",
+      "- Clear WebLogic cache according to KB90003.",
+      "- No ODI repository object import or data correction is included.",
+      "",
+      "Configuration:",
+      `- Domain Home: ${domainHome}`,
+      `- Source jar: ${jarSource}`,
+      "",
+      "Expected Outcome:",
+      "OdiSftp scenarios run without ODI-17514 or ClassNotFoundException for org.apache.commons.vfs2.UserAuthenticator."
+    ].filter(Boolean).join("\n");
+  }
   if (productName !== "ODI Studio" || !hasOdiComponentImportInstructions(instructions)) return "";
   const artifacts = odiArtifacts(instructions);
   const mappings = odiMappings(instructions);

@@ -170,6 +170,10 @@ function hasStrongOicSignals(text: string) {
   return /\bOIC\b|\bOracle Integration Cloud\b|\bIC Service Environment\b|\bOIC Admin Console\b|\.iar\b|icspackage\/appinstances\//i.test(text);
 }
 
+function hasStrongOdiSignals(text: string) {
+  return /\bOdiSftp\b|\bODI JEE Agent\b|\bOracleDIAgent\b|\bKB183202\b|\bsetDomainEnv\.sh\b|\bGBODI[A-Z0-9_-]+\b/i.test(text);
+}
+
 function externalRegexWithGlobal(pattern: string, flags = "i") {
   const cleanFlags = Array.from(new Set(`${flags}g`.replace(/[^dgimsuvy]/g, "").split(""))).join("");
   return new RegExp(pattern, cleanFlags);
@@ -2752,6 +2756,7 @@ export function App() {
   function effectiveActionProductForText(text: string) {
     if (actionTemplateId !== "auto") return actionProduct;
     if (hasStrongOicSignals(text)) return actionProduct === "OIC" || !actionProduct ? "OIC" : actionProduct;
+    if (hasStrongOdiSignals(text)) return actionProduct === "ODI Studio" || !actionProduct ? "ODI Studio" : actionProduct;
     const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
     const top = detectorResults[0];
     if (!top || top.score <= 0) return actionProduct;
