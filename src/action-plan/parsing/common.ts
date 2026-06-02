@@ -32,7 +32,7 @@ export function cleanIm090Text(text: string) {
       if (/^\d+$/.test(line)) return false;
       if (/^\d+[\w.-]*\.(?:docx|pdf)$/i.test(line)) return false;
       if (/^\d+(?:\.\d+)*\s+(?:Environment Information|Installation artifacts|Pre installation steps|Installation Steps|Scheduled(?: an)? Integration|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)\s+\d+$/i.test(line)) return false;
-      if (/^[A-Za-z]+ \d{1,2}, \d{4}$/i.test(line)) return false;
+      if (/^[A-Za-z]+ \d{1,2}, \d{3,4}$/i.test(line)) return false;
       return true;
     })
     .join("\n")

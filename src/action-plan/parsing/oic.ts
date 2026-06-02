@@ -381,19 +381,33 @@ function oicConnectionTableSection(text: string, key: string) {
     ? text.slice(configurationStart, lookupStart > 0 ? configurationStart + lookupStart : undefined)
     : text;
   const patterns: Array<[RegExp, RegExp]> = [
-    [/ERP\s+SERVICE\s+API[\s\S]*?\(ERP Adapter\)/i, /\bGB_FINANCIALS_MX\b/i],
-    [/\bGB_FINANCIALS_MX\b\s*•\s*Access type\s*:/i, /\bGB_AR_BDU_SERVICE\b\s*•\s*Access type\s*:/i],
+    [/ERP\s+SERVICE\s+API[\s\S]{0,140}?\(ERP Adapter\)/i, /ERP\s+SERVICE\s+API[\s\S]{0,120}?\(ERP Adapter catalog\)|\bREPORT SERVICE SOAP\b|\bGB_FINANCIALS_MX\b/i],
+    [/\bGB_FINANCIALS_MX\b[\s\S]{0,260}?•\s*Host\s*:/i, /\bOSBTec REST Service API\b|\bGB_AR_BDU_SERVICE\b\s*•\s*Access type\s*:/i],
     [/\bGB_AR_BDU_SERVICE\b\s*•\s*Access type\s*:/i, /\bERP_Schedule_Service\b\s*•\s*Host\s*:/i],
-    [/\bERP_Schedule_Service\b\s*•\s*Host\s*:/i, /\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i]
+    [/\bERP_Schedule_Service\b\s*•\s*(?:Host|WSDL URL|Security policy)\s*:/i, /\bNC_INBOUND_DATABASE\b|\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i],
+    [/\bOSBTec REST Service API\b\s*•\s*Access type\s*:/i, /\bAR_DIFERENT_PAYMETS\b|\bERP_Schedule_Service\b|\bNC_INBOUND_DATABASE\b|\n\s*5\.\s+Click/i],
+    [/\bREPORT SERVICE SOAP[\s\S]{0,120}?CONNECTION ERP\b/i, /\bGB_FINANCIALS_MX\b/i],
+    [/\bAR_DIFERENT_PAYMETS\b/i, /\bERP_Schedule_Service\b|\bNC_INBOUND_DATABASE\b|\n\s*5\.\s+Click/i],
+    [/\bNC_INBOUND_DATABASE\b/i, /\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i]
   ];
   const index = normalizedKey === "ERP_ADAPTER"
     ? 0
+    : normalizedKey === "API_ERP_ADAPTER"
+      ? 0
     : normalizedKey === "GB_FINANCIALS_MX"
       ? 1
       : normalizedKey === "GB_AR_BDU_SERVICE"
         ? 2
         : normalizedKey === "ERP_SCHEDULE_SERVICE"
           ? 3
+          : normalizedKey === "OSBTEC_REST_SERVICE_API"
+            ? 4
+            : normalizedKey === "REPORT_SERVICE_SOAP_API"
+              ? 5
+              : normalizedKey === "AR_DIFERENT_PAYMETS"
+                ? 6
+                : normalizedKey === "NC_INBOUND_DATABASE"
+                  ? 7
           : -1;
   if (index < 0) return "";
   const [startPattern, endPattern] = patterns[index];
@@ -420,6 +434,9 @@ function oicConnectionLineValue(section: string, label: string) {
 function canonicalOicConnectionName(connection: string) {
   const key = connection.toUpperCase();
   if (key === "ERP_SCHEDULE_SERVICE") return "ERP_Schedule_Service";
+  if (key === "API_ERP_ADAPTER") return "ERP SERVICE API";
+  if (key === "OSBTEC_REST_SERVICE_API") return "OSBTec REST Service API";
+  if (key === "REPORT_SERVICE_SOAP_API") return "REPORT SERVICE SOAP CONNECTION ERP";
   return connection;
 }
 
@@ -453,15 +470,16 @@ function connectionReferenceDetails(
   let username = "";
   const extraLines: string[] = [];
 
-  if (key === "ERP_ADAPTER") {
-    displayName = "ERP_ADAPTER";
-    type = "REST API Base URL";
+  if (key === "ERP_ADAPTER" || key === "API_ERP_ADAPTER") {
+    displayName = canonicalOicConnectionName(connection);
+    type = key === "API_ERP_ADAPTER" ? "ERP Adapter / ERP Cloud Host" : "REST API Base URL";
     endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || erpHost || targetPending;
-    security = "Basic Authentication";
+    security = /Username Password Token/i.test(tableSection) ? "Username Password Token" : "Basic Authentication";
     username = oicConnectionLineValue(tableSection, "Username") || "ORA_SYSTEM_USER_MX";
   } else if (key === "GB_FINANCIALS_MX") {
     type = "Database Adapter";
-    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || targetPending;
+    const hostStart = tableSection.search(/Host\s*:/i);
+    endpoint = (hostStart >= 0 ? oicEnvironmentValueFromSection(tableSection.slice(hostStart), environmentLabel) : "") || oicEnvironmentValueFromSection(tableSection, environmentLabel) || targetPending;
     const serviceName = (() => {
       const serviceNameStart = tableSection.search(/Service Name:/i);
       return serviceNameStart >= 0 ? oicEnvironmentValueFromSection(tableSection.slice(serviceNameStart), environmentLabel) : "";
@@ -481,9 +499,31 @@ function connectionReferenceDetails(
     displayName = "ERP_Schedule_Service";
     type = "SOAP Services Catalog WSDL";
     endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || (erpHost ? `${erpHost}/fscmService/ServiceCatalogService?WSDL` : targetPending);
-    security = "Basic Authentication";
+    security = /Username Password Token/i.test(tableSection) ? "Username Password Token" : "Basic Authentication";
     username = oicConnectionLineValue(tableSection, "Username") || "ORA_SYSTEM_USER_MX";
     accessType = "Public gateway";
+  } else if (key === "OSBTEC_REST_SERVICE_API") {
+    displayName = "OSBTec REST Service API";
+    type = "REST API Base URL";
+    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || targetPending;
+    security = /Basic Auth/i.test(tableSection) ? "Basic Auth" : "Basic Authentication";
+    username = oicConnectionLineValue(tableSection, "Username") || "tech-ocloud_mx";
+    accessType = "Select the corresponding agent group.";
+  } else if (key === "REPORT_SERVICE_SOAP_API") {
+    displayName = "REPORT SERVICE SOAP CONNECTION ERP";
+    type = "SOAP / ReportService WSDL";
+    endpoint = oicEnvironmentValueFromSection(tableSection, environmentLabel) || (erpHost ? `${erpHost}/xmlpserver/services/v2/ReportService?wsdl` : targetPending);
+    security = "No Security Policy";
+  } else if (key === "AR_DIFERENT_PAYMETS") {
+    type = "Imported REST/service connection";
+    endpoint = targetPending;
+    security = "OAuth 2.0 or Basic Authentication";
+    accessType = "Public Gateway";
+  } else if (key === "NC_INBOUND_DATABASE") {
+    type = "Imported database/service connection";
+    endpoint = targetPending;
+    security = "OAuth 2.0 or Basic Authentication";
+    accessType = "Public Gateway";
   } else if (/\bOIC\b.*\bSERVICE\b.*\bAPI\b|\bOIC_SERVICE_REST_API\b/.test(key)) {
     type = "REST API Base URL";
     endpoint = oicUrl || targetPending;
@@ -1057,6 +1097,18 @@ function oicScheduledIntegrationCandidates(text: string) {
     .map((value) => frequency ? `${value} - every ${frequency}` : value);
 }
 
+function oicDocumentIntegrationList(text: string) {
+  const sections = [
+    text.match(/Validate if the following integrations exist:\s*([\s\S]*?)(?:If the integrations do not exist|If the integration does not exist|4\.\s+If)/i)?.[1] ?? "",
+    text.match(/The integrations to activate are listed below:\s*([\s\S]*?)(?:Press|3\.\s+Select|File Ref:)/i)?.[1] ?? ""
+  ];
+  return uniqueValues(
+    sections.flatMap((section) =>
+      Array.from(section.matchAll(/^\s*(?:[-•]\s*)?([A-Z]{2}(?:_[A-Z0-9]+){2,})\s*$/gim)).map((match) => match[1])
+    )
+  );
+}
+
 function oicDetectedMetadata(text: string) {
   const integrationMetadata = text
     .split(/\r?\n/)
@@ -1071,8 +1123,9 @@ function oicDetectedMetadata(text: string) {
   const repeatedIntegrations = Array.from(text.matchAll(/\bRepeat the steps for the\s+([A-Z][A-Z0-9_]{6,})\s+integration\b/gi)).map((match) => match[1]);
   const scheduledIntegrations = oicScheduledIntegrationCandidates(text).map((value) => value.split(/\s+-\s+/)[0]);
   const referencedIntegrations = Array.from(text.matchAll(/\b(?:refer to|Search for|Integration name)\s+((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1]);
+  const documentIntegrations = oicDocumentIntegrationList(text);
   const integrations = removePartialIntegrationNames([...integrationMetadata, ...namedIntegrations, ...referencedIntegrations])
-    .concat(repeatedIntegrations, scheduledIntegrations)
+    .concat(repeatedIntegrations, scheduledIntegrations, documentIntegrations)
     .filter((value) => !/^IN_LGFDATA_TO_WMS$/i.test(value))
     .filter((value) => /^(?:(?:IN|OUT|SYNC)_[A-Z0-9_]+|[A-Z]{2}(?:_[A-Z0-9]+){2,})$/i.test(value));
   const connections = uniqueValues([
