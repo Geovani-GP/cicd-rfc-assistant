@@ -68,13 +68,13 @@
     },
     {
       "id": "odi-add-user",
-      "product": "Oracle Data Integration (ODI)",
+      "product": "Oracle Data Integrator (ODI)",
       "label": "ODI - Add User",
       "hint": "Template reference: ODI Studio add user. Login to ODI Studio, open Security tab, create users, set password and initials, configure expiration, assign profiles CONNECT/OPERATOR/REPOSITORY_EXPLORER as requested, save, test user, and release evidence."
     },
     {
       "id": "odi-encrypt-password",
-      "product": "Oracle Data Integration (ODI)",
+      "product": "Oracle Data Integrator (ODI)",
       "label": "ODI - Encrypt Password",
       "hint": "Template reference: ODI Studio password encryption. Login to ODI Studio, create dummy package, drag SFTP Get/Put tool, enter plain password only in secure session, copy encrypted value from command, and avoid storing plain password in evidence."
     },

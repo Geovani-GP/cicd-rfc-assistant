@@ -142,8 +142,8 @@ type KnowledgeDetectorResult = { product: KnowledgeRuleProduct; score: number; m
 function runtimeProductMatchesRule(productName: string, rule: KnowledgeRuleProduct) {
   const normalizedProduct = productName.trim().toLowerCase();
   const normalizedRuleProduct = rule.productName.toLowerCase();
-  const isOdiAlias = ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator"].includes(normalizedProduct) &&
-    ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator"].includes(normalizedRuleProduct);
+  const isOdiAlias = ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator", "oracle data integrator (odi)"].includes(normalizedProduct) &&
+    ["odi", "odi studio", "oracle data integration (odi)", "oracle data integrator", "oracle data integrator (odi)"].includes(normalizedRuleProduct);
   return normalizedProduct === rule.productName.toLowerCase() ||
     normalizedProduct === rule.id.toLowerCase() ||
     (normalizedProduct === "base de datos" && rule.id === "database") ||
@@ -183,7 +183,7 @@ function hasOdiJeeAgentRemediationSignals(text: string) {
 }
 
 function isOdiProduct(productName: string) {
-  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator)$/i.test(productName.trim());
+  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator|Oracle Data Integrator \(ODI\))$/i.test(productName.trim());
 }
 
 function externalRegexWithGlobal(pattern: string, flags = "i") {
@@ -2768,7 +2768,7 @@ export function App() {
   function effectiveActionProductForText(text: string) {
     if (actionTemplateId !== "auto") return actionProduct;
     if (hasStrongOicSignals(text)) return actionProduct === "OIC" || !actionProduct ? "OIC" : actionProduct;
-    if (hasStrongOdiSignals(text)) return isOdiProduct(actionProduct) || !actionProduct ? "Oracle Data Integration (ODI)" : actionProduct;
+    if (hasStrongOdiSignals(text)) return isOdiProduct(actionProduct) || !actionProduct ? "Oracle Data Integrator (ODI)" : actionProduct;
     const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
     const top = detectorResults[0];
     if (!top || top.score <= 0) return actionProduct;
@@ -5342,7 +5342,7 @@ export function App() {
     const top = hasLocalOdiOverride && selectedDetector ? selectedDetector : detectorResults[0];
     const topScore = hasLocalOdiOverride && selectedDetector ? "local override" : `${top?.score ?? 0}`;
     const topMatches = hasLocalOdiOverride && selectedDetector ? "local-odi-remediation" : top?.matches.join(", ") || "<none>";
-    const selectedScore = hasLocalOdiOverride && selectedRule && runtimeProductMatchesRule("Oracle Data Integration (ODI)", selectedRule)
+    const selectedScore = hasLocalOdiOverride && selectedRule && runtimeProductMatchesRule("Oracle Data Integrator (ODI)", selectedRule)
       ? "local override"
       : `${selectedDetector?.score ?? 0}`;
     const selectedActionDetector = detectorResults.find((item) => runtimeProductMatchesRule(actionProduct, item.product));
@@ -6384,7 +6384,7 @@ export function App() {
                   <option value="Base de datos">Base de datos</option>
                   <option value="SOA">SOA</option>
                   <option value="JAVA">JAVA</option>
-                  <option value="Oracle Data Integration (ODI)">Oracle Data Integration (ODI)</option>
+                  <option value="Oracle Data Integrator (ODI)">Oracle Data Integrator (ODI)</option>
                   <option value="OSB">OSB</option>
                 </select>
               </label>
@@ -7432,7 +7432,7 @@ export function App() {
                   <option value="Base de datos">Base de datos</option>
                   <option value="SOA">SOA</option>
                   <option value="JAVA">JAVA</option>
-                  <option value="Oracle Data Integration (ODI)">Oracle Data Integration (ODI)</option>
+                  <option value="Oracle Data Integrator (ODI)">Oracle Data Integrator (ODI)</option>
                   <option value="OSB">OSB</option>
                 </select>
               </label>

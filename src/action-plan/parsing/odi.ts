@@ -24,7 +24,7 @@ function uniqueValues(values: string[]) {
 }
 
 export function isOdiProductName(productName: string) {
-  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator)$/i.test(productName.trim());
+  return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator|Oracle Data Integrator \(ODI\))$/i.test(productName.trim());
 }
 
 function odiSummary(text: string) {

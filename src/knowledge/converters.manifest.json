@@ -27,7 +27,7 @@
     },
     {
       "id": "odi",
-      "name": "Oracle Data Integration (ODI)",
+      "name": "Oracle Data Integrator (ODI)",
       "version": "2026.05.19-00",
       "previous": "2026.05.19-00",
       "modules": ["manual-action-plan", "topology", "password-encryption"]
