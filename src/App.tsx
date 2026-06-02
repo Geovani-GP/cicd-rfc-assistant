@@ -178,6 +178,10 @@ function hasStrongOdiSignals(text: string) {
   return /\bOdiSftp\b|\bODI JEE Agent\b|\bOracleDIAgent\b|\bKB183202\b|\bsetDomainEnv\.sh\b|\bGBODI[A-Z0-9_-]+\b/i.test(text);
 }
 
+function hasOdiJeeAgentRemediationSignals(text: string) {
+  return /\bKB183202\b|\bOdiSftp\b|\bOracleDIAgent\b|\bcommons-vfs2\b|\bsetDomainEnv\.sh\b|\bODI JEE Agent\b/i.test(text);
+}
+
 function isOdiProduct(productName: string) {
   return /^(?:ODI|ODI Studio|Oracle Data Integration \(ODI\)|Oracle Data Integrator)$/i.test(productName.trim());
 }
@@ -3429,6 +3433,7 @@ export function App() {
   function actionArtifactComparisonRows() {
     const sourceText = manualDetectionSourceText();
     const effectiveProduct = effectiveActionProductForText(sourceText);
+    if (isOdiProduct(effectiveProduct) && hasOdiJeeAgentRemediationSignals(sourceText)) return [];
     if (effectiveProduct === "OIC" && runtimeConfigurationItemsForProduct(effectiveProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
@@ -5286,10 +5291,7 @@ export function App() {
   }
 
   function productMatchesRule(productName: string, rule: NonNullable<RuntimeKnowledgeCatalog["rules"]>["products"][number]) {
-    const normalizedProduct = productName.trim().toLowerCase();
-    return normalizedProduct === rule.productName.toLowerCase() ||
-      normalizedProduct === rule.id.toLowerCase() ||
-      (normalizedProduct === "base de datos" && rule.id === "database");
+    return runtimeProductMatchesRule(productName, rule);
   }
 
   function buildExternalRulesDiagnostic(sourceText: string, detectedPhaseCount: number) {
