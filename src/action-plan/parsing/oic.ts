@@ -39,7 +39,9 @@ function oicScheduleFallback() {
 }
 
 function oicScheduleContentIsNotApplicable(content: string) {
-  if (!content.trim()) return true;
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+  if (/^(?:\d+(?:\.\d+)*\s+)?Schedule activation$/i.test(normalized)) return true;
   return /\bN\/A\b|\bnot applicable\b/i.test(content) &&
     !/\bevery\s+\d+|\bstart schedule\b|\bstart running\b|\bfrequency\b/i.test(content);
 }
@@ -972,7 +974,7 @@ function oicDetectedMetadata(text: string) {
   const integrations = removePartialIntegrationNames([...integrationMetadata, ...namedIntegrations, ...referencedIntegrations])
     .concat(repeatedIntegrations, scheduledIntegrations)
     .filter((value) => !/^IN_LGFDATA_TO_WMS$/i.test(value))
-    .filter((value) => /^(?:IN|OUT|SYNC)_[A-Z0-9_]+$/i.test(value));
+    .filter((value) => /^(?:(?:IN|OUT|SYNC)_[A-Z0-9_]+|[A-Z]{2}(?:_[A-Z0-9]+){2,})$/i.test(value));
   const connections = uniqueValues([
     ...linesMatching(text, /^connection:\s*([A-Z0-9_ .-]+)/i),
     ...connectionCandidatesFromText(text)

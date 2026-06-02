@@ -166,6 +166,10 @@ function detectKnowledgeRuleProducts(sourceText: string, rulesCatalog?: Knowledg
   }).sort((left, right) => right.score - left.score);
 }
 
+function hasStrongOicSignals(text: string) {
+  return /\bOIC\b|\bOracle Integration Cloud\b|\bIC Service Environment\b|\bOIC Admin Console\b|\.iar\b|icspackage\/appinstances\//i.test(text);
+}
+
 function externalRegexWithGlobal(pattern: string, flags = "i") {
   const cleanFlags = Array.from(new Set(`${flags}g`.replace(/[^dgimsuvy]/g, "").split(""))).join("");
   return new RegExp(pattern, cleanFlags);
@@ -2746,6 +2750,7 @@ export function App() {
   }
   function effectiveActionProductForText(text: string) {
     if (actionTemplateId !== "auto") return actionProduct;
+    if (hasStrongOicSignals(text)) return actionProduct === "OIC" || !actionProduct ? "OIC" : actionProduct;
     const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
     const top = detectorResults[0];
     if (!top || top.score <= 0) return actionProduct;
@@ -3243,7 +3248,8 @@ export function App() {
       ? `${documentText}\n\nRFC complementary instructions:\n${editedText}`
       : documentText || manualSourceText.trim() || editedText;
     const templateHint = actionTemplateId === "auto" ? "" : actionTemplateHint(actionTemplateId, allActionTemplateOptions);
-    if (actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT" || actionProduct === "ODI Studio") {
+    const includeActionContext = actionTemplateId === "auto" || actionProduct === "Base de datos" || actionProduct === "OSB" || actionProduct === "OIC" || actionProduct === "MFT" || actionProduct === "ODI Studio";
+    if (includeActionContext) {
       const loadedArtifactText = actionProduct === "MFT" ? "" : actionArtifactFiles.map((file) => file.name).join("\n");
       const targetInstanceText = actionInstance.trim() ? `Target instance: ${actionInstance.trim()}` : "";
       return [templateHint, actionActivity, targetInstanceText, actionScopeNotes, sourceText, artifactText, loadedArtifactText, artifactInspectionTextForPlan()]
