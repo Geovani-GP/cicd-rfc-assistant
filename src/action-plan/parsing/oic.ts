@@ -382,9 +382,9 @@ function oicConnectionTableSection(text: string, key: string) {
     : text;
   const patterns: Array<[RegExp, RegExp]> = [
     [/ERP\s+SERVICE\s+API[\s\S]*?\(ERP Adapter\)/i, /\bGB_FINANCIALS_MX\b/i],
-    [/\bGB_FINANCIALS_MX\b/i, /\bGB_AR_BDU_SERVICE\b/i],
-    [/\bGB_AR_BDU_SERVICE\b/i, /\bERP_Schedule_Service\b/i],
-    [/\bERP_Schedule_Service\b/i, /\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i]
+    [/\bGB_FINANCIALS_MX\b\s*•\s*Access type\s*:/i, /\bGB_AR_BDU_SERVICE\b\s*•\s*Access type\s*:/i],
+    [/\bGB_AR_BDU_SERVICE\b\s*•\s*Access type\s*:/i, /\bERP_Schedule_Service\b\s*•\s*Host\s*:/i],
+    [/\bERP_Schedule_Service\b\s*•\s*Host\s*:/i, /\n\s*5\.\s+Click|\n\s*2\.3\.\d+/i]
   ];
   const index = normalizedKey === "ERP_ADAPTER"
     ? 0
@@ -508,7 +508,7 @@ function connectionReferenceDetails(
   }
 
   return [
-    `- ${displayName}`,
+    `Connection: ${displayName}`,
     `  Status: ${status}`,
     `  Type: ${type}`,
     `  Target URL/WSDL/Host: ${endpoint}`,
