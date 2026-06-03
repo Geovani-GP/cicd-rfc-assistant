@@ -127,7 +127,10 @@ function componentValues(text: string, label: string) {
 }
 
 function odiArtifacts(text: string) {
-  return uniqueValues(Array.from(text.matchAll(/\bArtifact file:\s*([^\n\r]+\.xml)\b/gi)).map((match) => match[1].trim()));
+  return uniqueValues([
+    ...Array.from(text.matchAll(/\bArtifact file:\s*([^\n\r]+\.xml)\b/gi)).map((match) => match[1].trim()),
+    ...(text.match(/\b[A-Z0-9_.-]+\.xml\b/gi) ?? [])
+  ]);
 }
 
 function odiMappings(text: string) {
@@ -148,7 +151,7 @@ function odiScenarios(text: string) {
   const explicitScenario = odiScenario(text);
   return uniqueValues([
     ...componentValues(text, "ODI Scenario"),
-    explicitScenario ? explicitScenario.replace(/\s+Version\s+\d+$/i, "") : "",
+    explicitScenario || "",
     ...odiObjectNames(text).filter((item) => /^SCN_/i.test(item))
   ].filter(Boolean));
 }
@@ -173,7 +176,11 @@ function odiProject(text: string) {
 
 function odiFolder(text: string) {
   return componentValues(text, "ODI Folder")[0] ||
-    firstMatch(text, [/\bPRY_[A-Z0-9_]+\s*[-.>]+\s*([A-Z0-9_ ]*COMMONS)\b/i, /\bPRY_[A-Z0-9_]+\.([A-Z0-9_ ]*COMMONS)\./i]);
+    firstMatch(text, [
+      /\bPRY_[A-Z0-9_]+\s+folder\s*>\s*([A-Z0-9_ ]+)/i,
+      /\bPRY_[A-Z0-9_]+\s*[-.>]+\s*([A-Z0-9_ ]*COMMONS)\b/i,
+      /\bPRY_[A-Z0-9_]+\.([A-Z0-9_ ]*COMMONS)\./i
+    ]);
 }
 
 function odiSqlScripts(text: string) {
@@ -191,6 +198,7 @@ function odiScenario(text: string) {
   const joinedText = text.replace(/([A-Z0-9])\s*\n\s*(_[A-Z0-9_]+)/g, "$1$2");
   return firstMatch(text, [
     /Regenerate\s+([A-Z0-9_]+\s+Version\s+\d+)/i,
+    /\b([A-Z0-9_]+\s+Version\s+\d+)\s*>\s*click\s+Regenerate/i,
     /Right click on the\s+([A-Z0-9_]+\s+Version\s+\d+)\s+scenario/i
   ]) || firstMatch(joinedText, [/\b(SCN_[A-Z0-9_]+)\b/i]);
 }
@@ -431,7 +439,40 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
   const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : "- <ODI XML export artifact(s)>";
   const mappingLines = mappings.length ? mappings.map((item) => `- ${item}`).join("\n") : "- <MAPPING_OBJECTS>";
   const packageLines = packages.length ? packages.map((item) => `- ${item}`).join("\n") : "- <PACKAGE_OBJECTS>";
+  const procedureLines = procedures.length ? procedures.map((item) => `- ${item}`).join("\n") : "- <PROCEDURE_OBJECTS>";
   const scenarioLines = scenarios.length ? scenarios.map((item) => `- ${item}`).join("\n") : `- ${scenario}`;
+  const mappingArtifacts = artifacts.filter((item) => /^MAP_/i.test(item));
+  const packageArtifacts = artifacts.filter((item) => /^PACK_/i.test(item) || /^PKG_/i.test(item));
+  const procedureArtifacts = artifacts.filter((item) => /^(?:TRT_|PRC_)/i.test(item));
+  const importTypeLine = /synonym\s+mode\s+insert_update/i.test(text)
+    ? "Use Import Type: synonym mode insert_update."
+    : "Use the import type specified in the RFC/IM090.";
+  const importSections = [
+    mappings.length ? [
+      "Import the ODI mapping artifact first:",
+      mappingArtifacts.map((item) => `- ${item}`).join("\n") || mappingLines,
+      "Validate imported mapping object(s):",
+      mappingLines
+    ].join("\n\n") : "",
+    procedures.length ? [
+      "Import the ODI procedure artifact:",
+      procedureArtifacts.map((item) => `- ${item}`).join("\n") || artifactLines,
+      importTypeLine,
+      "Validate imported procedure object(s):",
+      procedureLines
+    ].join("\n\n") : "",
+    packageArtifacts.length ? [
+      "Import the ODI package artifact after its dependencies:",
+      packageArtifacts.map((item) => `- ${item}`).join("\n") || packageLines,
+      "Validate imported package object(s):",
+      packageLines
+    ].join("\n\n") : "",
+    !mappings.length && !procedures.length && !packageArtifacts.length ? [
+      "Import the ODI XML artifact(s):",
+      artifactLines,
+      importTypeLine
+    ].join("\n\n") : ""
+  ].filter(Boolean).join("\n\n");
 
   return [
     {
@@ -465,17 +506,9 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
         "Open ODI Studio and connect to the repository.",
         projectFolder ? `Navigate to the target ODI project/folder:\n- ${projectFolder}` : projectPaths.length ? `Navigate to the required ODI project/folder path(s):\n${projectPaths.map((item) => `- ${item}`).join("\n")}` : "",
         scripts.length ? `Execute the required database script(s) in schema ${schema}:\n${scripts.map((item) => `- ${item}`).join("\n")}` : "",
-        "Import the ODI mapping artifact first:",
-        artifacts.filter((item) => /^MAP_/i.test(item)).map((item) => `- ${item}`).join("\n") || mappingLines,
-        "Validate imported mapping object(s):",
-        mappingLines,
-        "Import the ODI package artifact after the mapping dependency:",
-        artifacts.filter((item) => /^PACK_/i.test(item) || /^PKG_/i.test(item)).map((item) => `- ${item}`).join("\n") || packageLines,
-        "Validate imported package object(s):",
-        packageLines,
-        procedures.length ? `Validate referenced ODI procedure object(s):\n${procedures.map((item) => `- ${item}`).join("\n")}` : "",
+        importSections,
         variables.length ? `Validate referenced ODI variable object(s) remain configured for the target environment:\n${variables.map((item) => `- ${item}`).join("\n")}` : "",
-        `Validate or regenerate the ODI scenario as required by the ODI procedure:\n${scenarioLines}`,
+        `Regenerate the ODI scenario as required by the IM090:\n${scenarioLines}`,
         "Do not change variables marked as Startup Parameter unless the RFC explicitly requires it."
       ].filter(Boolean).join("\n\n")
     },
@@ -491,6 +524,7 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
       content: [
         "Validate the imported ODI objects exist in the target project/folder.",
         mappings.length ? `Validate mapping object(s):\n${mappingLines}` : "",
+        procedures.length ? `Validate procedure object(s):\n${procedureLines}` : "",
         packages.length ? `Validate package object(s):\n${packageLines}` : "",
         scripts.length ? "Validate the database script execution completed successfully." : "",
         `Validate the scenario is available:\n${scenarioLines}`,
@@ -653,25 +687,33 @@ export function odiManualPlanMetadata(productName: string, environmentName: stri
   const mappings = odiMappings(instructions);
   const packages = odiPackages(instructions);
   const scenarios = odiScenarios(instructions);
+  const procedures = odiProcedures(instructions);
   const project = odiProject(instructions);
   const folder = odiFolder(instructions);
+  const objectTypes = [
+    mappings.length ? "mapping" : "",
+    procedures.length ? "procedure" : "",
+    packages.length ? "package" : ""
+  ].filter(Boolean).join("/");
   return [
     "Environment:",
     `- ODI Instance: ${instanceName}`,
     "",
     "Impact:",
-    "- ODI mapping/package configuration will be imported into the target repository.",
+    `- ODI ${objectTypes || "component"} configuration will be imported into the target repository.`,
     "- No database data correction is included unless an approved SQL script is explicitly listed.",
     "",
     "Scope:",
     `- ${environmentName} environment only`,
     "",
     "Expected Outcome:",
-    "ODI mapping, package, and related scenario are imported/validated successfully.",
+    `ODI ${objectTypes || "component"} and related scenario are imported/validated successfully.`,
     "",
     artifacts.length ? `Artifacts:\n${artifacts.map((item) => `- ${item}`).join("\n")}` : "",
     "",
     mappings.length ? `Mappings:\n${mappings.map((item) => `- ${item}`).join("\n")}` : "",
+    "",
+    procedures.length ? `Procedures:\n${procedures.map((item) => `- ${item}`).join("\n")}` : "",
     "",
     packages.length ? `Packages:\n${packages.map((item) => `- ${item}`).join("\n")}` : "",
     "",
