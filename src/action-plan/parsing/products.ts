@@ -11,7 +11,7 @@ export function isMftManualPlan(productName: string, text: string) {
 }
 
 export function isDatabaseManualPlan(productName: string, text: string) {
-  return productName === "Base de datos" && hasDatabaseInstructions(text);
+  return /^(?:Base de datos|Oracle Database|Database)$/i.test(productName.trim()) && hasDatabaseInstructions(text);
 }
 
 export function isOdiManualPlan(productName: string, text: string) {

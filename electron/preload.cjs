@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("cicd", {
   saveActionPlanText: (payload) => ipcRenderer.invoke("save-action-plan-text", payload),
   getPathForFile: (file) => webUtils?.getPathForFile(file) ?? file?.path ?? "",
   scanRepositories: (basePath) => ipcRenderer.invoke("scan-repositories", basePath),
+  syncRepository: (repoPath) => ipcRenderer.invoke("sync-repository", repoPath),
   cloneRepository: (payload) => ipcRenderer.invoke("clone-repository", payload),
   prepareRfcDraft: (payload) => ipcRenderer.invoke("prepare-rfc-draft", payload),
   getDraftSummary: (payload) => ipcRenderer.invoke("get-draft-summary", payload),

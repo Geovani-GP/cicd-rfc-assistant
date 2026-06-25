@@ -759,9 +759,28 @@ async function getRepositoryInfo(repoPath: string): Promise<RepositoryInfo> {
     name: basename(repoPath),
     path: repoPath,
     branch: branch.ok && branch.stdout ? branch.stdout : null,
-    dirty: status.ok && status.stdout.length > 0,
+    dirty: status.ok && blockingGitStatusLines(status.stdout).length > 0,
     remote: remote.ok && remote.stdout ? remote.stdout : null
   };
+}
+
+function gitStatusLinePath(line: string) {
+  const value = line.slice(3).trim();
+  const renamedPath = value.includes(" -> ") ? value.split(" -> ").pop() ?? value : value;
+  return renamedPath.replace(/^"|"$/g, "");
+}
+
+function isIgnorableGitStatusLine(line: string) {
+  const filePath = gitStatusLinePath(line);
+  return filePath.split("/").some((part) => part === ".DS_Store" || part.startsWith("._"));
+}
+
+function blockingGitStatusLines(statusOutput: string) {
+  return statusOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .filter((line) => !isIgnorableGitStatusLine(line));
 }
 
 function classifyFile(filePath: string): SelectedFile["kind"] {
@@ -1607,9 +1626,10 @@ function getManifestName(mode: DraftPayload["mode"]) {
   return mode === "FULL" ? "int_full.txt" : "int_adhoc.txt";
 }
 
-function buildDraft(payload: DraftPayload) {
+async function buildDraft(payload: DraftPayload) {
   const cleanRfc = safeRfc(payload.rfc);
   const riceFolderPath = payload.riceFolderPath.trim().replace(/^\/+|\/+$/g, "");
+  const riceFolderAbsolutePath = join(payload.repoPath, riceFolderPath);
   const targetPath = join(payload.repoPath, riceFolderPath, "OIC");
   const manifestPath = join(targetPath, getManifestName(payload.mode));
   const inputUpdates = {
@@ -1633,7 +1653,25 @@ function buildDraft(payload: DraftPayload) {
   if (!riceFolderPath) warnings.push("La ruta RICE_FOLDER_PATH está vacía.");
   if (payload.files.length === 0) warnings.push("No hay archivos seleccionados.");
   if (manifestEntries.length === 0) warnings.push("No hay .iar, .par, .xml o .wsdl para listar en el manifiesto.");
-  return { targetPath, filesToCopy, manifestPath, manifestEntries, inputUpdates, warnings };
+  const riceFolderExists = riceFolderPath ? await pathExists(riceFolderAbsolutePath) : false;
+  const targetExists = riceFolderPath ? await pathExists(targetPath) : false;
+  if (riceFolderPath && !riceFolderExists) {
+    warnings.push(`La ruta RICE_FOLDER_PATH ${riceFolderPath} no existe en el repositorio; se creará al preparar cambios.`);
+  } else if (riceFolderPath && riceFolderExists && !targetExists) {
+    warnings.push(`La ruta RICE_FOLDER_PATH ${riceFolderPath} existe, pero la carpeta OIC se creará al preparar cambios.`);
+  }
+  return {
+    riceFolderPath,
+    riceFolderAbsolutePath,
+    riceFolderExists,
+    targetPath,
+    targetExists,
+    filesToCopy,
+    manifestPath,
+    manifestEntries,
+    inputUpdates,
+    warnings
+  };
 }
 
 async function writeLog(rfc: string, lines: string[]) {
@@ -1667,7 +1705,7 @@ async function updateInputs(repoPath: string, values: Record<string, string>) {
 }
 
 async function applyDraft(payload: DraftPayload) {
-  const summary = buildDraft(payload);
+  const summary = await buildDraft(payload);
   if (summary.warnings.some((warning) => warning.includes("vacío"))) return summary;
 
   const logLines = [`[${new Date().toISOString()}] Preparando borrador RFC ${payload.rfc}`];
@@ -1886,7 +1924,8 @@ ipcMain.handle("capture-screen-region", async (event) => {
       await delay(350);
     }
     const result = await run("/usr/sbin/screencapture", ["-i", "-x", outputPath]);
-    if (!result.ok) throw new Error("Captura cancelada o no permitida por el sistema.");
+    if (!result.ok) return null;
+    if (!(await pathExists(outputPath))) return null;
     const bytes = await readFile(outputPath);
     return {
       name,
@@ -1963,6 +2002,25 @@ ipcMain.handle("scan-repositories", async (_event, basePath: string) => {
     }
   }
   return repos.sort((a, b) => a.name.localeCompare(b.name));
+});
+
+ipcMain.handle("sync-repository", async (_event, repoPath: string) => {
+  const repositoryPath = resolve(repoPath);
+  const status = await git(["status", "--porcelain"], repositoryPath);
+  if (!status.ok) throw new Error(status.stderr);
+  const blockingChanges = blockingGitStatusLines(status.stdout);
+  if (blockingChanges.length) {
+    const details = blockingChanges.map((line) => `- ${line}`).join("\n");
+    throw new Error(`El repositorio tiene cambios locales pendientes:\n${details}\n\nRevisa, guarda o descarta esos cambios antes de sincronizar.`);
+  }
+  const checkout = await git(["checkout", releaseBranch], repositoryPath);
+  if (!checkout.ok) throw new Error(checkout.stderr);
+  const pull = await git(["pull"], repositoryPath);
+  if (!pull.ok) throw new Error(pull.stderr);
+  return {
+    repo: await getRepositoryInfo(repositoryPath),
+    output: pull.stdout || `Repositorio actualizado en ${releaseBranch}.`
+  };
 });
 
 ipcMain.handle("clone-repository", async (_event, payload: { url: string; destination: string }) => {

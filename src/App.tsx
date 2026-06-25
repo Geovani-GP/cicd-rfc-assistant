@@ -55,7 +55,12 @@ import {
   selectedEnvironmentMissingFromDocument
 } from "./action-plan/parsing/common";
 import { formatManualPhaseForActionPlan } from "./action-plan/parsing/format";
-import { databaseProfileCandidates } from "./action-plan/parsing/database";
+import {
+  databaseConfigurationItems,
+  hasDatabaseBackupPurgeInstructions,
+  hasDatabaseDiscoveryInstructions,
+  hasDatabaseDiscoveryMissingDatabaseName
+} from "./action-plan/parsing/database";
 import {
   buildManualPhasesForProduct,
   configurationItemsForProduct,
@@ -95,6 +100,12 @@ const instanceEnvironmentSuffixes: Record<string, string> = {
   RE: "REG",
   TE: "TEST",
   PR: "PROD"
+};
+const pipelinePhaseSuffixes: Record<PipelinePhase, string> = {
+  DEV: "DE",
+  REG: "RE",
+  TEST: "TE",
+  PROD: "PR"
 };
 const defaultCustomTheme = {
   colorA: "#d9c4ff",
@@ -228,12 +239,47 @@ function titledPermission(value: string) {
   return value;
 }
 
+function normalizedExternalConnectionKey(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function externalConnectionEditDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + cost
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length] ?? 0;
+}
+
+function isLikelyTruncatedExternalConnection(value: string, other: string) {
+  const key = normalizedExternalConnectionKey(value);
+  const otherKey = normalizedExternalConnectionKey(other);
+  if (key === otherKey || key.length < 8 || otherKey.length <= key.length) return false;
+  if (otherKey.startsWith(key) && otherKey.length - key.length >= 8) return true;
+  if (key.length < 18 || !otherKey.startsWith(key.slice(0, 12))) return false;
+  return externalConnectionEditDistance(key, otherKey) <= Math.max(4, Math.ceil(otherKey.length * 0.2));
+}
+
+function dedupeExternalConnectionValues(values: string[]) {
+  return values.filter((value) => !values.some((other) => isLikelyTruncatedExternalConnection(value, other)));
+}
+
 function labelExternalConfigurationItems(productName: string, extracted: Array<{ target: string; values: string[] }>) {
   const items: string[] = [];
   const normalizedProduct = productName.trim().toLowerCase();
   for (const item of extracted) {
     if (item.target === "configurationItems.connections") {
-      for (const value of item.values) items.push(`Connection: ${value}`);
+      for (const value of dedupeExternalConnectionValues(item.values)) items.push(`Connection: ${value}`);
     } else if (item.target === "configurationItems.lookups") {
       for (const value of item.values) items.push(`Lookup: ${value}`);
     } else if (normalizedProduct === "oic" && item.target === "configurationItems.artifacts") {
@@ -902,7 +948,14 @@ const copy = {
     pendingOpenExecutionConfirm: "Este RFC ya tiene un Action Plan confirmado. Aceptar: iniciar RFC Execution con la misma carpeta del RFC. Cancelar: seguir en Action Plan.",
     pendingSaved: "Pendiente guardado.",
     noPendingToSave: "Captura datos del RFC antes de guardar un pendiente.",
-    syncConverters: "Sincronizar",
+    syncConverters: "Convertidores",
+    syncRepository: "Sync repo",
+    pathExists: "Existe",
+    pathWillBeCreated: "Se va a crear",
+    ricePathExistsTooltip: "La ruta RICE_FOLDER_PATH ya existe en el repositorio seleccionado.",
+    ricePathWillBeCreatedTooltip: "La ruta RICE_FOLDER_PATH no existe en este repositorio; se creará al preparar cambios.",
+    oicPathExistsTooltip: "La carpeta OIC destino ya existe en el repositorio seleccionado.",
+    oicPathWillBeCreatedTooltip: "La carpeta OIC destino se creará al preparar cambios.",
     converterSyncTitle: "Sincronizar convertidores",
     converterSyncBody: "Actualiza o regresa la version del motor de conversion por tecnologia. La descarga desde la nube quedara conectada a Cloudflare.",
     converterVersion: "Version actual",
@@ -1007,6 +1060,7 @@ const copy = {
       pushElectron: "El commit y push estan disponibles al abrir la app con Electron.",
       verifyOk: "Verificacion completada.",
       reposOk: "Repositorios locales actualizados.",
+      repoSyncOk: "Repositorio sincronizado con release.",
       cloneUrl: "Pega la URL HTTPS del repositorio antes de clonar.",
       baseFolderRequired: "Elige una carpeta de trabajo antes de actualizar o clonar repositorios.",
       cloneOk: "Repositorio clonado correctamente.",
@@ -1017,7 +1071,7 @@ const copy = {
       noFiles: "Agrega al menos un artefacto antes de continuar.",
       packageCleared: "Paquete limpiado. Agrega artefactos para continuar.",
       stepRequired: "Agrega comentario o evidencia antes de avanzar.",
-      evidenceSetupRequired: "Completa RFC, ejecucion, ambiente y pasos antes de capturar evidencia.",
+      evidenceSetupRequired: "Completa RFC, ambiente, ejecucion y pasos antes de capturar evidencia.",
       exportNeedRfc: "Captura el numero de RFC antes de exportar evidencia.",
       exportNeedRun: "Captura el numero de run antes de exportar evidencia.",
       exportNeedStep: "Falta comentario o evidencia en el paso",
@@ -1186,7 +1240,14 @@ const copy = {
     pendingOpenExecutionConfirm: "This RFC already has a confirmed Action Plan. OK: start RFC Execution with the same RFC folder. Cancel: continue in Action Plan.",
     pendingSaved: "Pending item saved.",
     noPendingToSave: "Capture RFC data before saving a pending item.",
-    syncConverters: "Sync",
+    syncConverters: "Converters",
+    syncRepository: "Sync repo",
+    pathExists: "Exists",
+    pathWillBeCreated: "Will be created",
+    ricePathExistsTooltip: "The RICE_FOLDER_PATH already exists in the selected repository.",
+    ricePathWillBeCreatedTooltip: "The RICE_FOLDER_PATH does not exist in this repository; it will be created when changes are prepared.",
+    oicPathExistsTooltip: "The target OIC folder already exists in the selected repository.",
+    oicPathWillBeCreatedTooltip: "The target OIC folder will be created when changes are prepared.",
     converterSyncTitle: "Sync converters",
     converterSyncBody: "Update or roll back the conversion engine version by technology. Cloud download will be wired through Cloudflare.",
     converterVersion: "Current version",
@@ -1291,6 +1352,7 @@ const copy = {
       pushElectron: "Commit and push are available in the Electron app.",
       verifyOk: "Verification completed.",
       reposOk: "Local repositories refreshed.",
+      repoSyncOk: "Repository synced with release.",
       cloneUrl: "Paste the repository HTTPS URL before cloning.",
       baseFolderRequired: "Choose a workspace folder before refreshing or cloning repositories.",
       cloneOk: "Repository cloned successfully.",
@@ -1301,7 +1363,7 @@ const copy = {
       noFiles: "Add at least one artifact before continuing.",
       packageCleared: "Package cleared. Add artifacts to continue.",
       stepRequired: "Add a comment or evidence before continuing.",
-      evidenceSetupRequired: "Complete RFC, execution, environment, and steps before capturing evidence.",
+      evidenceSetupRequired: "Complete RFC, environment, execution, and steps before capturing evidence.",
       exportNeedRfc: "Enter the RFC number before exporting evidence.",
       exportNeedRun: "Enter the run number before exporting evidence.",
       exportNeedStep: "Missing comment or evidence in step",
@@ -1470,7 +1532,14 @@ const copy = {
     pendingOpenExecutionConfirm: "Este RFC ja tem um Action Plan confirmado. OK: iniciar RFC Execution com a mesma pasta do RFC. Cancelar: continuar no Action Plan.",
     pendingSaved: "Pendente salvo.",
     noPendingToSave: "Capture dados do RFC antes de salvar um pendente.",
-    syncConverters: "Sincronizar",
+    syncConverters: "Conversores",
+    syncRepository: "Sync repo",
+    pathExists: "Existe",
+    pathWillBeCreated: "Vai ser criada",
+    ricePathExistsTooltip: "A rota RICE_FOLDER_PATH ja existe no repositorio selecionado.",
+    ricePathWillBeCreatedTooltip: "A rota RICE_FOLDER_PATH nao existe neste repositorio; sera criada ao preparar as mudancas.",
+    oicPathExistsTooltip: "A pasta OIC destino ja existe no repositorio selecionado.",
+    oicPathWillBeCreatedTooltip: "A pasta OIC destino sera criada ao preparar as mudancas.",
     converterSyncTitle: "Sincronizar conversores",
     converterSyncBody: "Atualize ou reverta a versao do motor de conversao por tecnologia. O download em nuvem sera conectado ao Cloudflare.",
     converterVersion: "Versao atual",
@@ -1575,6 +1644,7 @@ const copy = {
       pushElectron: "Commit e push estao disponiveis no app Electron.",
       verifyOk: "Verificacao concluida.",
       reposOk: "Repositorios locais atualizados.",
+      repoSyncOk: "Repositorio sincronizado com release.",
       cloneUrl: "Cole a URL HTTPS do repositorio antes de clonar.",
       baseFolderRequired: "Escolha uma pasta de trabalho antes de atualizar ou clonar repositorios.",
       cloneOk: "Repositorio clonado com sucesso.",
@@ -1585,7 +1655,7 @@ const copy = {
       noFiles: "Adicione pelo menos um artefato antes de continuar.",
       packageCleared: "Pacote limpo. Adicione artefatos para continuar.",
       stepRequired: "Adicione comentario ou evidencia antes de continuar.",
-      evidenceSetupRequired: "Complete RFC, execucao, ambiente e passos antes de capturar evidencia.",
+      evidenceSetupRequired: "Complete RFC, ambiente, execucao e passos antes de capturar evidencia.",
       exportNeedRfc: "Capture o numero do RFC antes de exportar evidencia.",
       exportNeedRun: "Capture o numero do run antes de exportar evidencia.",
       exportNeedStep: "Falta comentario ou evidencia no passo",
@@ -1819,6 +1889,12 @@ const actionCopy = {
     artifactIssuesTitle: "Componentes faltantes",
     artifactIssuesBody: "Se detectaron artefactos referenciados por el IM090 que no estan cargados. El Action Plan no se modifica por esta alerta.",
     artifactIssuesButton: "Ver componentes faltantes",
+    actionPlanIssuesTitle: "Datos faltantes del Action Plan",
+    actionPlanIssuesBody: "Se detectaron datos necesarios para ejecutar el Action Plan que no vienen en el RFC. El Action Plan no se modifica por esta alerta.",
+    actionPlanIssuesButton: "Ver datos faltantes",
+    actionPlanAlertsTitle: "Alertas del Action Plan",
+    actionPlanAlertsBody: "Se detectaron artefactos o datos necesarios pendientes de validar. El Action Plan no se modifica por esta alerta.",
+    actionPlanAlertsButton: "Ver alertas del Action Plan",
     rfcMessage: "Mensaje para RFC",
     noActionArtifacts: "No hay artefactos cargados para validar.",
     noArtifactComparison: "Carga el IM090 o captura artefactos para comparar.",
@@ -1892,6 +1968,12 @@ const actionCopy = {
     artifactIssuesTitle: "Missing components",
     artifactIssuesBody: "Some artifacts referenced by the IM090 are not loaded. This alert does not modify the Action Plan.",
     artifactIssuesButton: "View missing components",
+    actionPlanIssuesTitle: "Missing Action Plan data",
+    actionPlanIssuesBody: "Some data required to execute the Action Plan is not provided in the RFC. This alert does not modify the Action Plan.",
+    actionPlanIssuesButton: "View missing data",
+    actionPlanAlertsTitle: "Action Plan alerts",
+    actionPlanAlertsBody: "Some required artifacts or execution data still need validation. This alert does not modify the Action Plan.",
+    actionPlanAlertsButton: "View Action Plan alerts",
     rfcMessage: "RFC message",
     noActionArtifacts: "No artifacts loaded for validation.",
     noArtifactComparison: "Load the IM090 or capture artifacts to compare.",
@@ -1965,6 +2047,12 @@ const actionCopy = {
     artifactIssuesTitle: "Componentes faltantes",
     artifactIssuesBody: "Foram detectados artefatos referenciados pelo IM090 que nao estao carregados. O Action Plan nao e modificado por este alerta.",
     artifactIssuesButton: "Ver componentes faltantes",
+    actionPlanIssuesTitle: "Dados faltantes do Action Plan",
+    actionPlanIssuesBody: "Foram detectados dados necessarios para executar o Action Plan que nao constam no RFC. O Action Plan nao e modificado por este alerta.",
+    actionPlanIssuesButton: "Ver dados faltantes",
+    actionPlanAlertsTitle: "Alertas do Action Plan",
+    actionPlanAlertsBody: "Foram detectados artefatos ou dados necessarios pendentes de validacao. O Action Plan nao e modificado por este alerta.",
+    actionPlanAlertsButton: "Ver alertas do Action Plan",
     rfcMessage: "Mensagem para RFC",
     noActionArtifacts: "Nao ha artefatos carregados para validar.",
     noArtifactComparison: "Carregue o IM090 ou capture artefatos para comparar.",
@@ -2284,6 +2372,27 @@ function environmentFromInstanceSuffix(instance: string) {
   return match ? instanceEnvironmentSuffixes[match[1]] ?? "" : "";
 }
 
+function pipelinePhaseFromEnvironment(environment: string): PipelinePhase | "" {
+  const normalized = normalizeEnvironmentName(environment);
+  return pipelinePhases.includes(normalized as PipelinePhase) ? normalized as PipelinePhase : "";
+}
+
+function packageInstanceBaseFromRicePath(value: string) {
+  return value.split(/[\\/]+/).filter(Boolean).at(-1)?.trim() ?? "";
+}
+
+function targetInstanceFromRicePath(value: string, phase: PipelinePhase) {
+  const base = packageInstanceBaseFromRicePath(value);
+  if (!base) return "";
+  return /(DE|RE|TE|PR)$/i.test(base) ? base : `${base}${pipelinePhaseSuffixes[phase]}`;
+}
+
+function repositoryPipelinePrefix(repoName: string, riceFolderPath = "") {
+  const fromRepo = repoName.trim().replace(/^BIMBO-/i, "").replace(/-REPOSITORY$/i, "");
+  if (fromRepo) return fromRepo;
+  return riceFolderPath.split(/[\\/]+/).filter(Boolean)[0] || "<Repository>";
+}
+
 function trimExecutionStepTitle(value: string) {
   return value
     .replace(/^[-*]\s+/, "")
@@ -2590,6 +2699,12 @@ export function App() {
   const [regTargetEnvironment, setRegTargetEnvironment] = useState(initialExecutionDraft?.regTargetEnvironment ?? "");
   const [testTargetEnvironment, setTestTargetEnvironment] = useState(initialExecutionDraft?.testTargetEnvironment ?? "");
   const [prodTargetEnvironment, setProdTargetEnvironment] = useState(initialExecutionDraft?.prodTargetEnvironment ?? "");
+  const executionTargetManuallyEditedRef = useRef(Boolean(
+    initialExecutionDraft?.devTargetEnvironment ||
+    initialExecutionDraft?.regTargetEnvironment ||
+    initialExecutionDraft?.testTargetEnvironment ||
+    initialExecutionDraft?.prodTargetEnvironment
+  ));
   const [testPipelineName, setTestPipelineName] = useState(initialExecutionDraft?.testPipelineName ?? "");
   const [prodPipelineName, setProdPipelineName] = useState(initialExecutionDraft?.prodPipelineName ?? "");
   const [testPipelineRun, setTestPipelineRun] = useState(initialExecutionDraft?.testPipelineRun ?? "");
@@ -2767,6 +2882,8 @@ export function App() {
   }
   function effectiveActionProductForText(text: string) {
     if (actionTemplateId !== "auto") return actionProduct;
+    if (hasDatabaseBackupPurgeInstructions(text)) return "Base de datos";
+    if (hasDatabaseDiscoveryInstructions(text)) return "Base de datos";
     if (hasStrongOicSignals(text)) return actionProduct === "OIC" || !actionProduct ? "OIC" : actionProduct;
     if (hasStrongOdiSignals(text)) return isOdiProduct(actionProduct) || !actionProduct ? "Oracle Data Integrator (ODI)" : actionProduct;
     const detectorResults = detectKnowledgeRuleProducts(text, knowledgeCatalog.rules);
@@ -2822,20 +2939,33 @@ export function App() {
         : pipelineExecutionPhase === "PROD"
           ? prodTargetEnvironment
           : testTargetEnvironment;
-  const setTargetEnvironmentForPhase = (value: string) => {
-    if (pipelineExecutionPhase === "DEV") {
+  const setTargetEnvironmentForPhase = (value: string, phase = pipelineExecutionPhase) => {
+    if (phase === "DEV") {
       setDevTargetEnvironment(value);
       return;
     }
-    if (pipelineExecutionPhase === "REG") {
+    if (phase === "REG") {
       setRegTargetEnvironment(value);
       return;
     }
-    if (pipelineExecutionPhase === "PROD") {
+    if (phase === "PROD") {
       setProdTargetEnvironment(value);
       return;
     }
     setTestTargetEnvironment(value);
+  };
+  const updateExecutionTarget = (value: string) => {
+    executionTargetManuallyEditedRef.current = true;
+    const inferredPhase = pipelinePhaseFromEnvironment(environmentFromInstanceSuffix(value));
+    if (inferredPhase) {
+      setTargetEnvironmentForPhase(value, inferredPhase);
+      if (pipelineExecutionPhase !== inferredPhase) {
+        setPipelineExecutionPhase(inferredPhase);
+        setPipelineStepIndex(0);
+      }
+      return;
+    }
+    setTargetEnvironmentForPhase(value);
   };
   const executionActionPlan = executionMode === "cicd" ? "" : pipelineActionPlan.trim();
   const hasExecutionActionPlan = executionMode === "cicd" || Boolean(executionActionPlan.trim());
@@ -3113,6 +3243,22 @@ export function App() {
     () => actionArtifactRows.filter((row) => row.status === "missing" && row.documentName !== "-"),
     [actionArtifactRows]
   );
+  const actionPlanIssues = useMemo(
+    () => actionPlanWarningItems(manualDetectionSourceText()),
+    [
+      actionActivity,
+      actionArtifactFiles,
+      actionArtifactInspections,
+      actionInstance,
+      actionProduct,
+      actionScopeNotes,
+      actionSourceDocument,
+      actionTemplateId,
+      artifactText,
+      manualInstructions,
+      manualSourceText
+    ]
+  );
   const activeStepLog = evidenceLog.filter(
     (entry) => entry.step === activeStep && matchesCurrentExecution(entry.rfc, entry.text, entry.sessionId)
   );
@@ -3199,6 +3345,23 @@ export function App() {
 
   function dedupeArtifactNames(items: string[]) {
     return Array.from(new Map(items.filter(Boolean).map((item) => [normalizeArtifactIdentityKey(item), item])).values());
+  }
+
+  function databaseDiscoveryArtifactRank(value: string) {
+    const key = normalizeEnvironmentName(value);
+    if (key.includes("DISCOVERYSCRIPT")) return 0;
+    if (key.includes("SECURITYSCRIPT") || key.includes("SECURITYFEATURES")) return 1;
+    if (key.includes("HCHECKSCRIPT") || key.includes("HCHECK")) return 2;
+    return 100;
+  }
+
+  function sortDatabaseDiscoveryArtifacts<T>(items: T[], getName: (item: T) => string) {
+    return [...items].sort((left, right) => {
+      const leftRank = databaseDiscoveryArtifactRank(getName(left));
+      const rightRank = databaseDiscoveryArtifactRank(getName(right));
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return getName(left).localeCompare(getName(right));
+    });
   }
 
   function isWeakArtifactEntry(value: string) {
@@ -3292,6 +3455,30 @@ export function App() {
     return [product || "<product>", environment || "<environment>", text.length, stableTextHash(text)].join("|");
   }
 
+  function databaseDiscoveryTargetHost(text: string) {
+    return text.match(/\bImplementation Plan for\s+([A-Z0-9_$#.-]+)\b/i)?.[1] ??
+      text.match(/\bTarget instance:\s*([A-Z0-9_$#.-]+)/i)?.[1] ??
+      "<DATABASE_SERVER>";
+  }
+
+  function actionPlanWarningItems(text: string) {
+    const items: string[] = [];
+    if (hasDatabaseDiscoveryMissingDatabaseName(text)) {
+      items.push(`CDB/database name for ${databaseDiscoveryTargetHost(text)}`);
+    }
+    return items;
+  }
+
+  function manualActionPlanWarning(text: string) {
+    const items = actionPlanWarningItems(text);
+    if (!items.length) return "";
+    return [
+      "Warning: Missing required Action Plan information:",
+      ...items.map((item) => `- ${item}`),
+      "Confirm the missing information with the DBA/requester before execution."
+    ].join("\n");
+  }
+
   function manualPhasesAreCurrent(text = manualDetectionSourceText()) {
     return Boolean(manualPhases.length && manualPhaseSourceKey === manualPhaseSourceKeyFor(text));
   }
@@ -3303,12 +3490,24 @@ export function App() {
     const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
-    const filterOicArtifacts = (items: string[]) =>
-      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+    const filterOicArtifacts = (items: string[]) => {
+      const filtered = effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      return effectiveProduct === "OIC" && filtered.some((item) => /\.par$/i.test(item))
+        ? filtered.filter((item) => /\.par$/i.test(item) || !/^icspackage_.*\.iar$/i.test(item))
+        : filtered;
+    };
     const enteredFiltered = filterOicLookupArtifacts(entered);
     const enteredInstallable = filterOicArtifacts(installableArtifactNames(artifactText));
-    const installableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
-    const combinedInstallable = effectiveProduct === "OIC"
+    const preferBaseDownloadNames = (items: string[]) => items.filter((item) => {
+      const base = item.replace(/(\d+)(\.(?:zip|jar|xml|sql|csv|asc))$/i, "$2");
+      return base === item || !items.some((other) => normalizeArtifactIdentityKey(other) === normalizeArtifactIdentityKey(base));
+    });
+    const installableArtifacts = isOdiProduct(effectiveProduct)
+      ? preferBaseDownloadNames(filterOicArtifacts(installableArtifactNames(sourceText)))
+      : filterOicArtifacts(installableArtifactNames(sourceText));
+    const combinedInstallable = isOdiProduct(effectiveProduct) && installableArtifacts.length
+      ? installableArtifacts
+      : effectiveProduct === "OIC"
       ? Array.from(
           new Map(
             [...enteredInstallable, ...installableArtifacts].map((item) => [
@@ -3327,7 +3526,18 @@ export function App() {
       : installableArtifacts.length
         ? installableArtifacts
         : filterOicArtifacts(extractArtifactNames(sourceText, { includeComponentNames: true }));
-    return dedupeArtifactNames(detected);
+    return dedupeArtifactNames(
+      detected.map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct))
+    );
+  }
+
+  function canonicalOdiArtifactName(item: string, sourceText = manualDetectionSourceText(), product = effectiveActionProductForText(sourceText)) {
+    if (!isOdiProduct(product) || !/\.zip$/i.test(item)) return item;
+    const base = item.replace(/(\d+)(\.zip)$/i, "$2");
+    if (base === item) return item;
+    const candidateSources = [actionSourceDocument?.text ?? "", sourceText].filter(Boolean);
+    const escapedBase = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return candidateSources.some((text) => new RegExp(`\\b${escapedBase}\\b`, "i").test(text)) ? base : item;
   }
 
   function actionLoadedArtifactItems(files = actionArtifactFiles, inspections = actionArtifactInspections) {
@@ -3437,7 +3647,8 @@ export function App() {
     if (effectiveProduct === "OIC" && runtimeConfigurationItemsForProduct(effectiveProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
-    const documentItems = effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
+    const documentItems = (effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames())
+      .map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct));
     const loadedItems = actionLoadedInstallableArtifactItems();
     const matchedKeys = new Set<string>();
     const rows = documentItems.map((documentName) => {
@@ -3468,11 +3679,17 @@ export function App() {
         });
       }
     }
-    return rows;
+    return hasDatabaseDiscoveryInstructions(sourceText)
+      ? sortDatabaseDiscoveryArtifacts(rows, (row) => row.documentName !== "-" ? row.documentName : row.artifactName)
+      : rows;
   }
 
   function artifactKeysMatch(documentKey: string, loadedKey: string) {
     if (!documentKey || !loadedKey) return false;
+    const stripDownloadSuffix = (value: string) => value.replace(/(\d+)(ZIP)$/i, "$2");
+    const documentVariants = Array.from(new Set([documentKey, stripDownloadSuffix(documentKey)]));
+    const loadedVariants = Array.from(new Set([loadedKey, stripDownloadSuffix(loadedKey)]));
+    if (documentVariants.some((documentVariant) => loadedVariants.includes(documentVariant))) return true;
     if (loadedKey === documentKey) return true;
     const shorter = documentKey.length <= loadedKey.length ? documentKey : loadedKey;
     const longer = documentKey.length > loadedKey.length ? documentKey : loadedKey;
@@ -3483,15 +3700,25 @@ export function App() {
 
   function actionArtifactValidationBlock() {
     if (!actionArtifactFiles.length) return "";
-    const rows = actionArtifactComparisonRows();
+    const sourceText = manualDetectionSourceText();
+    const comparisonRows = actionArtifactComparisonRows();
+    const hasOicParPackage = effectiveActionProductForText(sourceText) === "OIC" &&
+      (actionArtifactFiles.some((file) => /\.par$/i.test(file.name)) || installableArtifactNames(sourceText).some((artifact) => /\.par$/i.test(artifact)));
+    const rows = hasDatabaseDiscoveryInstructions(sourceText)
+      ? sortDatabaseDiscoveryArtifacts(comparisonRows, (row) => row.documentName !== "-" ? row.documentName : row.artifactName)
+      : comparisonRows;
     const lines = rows.length
       ? rows.map((row) => {
-          const status = row.status === "exists" ? "Exists" : row.status === "missing" ? "Missing artifact" : "Internal content";
+          const rowName = canonicalOdiArtifactName(row.documentName !== "-" ? row.documentName : row.artifactName, sourceText);
+          const isInternalPackageArtifact = hasOicParPackage && /^icspackage_.*\.iar$/i.test(rowName);
+          const status = isInternalPackageArtifact
+            ? "Internal package content"
+            : row.status === "exists" ? "Exists" : row.status === "missing" ? "Missing artifact" : "Internal content";
           const version = row.version && row.version !== "-" ? ` | Version: ${row.version}` : "";
-          return `- ${row.documentName !== "-" ? row.documentName : row.artifactName}: ${status}${version}`;
+          return `- ${rowName}: ${status}${version}`;
         })
       : ["- No document components were available to compare. Validate loaded artifacts manually."];
-    return ["Artifact validation:", ...lines].join("\n");
+    return [hasOicParPackage ? "Package content validation:" : "Artifact validation:", ...lines].join("\n");
   }
 
   function renderInspectionProjects(projects: ArtifactInspection["projects"], keyPrefix: string) {
@@ -3729,6 +3956,7 @@ export function App() {
       return;
     }
     const image = await runTask(() => desktopApi.captureScreenRegion());
+    if (!image) return;
     addEvidence(image, "region", String(currentPipelineStep?.title ?? stepTitle(activeStep)));
   }
 
@@ -4432,6 +4660,22 @@ export function App() {
     await scanReposIn(basePath);
   }
 
+  async function syncSelectedRepository() {
+    if (!desktopApi) {
+      setMessage(t.messages.scanElectron);
+      return;
+    }
+    if (!repoPath) {
+      setMessage(t.caseFile.repo);
+      return;
+    }
+    const result = await runTask(() => desktopApi.syncRepository(repoPath), t.messages.repoSyncOk);
+    if (!result) return;
+    setRepos((current) => current.map((repo) => repo.path === result.repo.path ? result.repo : repo));
+    setRepoPath(result.repo.path);
+    setFinalOutput(result.output);
+  }
+
   async function cloneRepository() {
     if (!desktopApi) {
       setMessage(t.messages.cloneElectron);
@@ -4556,10 +4800,13 @@ export function App() {
     setManualPhaseDisabledKeys(manualPhaseDisabledKeysForDefaults(phases));
     setManualPhaseIndex(0);
     const mismatchNote = actionEnvironmentMismatchNote(environment);
+    const warning = manualActionPlanWarning(text);
     if (mismatchNote) {
       setMessage(mismatchNote);
     } else if (selectedEnvironmentMissingFromDocument(text, resolvedEnvironment)) {
       setMessage(availableEnvironmentMessage(resolvedEnvironment, available));
+    } else if (warning) {
+      setMessage(warning);
     }
   }
 
@@ -4612,6 +4859,9 @@ export function App() {
         setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
       } else if (selectedEnvironmentMissingFromDocument(text, environment)) {
         setMessage(availableEnvironmentMessage(environment, available));
+      } else {
+        const warning = manualActionPlanWarning(text);
+        if (warning) setMessage(warning);
       }
     } else {
       setManualPhases([]);
@@ -4661,12 +4911,15 @@ export function App() {
     setManualPhaseIndex(0);
     setManualReviewOpen(true);
     const mismatchNote = actionEnvironmentMismatchNote();
+    const warning = manualActionPlanWarning(sourceText);
     if (mismatchNote) {
       setMessage(mismatchNote);
     } else if (!environment.trim()) {
       setMessage("IM090 cargado. Selecciona el ambiente para filtrar las instrucciones antes de generar el Action Plan.");
     } else if (selectedEnvironmentMissingFromDocument(sourceText, environment)) {
       setMessage(availableEnvironmentMessage(environment, available));
+    } else if (warning) {
+      setMessage(warning);
     }
   }
 
@@ -4677,8 +4930,12 @@ export function App() {
     const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
-    const filterOicArtifacts = (items: string[]) =>
-      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+    const filterOicArtifacts = (items: string[]) => {
+      const filtered = effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      return effectiveProduct === "OIC" && filtered.some((item) => /\.par$/i.test(item))
+        ? filtered.filter((item) => /\.par$/i.test(item) || !/^icspackage_.*\.iar$/i.test(item))
+        : filtered;
+    };
     const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
     const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
     const inspectedInstallableArtifacts = effectiveProduct === "OIC"
@@ -4697,7 +4954,7 @@ export function App() {
           )
       : enteredInstallableArtifacts;
     const hasOicInstallableArtifacts = effectiveProduct === "OIC" && oicInstallableArtifacts.length > 0;
-    const databaseItems = effectiveProduct === "Base de datos" ? databaseProfileCandidates(sourceText) : [];
+    const databaseItems = effectiveProduct === "Base de datos" ? databaseConfigurationItems(sourceText) : [];
     const oicConfigurationItems = effectiveProduct === "OIC" && !hasOicInstallableArtifacts ? runtimeConfigurationItemsForProduct(effectiveProduct, sourceText) : [];
     const isOdiPlan = isOdiManualPlan(effectiveProduct, sourceText);
     const isOsbPlan = isOsbManualPlan(effectiveProduct, sourceText);
@@ -4742,7 +4999,10 @@ export function App() {
     const isMftPlan = isMftManualPlan(effectiveProduct, sourceText);
     const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "Configuration item(s)" : "Artifact(s) / component(s)";
     const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
-    const artifactLines = artifacts.length ? artifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
+    const orderedArtifacts = hasDatabaseDiscoveryInstructions(sourceText)
+      ? sortDatabaseDiscoveryArtifacts(artifacts, (item) => item)
+      : artifacts.map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct));
+    const artifactLines = orderedArtifacts.length ? orderedArtifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
     const validationBlock = isMftPlan ? "" : actionArtifactValidationBlock();
     const productName = isJavaPlan
       ? "JAVA / WebLogic"
@@ -4751,9 +5011,28 @@ export function App() {
       : effectiveProduct.trim() || "Oracle Integration Cloud";
     const environmentName = effectiveActionEnvironment().trim() || "<Environment>";
     const instanceName = actionInstance.trim() || "<Instance>";
+    const isDatabaseDiscoveryPlan = hasDatabaseDiscoveryInstructions(sourceText);
+    const classificationBlock = isDatabaseDiscoveryPlan
+      ? [
+          "Classification:",
+          actionProduct && actionProduct !== effectiveProduct
+            ? `- Source/application context: ${actionProduct}`
+            : "",
+          "- Execution product: Oracle Database",
+          "- Detection basis: DB discovery scripts, SQL*Plus as SYSDBA, CDB/PDB list, and ORACLE_PDB_SID."
+        ].filter(Boolean).join("\n")
+      : "";
     const isMftTransferImportPlan = isMftPlan && (/\bdo\s+not\s+deploy\b|\bimport\s+only\b|\bjust\s+need\s+to\s+import\b|\bArtifact file:\s*[^\n\r]+\.zip\b|\bmft\/transfer\//i.test(sourceText));
     const isMftFolderAccessPlan = isMftPlan && !isMftTransferImportPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
     const activityName = actionActivity.trim() || (isMftTransferImportPlan ? "Import MFT transfers" : isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
+    const databaseDiscoveryTarget = isDatabaseDiscoveryPlan ? databaseDiscoveryTargetHost(sourceText) : "";
+    const activityHeader = isDatabaseDiscoveryPlan
+      ? [
+          `Activity: ${activityName}`,
+          `RFC target: ${environmentName} - ${instanceName}`,
+          `Database execution target: ${databaseDiscoveryTarget || "<DATABASE_SERVER>"}`
+        ].join("\n")
+      : `Activity: ${activityName} (${environmentName} - ${instanceName})`;
     const rfcNumber = rfc.trim();
     const sourceDocumentName = actionSourceDocument?.name ?? (
       sourceText.trim()
@@ -4774,10 +5053,10 @@ export function App() {
     }).join(isMftPlan ? "\n\n-----------------------------------------------------------------\n\n" : "\n\n");
 
     if (isMftPlan) {
-      return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
+      return `======================= Action Plan =============================\n\n${activityHeader}\nProduct: ${productName}${classificationBlock ? `\n\n${classificationBlock}\n` : ""}\n\nSource Document:\n${sourceDocumentName}\n\n${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n=================================================================\n\n${phaseBlocks}\n\n===============================================================`;
     }
 
-    return `======================= Action Plan =============================\n\nActivity: ${activityName} (${environmentName} - ${instanceName})\nProduct: ${productName}\n${sourceDocumentLine}${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
+    return `======================= Action Plan =============================\n\n${activityHeader}\nProduct: ${productName}${classificationBlock ? `\n\n${classificationBlock}\n` : ""}\n${sourceDocumentLine}${itemLabel}:\n${artifactLines}${validationBlock ? `\n\n${validationBlock}` : ""}${metadata ? `\n\n${metadata}` : ""}\n\n${phaseBlocks}\n\n===============================================================`;
   }
 
   function acceptManualReview() {
@@ -4801,6 +5080,8 @@ export function App() {
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
     setManualReviewOpen(false);
+    const warning = manualActionPlanWarning(sourceText);
+    if (warning) setMessage(warning);
     addLog("Action Plan manual generado desde fases revisadas", "actionPlan");
   }
 
@@ -4935,6 +5216,7 @@ export function App() {
 
   function resetExecutionFields() {
     localStorage.removeItem(executionDraftStorageKey);
+    executionTargetManuallyEditedRef.current = false;
     setExecutionSessionId(createClientId("execution"));
     setRfc("");
     setPipelineExecutionPhase("TEST");
@@ -5054,6 +5336,67 @@ export function App() {
     return { repoPath, baseBranch: releaseBranch, rfc, riceFolderPath, mode, files };
   }
 
+  function hasCicdPackageContext() {
+    return Boolean(rfc.trim() && selectedRepo && riceFolderPath.trim() && files.length);
+  }
+
+  function activateCicdExecutionFromPackage(result?: FinalizeResult | null) {
+    if (!hasCicdPackageContext()) {
+      setActiveStep("pipeline");
+      return;
+    }
+    const branchName = rfc.trim();
+    const fallbackPhase =
+      pipelinePhaseFromEnvironment(environmentFromInstanceSuffix(actionInstance)) ||
+      pipelineExecutionPhase ||
+      "TEST";
+    const targetInstance = actionInstance.trim() || targetInstanceFromRicePath(riceFolderPath, fallbackPhase);
+    const inferredPhase =
+      pipelinePhaseFromEnvironment(environmentFromInstanceSuffix(targetInstance)) ||
+      fallbackPhase;
+    const repoPrefix = repositoryPipelinePrefix(selectedRepo?.name ?? "", riceFolderPath);
+    const pipelineInstance = pipelineInstanceFrom(targetInstance) || packageInstanceBaseFromRicePath(riceFolderPath) || "<Instance>";
+    const pipelineName = `${repoPrefix}-${pipelineInstance}-OIC-DEPLOYMENT_PIPELINE`;
+
+    executionTargetManuallyEditedRef.current = true;
+    setExecutionSessionId(createClientId("execution"));
+    setExecutionMode("cicd");
+    setPipelineExecutionPhase(inferredPhase);
+    setTargetEnvironmentForPhase(targetInstance, inferredPhase);
+    setActionInstance(targetInstance);
+    setActionProduct((current) => current || "OIC");
+    setPipelineActionPlan("");
+    setExecutionSteps([]);
+    setExecutionStepsConfirmed(false);
+    setExecutionStepsReviewOpen(false);
+    setPipelineStepIndex(0);
+    setPipelineStepComments({});
+    setPipelineStepFailures({});
+    setTestPipelineRun("");
+    setProdPipelineRun("");
+    setTestPipelineRunUrl("");
+    setProdPipelineRunUrl("");
+    if (inferredPhase === "PROD") {
+      setProdPipelineName(pipelineName);
+    } else {
+      setTestPipelineName(pipelineName);
+    }
+    addLog(
+      `RFC ${branchName}: contexto CI/CD listo para ejecucion${targetInstance ? ` en ${targetInstance}` : ""}${pipelineName ? ` (${pipelineName})` : ""}${result?.commit ? `, commit ${result.commit}` : ""}.`,
+      "pipeline"
+    );
+    setMessage("RFC Execution listo para capturar evidencia CI/CD.");
+    setActiveStep("pipeline");
+  }
+
+  function openPipelineStep() {
+    if (hasCicdPackageContext() && executionMode !== "cicd") {
+      activateCicdExecutionFromPackage();
+      return;
+    }
+    setActiveStep("pipeline");
+  }
+
   async function commitRfcLocal() {
     if (!desktopApi) {
       setMessage(t.messages.pushElectron);
@@ -5080,7 +5423,10 @@ export function App() {
     }
     const result = await runTask(() => desktopApi.pushRfcBranch(currentDraftPayload()), t.messages.done);
     setFinalOutput(result?.output ?? "");
-    if (result?.ok) setLocalCommitResult(null);
+    if (result?.ok) {
+      setLocalCommitResult(null);
+      activateCicdExecutionFromPackage(result);
+    }
     addLog(`RFC ${rfc.trim()}: push ${result?.ok ? "completado" : "con observaciones"}`, "review");
   }
 
@@ -5109,8 +5455,12 @@ export function App() {
     const ignoreOicLookups = effectiveProduct === "OIC" && oicManualScopeIgnoresLookups(sourceText);
     const filterOicLookupArtifacts = (items: string[]) =>
       ignoreOicLookups ? items.filter((item) => !/\.csv$/i.test(item)) : items;
-    const filterOicArtifacts = (items: string[]) =>
-      effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+    const filterOicArtifacts = (items: string[]) => {
+      const filtered = effectiveProduct === "OIC" ? preferCanonicalOicIarArtifacts(filterOicLookupArtifacts(items)) : filterOicLookupArtifacts(items);
+      return effectiveProduct === "OIC" && filtered.some((item) => /\.par$/i.test(item))
+        ? filtered.filter((item) => /\.par$/i.test(item) || !/^icspackage_.*\.iar$/i.test(item))
+        : filtered;
+    };
     const enteredArtifacts = artifactLinesFromText(artifactText);
     const enteredInstallableArtifacts = filterOicArtifacts(installableArtifactNames(artifactText));
     const sourceInstallableArtifacts = filterOicArtifacts(installableArtifactNames(sourceText));
@@ -5167,6 +5517,8 @@ export function App() {
         setManualPhaseSourceKey(currentSourceKey);
         setManualPhaseDisabledKeys(disabledKeys);
         setActionPlan(buildManualActionPlan(enabledPhases));
+        const warning = manualActionPlanWarning(sourceText);
+        if (warning) setMessage(warning);
         addLog("Action Plan manual generado", "actionPlan");
         return;
       }
@@ -5183,7 +5535,7 @@ export function App() {
     const repoPipelinePrefix = selectedRepo ? repoName.replace("BIMBO-", "").replace("-REPOSITORY", "") : "<Repository>";
     const pipelineName = `${repoPipelinePrefix}-${pipelineInstance}-OIC-DEPLOYMENT_PIPELINE`;
 
-    const cicdPlan = `==========================================================\n\nActivity: ${activityName} via CI/CD (${environmentName} - ${instanceName})\nRepository: ${repoName}\nBranch: release\nArtifact to import:\n${artifactLines}${oicComponentBlock}\n\n1- Prepare deployment package (${repoName}):\n1.1- Open the CI/CD Assistant.\n1.2- Confirm the selected repository is on the \"release\" branch and pull latest changes.\n1.3- Create the RFC branch using the RFC number:\n- ${branchName}\n1.4- Add the artifact(s) attached to this RFC:\n${artifactLines}\n1.5- Review the package summary generated by the CI/CD Assistant and confirm the detected package content matches the RFC scope.\n1.6- Commit changes with the RFC number and push the branch ${branchName}.\n1.7- Return the local repository to the release branch.\n\n2- Merge Request:\n2.1- Login to the CI-CD Tool:\n${projectUrl}\n2.2- Click on Merge Requests and create a Merge Request.\n2.3- Select Repository (${repoName}) -> Target Branch \"release\" -> Review Branch \"${branchName}\".\n2.4- Select reviewers and create the merge request.\n2.5- Once reviewers approve, merge the changes into release.\n\n3- Run pipeline (${environmentName}):\n3.1- Click on Builds > Pipeline.\n3.2- Select ${pipelineName} and click on Run.\n3.3- Approve the deployment when the RFC is approved, if an approval gate is present.\n3.4- Monitor execution logs. If it does not finish successfully, review logs, correct and re-run as per change control.\n\n4- Post-deployment validation (${environmentName} - ${instanceName}):\n4.1- Login to the target ${productName} environment.\n4.2- Validate the deployed artifact/component(s) and confirm the package content was deployed as expected:\n${componentLines}\n4.3- Confirm the latest values/configuration are reflected.\n\n5- Share the evidence.\n\n==========================================================`;
+    const cicdPlan = `==========================================================\n\nActivity: ${activityName} via CI/CD (${environmentName} - ${instanceName})\nRepository: ${repoName}\nBranch: release\nArtifact to import:\n${artifactLines}${oicComponentBlock}\n\n1- Prepare deployment package (${repoName}):\n1.1- Open the CI/CD Assistant.\n1.2- Confirm the selected repository is on the \"release\" branch and pull latest changes.\n1.3- Create the RFC branch using the RFC number:\n- ${branchName}\n1.4- Add the artifact(s) attached to this RFC:\n${artifactLines}\n1.5- Review the package summary generated by the CI/CD Assistant and confirm the detected package content matches the RFC scope.\n1.6- Commit changes with the RFC number and push the branch ${branchName}.\n1.7- Return the local repository to the release branch.\n\n2- Merge Request:\n2.1- Login to the CI-CD Tool:\n${projectUrl}\n2.2- Click on Merge Requests and create a Merge Request.\n2.3- Select Repository (${repoName}) -> Target Branch \"release\" -> Review Branch \"${branchName}\".\n2.4- Select reviewers and create the merge request.\n2.5- Once reviewers approve, merge the changes into release.\n\n3- Run pipeline (${environmentName}):\n3.1- Click on Builds > Pipeline.\n3.2- Select ${pipelineName} and click on Run.\n3.3- Approve the deployment when the RFC is approved, if an approval gate is present.\n3.4- Monitor execution logs. The CI/CD pipeline performs the standard backup, deployment, activation, and validation activities for the selected package.\n3.5- If connection credential validation or configuration is required, coordinate the approved secure session with the password administrator. Do not include credential values in the RFC, repository, package, or logs.\n3.6- If the pipeline does not finish successfully, review logs, correct and re-run as per change control.\n\n4- Post-deployment validation (${environmentName} - ${instanceName}):\n4.1- Login to the target ${productName} environment.\n4.2- Validate the deployed artifact/component(s) and confirm the package content was deployed as expected:\n${componentLines}\n4.3- Confirm the latest values/configuration are reflected, including lookups, activation status, and schedules when applicable.\n\n5- Share the evidence:\n5.1- Attach the CI/CD Assistant/package summary output.\n5.2- Attach the CI-CD Tool pipeline execution output, including backup/deployment result and final status.\n5.3- Attach any post-deployment validation evidence required by the RFC.\n\n==========================================================`;
 
     setActionPlan(cicdPlan);
     addLog("Action Plan generado", "actionPlan");
@@ -5217,8 +5569,64 @@ export function App() {
     ].join("\n");
   }
 
+  function actionPlanIssueMessage() {
+    const missing = actionPlanIssues.length ? actionPlanIssues : actionPlanWarningItems(manualDetectionSourceText());
+    const missingLines = missing.length ? missing.map((item) => `- ${item}`).join("\n") : "- <missing Action Plan information>";
+    return [
+      "Dear Customer,",
+      "",
+      "During RFC Action Plan validation, the execution instructions do not provide the following required information:",
+      missingLines,
+      "",
+      "Could you please confirm this information before execution, or confirm it will be validated during the approved execution Zoom/session?",
+      "",
+      "Best regards."
+    ].join("\n");
+  }
+
+  function actionPlanAlertTitle() {
+    if (actionArtifactIssues.length && actionPlanIssues.length) return a.actionPlanAlertsTitle;
+    if (actionArtifactIssues.length) return a.artifactIssuesTitle;
+    return a.actionPlanIssuesTitle;
+  }
+
+  function actionPlanAlertBody() {
+    if (actionArtifactIssues.length && actionPlanIssues.length) return a.actionPlanAlertsBody;
+    if (actionArtifactIssues.length) return a.artifactIssuesBody;
+    return a.actionPlanIssuesBody;
+  }
+
+  function actionPlanAlertButtonLabel() {
+    if (actionArtifactIssues.length && actionPlanIssues.length) return a.actionPlanAlertsButton;
+    if (actionArtifactIssues.length) return a.artifactIssuesButton;
+    return a.actionPlanIssuesButton;
+  }
+
+  function actionPlanAlertMessage() {
+    if (actionArtifactIssues.length && !actionPlanIssues.length) return actionArtifactIssueMessage();
+    if (actionPlanIssues.length && !actionArtifactIssues.length) return actionPlanIssueMessage();
+
+    const missingArtifacts = actionArtifactIssues.map((row) => `- ${row.documentName}`).join("\n") || "- <missing artifact>";
+    const missingData = actionPlanIssues.map((item) => `- ${item}`).join("\n") || "- <missing Action Plan information>";
+    return [
+      "Dear Customer,",
+      "",
+      "During RFC Action Plan validation, we identified pending items required before execution.",
+      "",
+      "Missing artifact(s):",
+      missingArtifacts,
+      "",
+      "Missing execution information:",
+      missingData,
+      "",
+      "Could you please provide or confirm these items before execution, or confirm they will be validated during the approved execution Zoom/session?",
+      "",
+      "Best regards."
+    ].join("\n");
+  }
+
   async function copyActionArtifactIssueMessage() {
-    await navigator.clipboard?.writeText(actionArtifactIssueMessage());
+    await navigator.clipboard?.writeText(actionPlanAlertMessage());
   }
 
   function redactSupportOutputText(value: string) {
@@ -5329,9 +5737,12 @@ export function App() {
           const diagnosticValues = selectedRuleIsOic && extractor.target === "configurationItems.artifacts" && inspectedOicIarArtifacts.length
             ? inspectedOicIarArtifacts
             : normalizedValues;
+          const cleanDiagnosticValues = selectedRuleIsOic && extractor.target === "configurationItems.connections"
+            ? dedupeExternalConnectionValues(diagnosticValues)
+            : diagnosticValues;
           return {
             target: extractor.target,
-            values: diagnosticValues
+            values: cleanDiagnosticValues
           };
         }).filter((item) => item.values.length)
         .filter((item) => !(hasOicInstallablePackage && item.target === "configurationItems.lookups"))
@@ -5339,11 +5750,25 @@ export function App() {
 
     const selectedDetector = selectedRule ? detectorResults.find((item) => item.product.id === selectedRule.id) : null;
     const hasLocalOdiOverride = isOdiProduct(effectiveProduct) && hasOdiJeeAgentRemediationSignals(sourceText);
-    const top = hasLocalOdiOverride && selectedDetector ? selectedDetector : detectorResults[0];
-    const topScore = hasLocalOdiOverride && selectedDetector ? "local override" : `${top?.score ?? 0}`;
-    const topMatches = hasLocalOdiOverride && selectedDetector ? "local-odi-remediation" : top?.matches.join(", ") || "<none>";
+    const hasLocalDatabaseDiscoveryOverride = effectiveProduct === "Base de datos" && hasDatabaseDiscoveryInstructions(sourceText);
+    const hasLocalDetectorOverride = hasLocalOdiOverride || hasLocalDatabaseDiscoveryOverride;
+    const top = hasLocalDetectorOverride && selectedDetector ? selectedDetector : selectedDetector ?? detectorResults[0];
+    const detectorLabel = selectedDetector && detectorResults[0]?.product.id !== selectedDetector.product.id
+      ? "Effective rules detector"
+      : "Top rules detector";
+    const topScore = hasLocalDetectorOverride && selectedDetector ? "local override" : `${top?.score ?? 0}`;
+    const topMatches = hasLocalOdiOverride && selectedDetector
+      ? "local-odi-remediation"
+      : hasLocalDatabaseDiscoveryOverride && selectedDetector
+        ? "local-database-discovery"
+        : top?.matches.join(", ") || "<none>";
+    const detectorEvidence = detectorLabel === "Effective rules detector"
+      ? `Selection: parser product ${effectiveProduct}${hasLocalDatabaseDiscoveryOverride ? " (local database discovery override)" : ""}`
+      : `Matches: ${topMatches}`;
     const selectedScore = hasLocalOdiOverride && selectedRule && runtimeProductMatchesRule("Oracle Data Integrator (ODI)", selectedRule)
       ? "local override"
+      : hasLocalDatabaseDiscoveryOverride && selectedRule && runtimeProductMatchesRule("Base de datos", selectedRule)
+        ? "local override"
       : `${selectedDetector?.score ?? 0}`;
     const selectedActionDetector = detectorResults.find((item) => runtimeProductMatchesRule(actionProduct, item.product));
     const phaseDelta = selectedRule ? selectedRule.phaseRules.length - detectedPhaseCount : 0;
@@ -5358,10 +5783,10 @@ export function App() {
       `External rules package: ${rulesCatalog.knowledgeVersion}`,
       `Current parser product: ${actionProduct || "<empty>"}`,
       effectiveProduct !== actionProduct ? `Effective parser product: ${effectiveProduct} (auto-detect override; selected product score=${selectedActionDetector?.score ?? 0})` : "",
-      top ? `Top rules detector: ${top.product.productName} (${top.product.id}) | Score: ${topScore} | Matches: ${topMatches}` : "Top rules detector: <none>",
+      top ? `${detectorLabel}: ${top.product.productName} (${top.product.id}) | Score: ${topScore} | ${detectorEvidence}` : "Top rules detector: <none>",
       selectedRule ? `Selected rules product: ${selectedRule.productName} (${selectedRule.id}) | Score: ${selectedScore}` : "Selected rules product: <none>",
       selectedRule ? `Phase model comparison: parser=${detectedPhaseCount}, rules=${selectedRule.phaseRules.length}, delta=${phaseDelta}` : "",
-      selectedRule ? `Rules phase model:\n${selectedRule.phaseRules.map((phase) => `- ${phase.title} (${phase.id}, ${phase.defaultIncluded ? "enabled" : "disabled"})`).join("\n")}` : "",
+      selectedRule ? `Rules phase defaults (reference only):\n${selectedRule.phaseRules.map((phase) => `- ${phase.title} (${phase.id}, ${phase.defaultIncluded ? "default enabled" : "default disabled"})`).join("\n")}` : "",
       safetySummary,
       extracted.length
         ? [
@@ -5418,11 +5843,17 @@ export function App() {
             : ""
         ].join("\n")
       : "<none>";
-    const actionArtifactInfo = actionArtifactFiles.length
-      ? actionArtifactFiles.map((file) => `- ${file.name} | ${file.kind} | ${file.path}`).join("\n")
+    const supportActionArtifactFiles = hasDatabaseDiscoveryInstructions(sourceText)
+      ? sortDatabaseDiscoveryArtifacts(actionArtifactFiles, (file) => file.name)
+      : actionArtifactFiles;
+    const supportActionArtifactInspections = hasDatabaseDiscoveryInstructions(sourceText)
+      ? sortDatabaseDiscoveryArtifacts(actionArtifactInspections, (inspection) => inspection.fileName)
+      : actionArtifactInspections;
+    const actionArtifactInfo = supportActionArtifactFiles.length
+      ? supportActionArtifactFiles.map((file) => `- ${file.name} | ${file.kind} | ${file.path}`).join("\n")
       : "<none>";
-    const inspectionInfo = actionArtifactInspections.length
-      ? actionArtifactInspections.map((inspection) => {
+    const inspectionInfo = supportActionArtifactInspections.length
+      ? supportActionArtifactInspections.map((inspection) => {
           const projects = inspection.projects.map((project) => [project.code, project.name, project.version, project.type, project.state].filter(Boolean).join(" | "));
           const components = inspection.components.map((component) => `${component.kind}: ${component.name} (${component.path})`);
           const internalArtifacts = (inspection.internalArtifacts ?? []).map((item) => {
@@ -5448,6 +5879,7 @@ export function App() {
     const comparisonInfo = actionArtifactRows.length
       ? actionArtifactRows.map((row) => `- Document: ${row.documentName} | Loaded: ${row.artifactName} | Version: ${row.version} | Status: ${row.status}`).join("\n")
       : "<none>";
+    const actionPlanWarnings = manualActionPlanWarning(sourceText);
     const externalRulesDiagnostic = buildExternalRulesDiagnostic(sourceText, detectedPhases.length);
     const generatedActionPlan = currentActionPlanForSupportOutput(sourceText, detectedPhases, disabledKeys);
 
@@ -5479,6 +5911,7 @@ export function App() {
       supportSection("Loaded Action Artifacts", actionArtifactInfo),
       supportSection("Artifact Comparison", comparisonInfo),
       supportSection("Artifact Inspection", inspectionInfo),
+      supportSection("Action Plan Warnings", actionPlanWarnings),
       supportSection("RFC Scope Notes Field", actionScopeNotes),
       supportSection("Manual Instructions Field", manualInstructions),
       supportSection("Converter Source Text", sourceText),
@@ -5982,6 +6415,11 @@ export function App() {
     if (inferredEnvironment && normalizeEnvironmentName(actionEnvironment) !== normalizeEnvironmentName(inferredEnvironment)) {
       setActionEnvironment(inferredEnvironment);
     }
+    const inferredPhase = pipelinePhaseFromEnvironment(inferredEnvironment);
+    if (!executionTargetManuallyEditedRef.current && inferredPhase && pipelineExecutionPhase !== inferredPhase) {
+      setPipelineExecutionPhase(inferredPhase);
+      setPipelineStepIndex(0);
+    }
     const environment = inferredEnvironment || actionEnvironment;
     if (environment === "PROD") {
       setProdTargetEnvironment(actionInstance);
@@ -5998,7 +6436,7 @@ export function App() {
     if (environment === "TEST") {
       setTestTargetEnvironment(actionInstance);
     }
-  }, [actionEnvironment, actionInstance]);
+  }, [actionEnvironment, actionInstance, pipelineExecutionPhase]);
 
   return (
     <div
@@ -6059,7 +6497,7 @@ export function App() {
           <div className="step-group-label">Ejecucion RFC</div>
           <button
             className={`step upcoming ${activeStep === "pipeline" ? "active" : ""}`}
-            onClick={() => setActiveStep("pipeline")}
+            onClick={openPipelineStep}
           >
             <span>RUN</span>
             <div>
@@ -6090,17 +6528,23 @@ export function App() {
           </div>
 
           <div className="top-actions">
-            <label className="repo-select-label">
-              <span>{t.review.repository} / {t.repos.branch}</span>
-              <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
-                {repos.length === 0 && <option value="">{e.noRepos}</option>}
-                {repos.map((repo) => (
-                  <option key={repo.path} value={repo.path}>
-                    {repo.name} - {releaseBranch}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="repo-sync-group">
+              <label className="repo-select-label">
+                <span>{t.review.repository} / {t.repos.branch}</span>
+                <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
+                  {repos.length === 0 && <option value="">{e.noRepos}</option>}
+                  {repos.map((repo) => (
+                    <option key={repo.path} value={repo.path}>
+                      {repo.name} - {releaseBranch}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="secondary compact" onClick={syncSelectedRepository} disabled={!repoPath || busy}>
+                <RefreshCw size={15} />
+                {t.syncRepository}
+              </button>
+            </div>
             <button className="secondary compact" onClick={saveCurrentPendingWork} disabled={!currentPendingWorkSnapshot}>
               <Download size={15} />
               {t.savePendingWork}
@@ -6562,7 +7006,7 @@ export function App() {
                 onChange={(event) => setArtifactText(event.target.value)}
                 onBlur={() => {
                   const cleanedArtifacts = actionProduct === "Base de datos"
-                    ? databaseProfileCandidates(artifactText)
+                    ? databaseConfigurationItems(artifactText)
                     : artifactLinesFromText(artifactText);
                   if (cleanedArtifacts.length) setArtifactText(cleanedArtifacts.join("\n"));
                 }}
@@ -6574,12 +7018,12 @@ export function App() {
               <div className="output-head">
                 <strong>{a.preview}</strong>
                 <div>
-                  {actionArtifactIssues.length > 0 && (
+                  {(actionArtifactIssues.length > 0 || actionPlanIssues.length > 0) && (
                     <button
                       className="artifact-alert-button"
                       onClick={() => setActionArtifactIssuesOpen(true)}
-                      title={a.artifactIssuesButton}
-                      aria-label={a.artifactIssuesButton}
+                      title={actionPlanAlertButtonLabel()}
+                      aria-label={actionPlanAlertButtonLabel()}
                     >
                       <AlertCircle size={17} />
                     </button>
@@ -6765,8 +7209,30 @@ export function App() {
                   <strong>{selectedRepo?.name ?? repoPath}</strong>
                 </div>
                 <div>
+                  <span>{t.pkg.ricePath}</span>
+                  <div className="summary-value-with-badge">
+                    <strong>{summary.riceFolderPath}</strong>
+                    <span
+                      className={`path-status-badge ${summary.riceFolderExists ? "exists" : "create"}`}
+                      title={summary.riceFolderExists ? t.ricePathExistsTooltip : t.ricePathWillBeCreatedTooltip}
+                    >
+                      {summary.riceFolderExists ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      {summary.riceFolderExists ? t.pathExists : t.pathWillBeCreated}
+                    </span>
+                  </div>
+                </div>
+                <div>
                   <span>{t.review.target}</span>
-                  <strong>{summary.targetPath}</strong>
+                  <div className="summary-value-with-badge">
+                    <strong>{summary.targetPath}</strong>
+                    <span
+                      className={`path-status-badge ${summary.targetExists ? "exists" : "create"}`}
+                      title={summary.targetExists ? t.oicPathExistsTooltip : t.oicPathWillBeCreatedTooltip}
+                    >
+                      {summary.targetExists ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      {summary.targetExists ? t.pathExists : t.pathWillBeCreated}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <span>{t.review.manifest}</span>
@@ -6891,10 +7357,18 @@ export function App() {
                 <input placeholder="4-B002VTZ" value={rfc} onChange={(event) => setRfc(event.target.value)} />
               </label>
               <label>
+                {t.pipeline.environment}
+                <input
+                  value={targetEnvironment}
+                  onChange={(event) => updateExecutionTarget(event.target.value)}
+                />
+              </label>
+              <label>
                 {t.pipeline.executionType}
                 <select
                   value={pipelineExecutionPhase}
                   onChange={(event) => {
+                    executionTargetManuallyEditedRef.current = true;
                     setPipelineExecutionPhase(event.target.value as PipelinePhase);
                     setPipelineStepIndex(0);
                   }}
@@ -6905,13 +7379,6 @@ export function App() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label>
-                {t.pipeline.environment}
-                <input
-                  value={targetEnvironment}
-                  onChange={(event) => setTargetEnvironmentForPhase(event.target.value)}
-                />
               </label>
             </div>
 
@@ -7246,8 +7713,8 @@ export function App() {
           <section className="workspace-modal action-artifact-issues-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-head">
               <div>
-                <h2>{a.artifactIssuesTitle}</h2>
-                <p>{a.artifactIssuesBody}</p>
+                <h2>{actionPlanAlertTitle()}</h2>
+                <p>{actionPlanAlertBody()}</p>
               </div>
               <button className="icon-close" onClick={() => setActionArtifactIssuesOpen(false)}>
                 <X size={18} />
@@ -7261,7 +7728,10 @@ export function App() {
               </span>
               <ul>
                 {actionArtifactIssues.map((row) => (
-                  <li key={row.documentName}>{row.documentName}</li>
+                  <li key={`artifact-${row.documentName}`}>{a.artifacts}: {row.documentName}</li>
+                ))}
+                {actionPlanIssues.map((item) => (
+                  <li key={`data-${item}`}>{a.actionPlanIssuesTitle}: {item}</li>
                 ))}
               </ul>
             </div>
@@ -7274,7 +7744,7 @@ export function App() {
                   {a.copy}
                 </button>
               </div>
-              <textarea value={actionArtifactIssueMessage()} readOnly />
+              <textarea value={actionPlanAlertMessage()} readOnly />
             </div>
           </section>
         </div>

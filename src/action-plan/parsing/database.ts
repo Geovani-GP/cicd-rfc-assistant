@@ -19,8 +19,21 @@ function hasDatabasePasswordResetRequest(text: string) {
     /\bGB_[A-Z0-9_$#.-]+\b/i.test(text);
 }
 
+export function hasDatabaseDiscoveryInstructions(text: string) {
+  const hasDiscoveryScript = /\b(?:Discovery_script\.zip|discovery_script\.sql|generate_html\.pl)\b/i.test(text);
+  const hasSecurityScript = /\b(?:Security_script\.zip|security_features_status_(?:CDB|PDB)\.sql)\b/i.test(text);
+  const hasHealthCheckScript = /\b(?:HCHECK_script\.zip|hout\.sql|hcheck\.sql)\b/i.test(text);
+  const hasSysdbaExecution = /\bsqlplus\s+["']?\/\s+as\s+sysdba["']?/i.test(text);
+  const hasContainerDatabaseSignals = /\bORACLE_PDB_SID\b|\bCON_ID\b[\s\S]{0,160}\bCON_NAME\b|\bPDB[A-Z0-9_$#.-]+\b/i.test(text);
+  return hasDiscoveryScript && hasSecurityScript && hasHealthCheckScript && hasSysdbaExecution && hasContainerDatabaseSignals;
+}
+
 export function hasDatabaseInstructions(text: string) {
-  return hasSqlInstructions(text) || hasProfilePasswordLifeTimeRequest(text) || hasDatabasePasswordResetRequest(text);
+  return hasDatabaseDiscoveryInstructions(text) ||
+    hasDatabaseBackupPurgeInstructions(text) ||
+    hasSqlInstructions(text) ||
+    hasProfilePasswordLifeTimeRequest(text) ||
+    hasDatabasePasswordResetRequest(text);
 }
 
 function databaseObjectNames(text: string) {
@@ -73,6 +86,212 @@ function hasDatabaseComponentInstall(text: string) {
 
 function databaseTargetName(text: string) {
   return text.match(/\bGBDB[A-Z0-9_$#.-]+\b/i)?.[0] ?? "";
+}
+
+function databaseNameInfoFromText(text: string) {
+  const implementationPlanMatch = text.match(/\bDatabase\s*:\s*["']?([A-Z0-9_$#.-]+)["']?/i);
+  if (implementationPlanMatch?.[1]) {
+    return { name: implementationPlanMatch[1], source: "implementationPlan" as const };
+  }
+  const rfcCommentMatch = text.match(/\b(?:one\s+)?CDB\s+(?:which\s+)?(?:is|name\s+is|name\s*:)\s*["']?([A-Z0-9_$#.-]+)["']?/i);
+  if (rfcCommentMatch?.[1]) {
+    return { name: rfcCommentMatch[1], source: "rfcComment" as const };
+  }
+  return { name: "", source: "" as const };
+}
+
+function databaseNameFromText(text: string) {
+  return databaseNameInfoFromText(text).name;
+}
+
+function cdbConnectIdentifierFromText(text: string) {
+  return text.match(/\b(?:one\s+)?CDB\s+(?:which\s+)?(?:is|name\s+is|name\s*:)\s*["']?[A-Z0-9_$#.-]+["']?\s*\(([A-Z0-9_$#.-]+)\)/i)?.[1] ??
+    "";
+}
+
+export function hasDatabaseDiscoveryMissingDatabaseName(text: string) {
+  return hasDatabaseDiscoveryInstructions(text) && !databaseNameFromText(text);
+}
+
+function implementationTargetName(text: string) {
+  return text.match(/\bImplementation Plan for\s+([A-Z0-9_$#.-]+)\b/i)?.[1] ??
+    text.match(/\bTarget instance:\s*([A-Z0-9_$#.-]+)/i)?.[1] ??
+    databaseTargetName(text);
+}
+
+function databaseDiscoveryArtifacts(text: string) {
+  return uniqueValues(text.match(/\b(?:Discovery_script|Security_script|HCHECK_script)\.zip\b/gi) ?? []);
+}
+
+function databaseDiscoveryPdbs(text: string) {
+  const rows = Array.from(text.matchAll(/^\s*(\d+)\s+((?:PDB)[A-Z0-9_$#.-]+)\s+READ\s+WRITE\s+(?:YES|NO)\b/gim))
+    .map((match) => ({ conId: match[1], name: match[2] }));
+  const exports = Array.from(text.matchAll(/\bORACLE_PDB_SID\s*=\s*((?:PDB)[A-Z0-9_$#.-]+)/gi))
+    .map((match) => ({ conId: "", name: match[1] }));
+  const byName = new Map<string, { conId: string; name: string }>();
+  for (const pdb of [...rows, ...exports]) {
+    const key = pdb.name.toUpperCase();
+    const existing = byName.get(key);
+    byName.set(key, existing?.conId ? existing : pdb);
+  }
+  return Array.from(byName.values());
+}
+
+type DatabaseBackupPurgePair = {
+  sourceTable: string;
+  backupTable: string;
+  backupWhere: string;
+  deleteWhere: string;
+};
+
+function statementSqlChunks(text: string) {
+  return text
+    .replace(/\r/g, "\n")
+    .split(";")
+    .map((chunk) => {
+      const normalizedChunk = chunk
+        .replace(/^\s*(?:>>\s*)?\$?\s*/gm, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const match = normalizedChunk.match(/\b(?:CREATE\s+TABLE|DELETE\s+FROM)\b/i);
+      if (!match || match.index === undefined) return "";
+      return `${normalizedChunk.slice(match.index).trim()};`;
+    })
+    .filter(Boolean);
+}
+
+function countChar(value: string, char: string) {
+  return Array.from(value).filter((item) => item === char).length;
+}
+
+function cleanSqlWhereClause(value: string) {
+  let clean = value.trim().replace(/;$/, "").trim();
+  while (clean.endsWith(")") && countChar(clean, ")") > countChar(clean, "(")) {
+    clean = clean.slice(0, -1).trim();
+  }
+  return clean;
+}
+
+function normalizeSqlPredicate(value: string) {
+  return cleanSqlWhereClause(value)
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/^\((.*)\)$/, "$1");
+}
+
+function parseCreateTableAsSelect(statement: string) {
+  const match = statement.match(/^CREATE\s+TABLE\s+([A-Z0-9_$#.-]+)\s+AS\s*\(?\s*SELECT\b[\s\S]*?\bFROM\s+([A-Z0-9_$#.-]+)\s+WHERE\s+([\s\S]*?)\s*;?$/i);
+  if (!match) return null;
+  return {
+    backupTable: match[1],
+    sourceTable: match[2],
+    backupWhere: cleanSqlWhereClause(match[3])
+  };
+}
+
+function parseDeleteFrom(statement: string) {
+  const match = statement.match(/^DELETE\s+FROM\s+([A-Z0-9_$#.-]+)\s+WHERE\s+([\s\S]*?)\s*;?$/i);
+  if (!match) return null;
+  return {
+    sourceTable: match[1],
+    deleteWhere: cleanSqlWhereClause(match[2])
+  };
+}
+
+function databaseBackupPurgePairs(text: string): DatabaseBackupPurgePair[] {
+  const statements = statementSqlChunks(text);
+  const creates = statements.map(parseCreateTableAsSelect).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const deletes = statements.map(parseDeleteFrom).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const usedDeleteIndexes = new Set<number>();
+  const pairs: DatabaseBackupPurgePair[] = [];
+
+  for (const create of creates) {
+    const normalizedCreateTable = create.sourceTable.toUpperCase();
+    const normalizedCreateWhere = normalizeSqlPredicate(create.backupWhere);
+    const exactDeleteIndex = deletes.findIndex((deleteItem, index) =>
+      !usedDeleteIndexes.has(index) &&
+      deleteItem.sourceTable.toUpperCase() === normalizedCreateTable &&
+      normalizeSqlPredicate(deleteItem.deleteWhere) === normalizedCreateWhere
+    );
+    const fallbackDeleteIndex = exactDeleteIndex >= 0
+      ? exactDeleteIndex
+      : deletes.findIndex((deleteItem, index) =>
+          !usedDeleteIndexes.has(index) &&
+          deleteItem.sourceTable.toUpperCase() === normalizedCreateTable
+        );
+    if (fallbackDeleteIndex < 0) continue;
+    usedDeleteIndexes.add(fallbackDeleteIndex);
+    pairs.push({
+      ...create,
+      deleteWhere: deletes[fallbackDeleteIndex].deleteWhere
+    });
+  }
+
+  return pairs;
+}
+
+export function hasDatabaseBackupPurgeInstructions(text: string) {
+  return databaseBackupPurgePairs(text).length > 0 &&
+    /\b(?:BACK\s*UP|BACKUP|PURGE|DELETE\s+FROM)\b/i.test(text);
+}
+
+function tableSchemaName(tableName: string) {
+  const parts = tableName.split(".");
+  return parts.length > 1 ? parts[0] : "";
+}
+
+function tableObjectName(tableName: string) {
+  const parts = tableName.split(".");
+  return parts[parts.length - 1] || tableName;
+}
+
+function formatSqlCount(tableName: string, whereClause?: string, alias = "ROW_COUNT") {
+  if (!whereClause?.trim()) {
+    return [
+      `SELECT COUNT(*) AS ${alias}`,
+      `FROM ${tableName};`
+    ].join("\n");
+  }
+  return [
+    `SELECT COUNT(*) AS ${alias}`,
+    `FROM ${tableName}`,
+    `WHERE ${whereClause};`
+  ].join("\n");
+}
+
+function formatCreateBackupSql(pair: DatabaseBackupPurgePair) {
+  return [
+    `CREATE TABLE ${pair.backupTable} AS`,
+    "SELECT *",
+    `FROM ${pair.sourceTable}`,
+    `WHERE ${pair.backupWhere};`
+  ].join("\n");
+}
+
+function formatDeleteSql(pair: DatabaseBackupPurgePair) {
+  return [
+    `DELETE FROM ${pair.sourceTable}`,
+    `WHERE ${pair.deleteWhere};`
+  ].join("\n");
+}
+
+function formatRestoreSql(pair: DatabaseBackupPurgePair) {
+  return [
+    `INSERT INTO ${pair.sourceTable}`,
+    `SELECT * FROM ${pair.backupTable};`,
+    "COMMIT;"
+  ].join("\n");
+}
+
+export function databaseConfigurationItems(text: string) {
+  if (hasDatabaseBackupPurgeInstructions(text)) {
+    const items = databaseBackupPurgePairs(text).flatMap((pair) => [
+      `Table: ${pair.sourceTable}`,
+      `Backup table: ${pair.backupTable}`
+    ]);
+    return uniqueValues(items);
+  }
+  return databaseProfileCandidates(text);
 }
 
 function passwordRecipient(text: string) {
@@ -323,6 +542,321 @@ ACCOUNT UNLOCK;`;
   ];
 }
 
+function buildDatabaseDiscoveryPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const databaseMissing = hasDatabaseDiscoveryMissingDatabaseName(text);
+  const databaseInfo = databaseNameInfoFromText(text);
+  const targetDatabase = databaseInfo.name || "<DATABASE_NAME not provided in RFC>";
+  const cdbConnectIdentifier = cdbConnectIdentifierFromText(text);
+  const targetHost = implementationTargetName(text) || "<DATABASE_SERVER>";
+  const artifacts = databaseDiscoveryArtifacts(text);
+  const pdbs = databaseDiscoveryPdbs(text);
+  const pdbList = pdbs.length
+    ? pdbs.map((pdb) => `- ${pdb.name}${pdb.conId ? ` (CON_ID ${pdb.conId})` : ""}`).join("\n")
+    : "- <PDB_NAME_1>\n- <PDB_NAME_2>";
+  const artifactList = artifacts.length ? asBullets(artifacts) : "- Discovery_script.zip\n- Security_script.zip\n- HCHECK_script.zip";
+  const discoveryPdbSteps = pdbs.length
+    ? pdbs.map((pdb, index) => [
+        `${index === 0 ? "First" : "Next"}, execute discovery for ${pdb.name}${pdb.conId ? ` using CON_ID ${pdb.conId}` : ""}:`,
+        "sqlplus \"/ as sysdba\" @discovery_script.sql",
+        pdb.conId
+          ? `When prompted, select CON_ID ${pdb.conId} for ${pdb.name}.`
+          : `When prompted, select the CON_ID for ${pdb.name}.`,
+        `./generate_html.pl <${pdb.name}_discovery_output>.LST`
+      ].join("\n")).join("\n\n")
+    : [
+        "Execute discovery_script.sql once per target PDB:",
+        "sqlplus \"/ as sysdba\" @discovery_script.sql",
+        "When prompted, select the CON_ID for the current PDB.",
+        "./generate_html.pl <discovery_output>.LST"
+      ].join("\n");
+  const securityPdbSteps = (pdbs.length ? pdbs.map((pdb) => pdb.name) : ["<PDB_NAME_1>", "<PDB_NAME_2>"])
+    .map((pdbName) => [
+      `export ORACLE_PDB_SID=${pdbName}`,
+      "sqlplus \"/ as sysdba\" @security_features_status_PDB.sql"
+    ].join("\n"))
+    .join("\n\n");
+  const healthPdbSteps = (pdbs.length ? pdbs.map((pdb) => pdb.name) : ["<PDB_NAME_1>", "<PDB_NAME_2>"])
+    .map((pdbName) => [
+      `export ORACLE_PDB_SID=${pdbName}`,
+      "sqlplus \"/ as sysdba\" @hout.sql",
+      "sqlplus \"/ as sysdba\" @hcheck.sql"
+    ].join("\n"))
+    .join("\n\n");
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved to execute database migration discovery scripts on the source system.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target database/server:\n- ${targetHost}`,
+        `Database:\n- ${targetDatabase}`,
+        cdbConnectIdentifier ? `CDB/connect identifier:\n- ${cdbConnectIdentifier}` : "",
+        databaseInfo.source === "rfcComment"
+          ? "Database information source:\n- Confirmed by RFC activity/comment. The original implementation plan did not provide the CDB/database name."
+          : "",
+        `Target PDBs:\n${pdbList}`,
+        `Required script packages:\n${artifactList}`,
+        databaseMissing
+          ? `Warning:\n- Database name was not provided in the RFC. Confirm the CDB/database name for ${targetHost} with the DBA/requester before execution.`
+          : "",
+        "Confirm the approved execution account can access the source server, unzip/copy files, run SQL*Plus as SYSDBA, and run Perl.",
+        "Confirm an output directory and naming convention that identifies the database, CDB/PDB scope, and execution date.",
+        "Do not capture or expose credential values in the Action Plan, terminal logs, or RFC evidence."
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "This RFC is a discovery/report execution activity; no OIC/SOA deployment backup applies.",
+        "Before execution, capture current CDB/PDB context and confirm the target PDBs are open read/write:",
+        "sqlplus \"/ as sysdba\"",
+        "show con_name;",
+        "show pdbs;",
+        "Capture a directory listing of the uploaded script packages after unzipping.",
+        "If any script requests an unexpected destructive action or prompts outside the approved discovery scope, stop and escalate before continuing."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Execution Steps",
+      content: [
+        "1. DB Discovery script",
+        "Download/unzip Discovery_script.zip and copy it to the approved server location.",
+        "cd Discovery_script",
+        "chmod 777 discovery_script.sql generate_html.pl",
+        discoveryPdbSteps,
+        "Generate the HTML report for each PDB LST file produced by the discovery script.",
+        "",
+        "2. Security Features script",
+        "Download/unzip Security_script.zip and copy it to the approved server location.",
+        "cd Security_script",
+        "chmod 777 security_features_status_CDB.sql security_features_status_PDB.sql",
+        "CDB level:",
+        "sqlplus \"/ as sysdba\" @security_features_status_CDB.sql",
+        "PDB level:",
+        securityPdbSteps,
+        "",
+        "3. HealthCheckup scripts",
+        "Download/unzip HCHECK_script.zip and copy it to the approved server location.",
+        "cd HCHECK_script",
+        "chmod 777 hout.sql hcheck.sql",
+        "CDB level:",
+        "sqlplus \"/ as sysdba\" @hout.sql",
+        "sqlplus \"/ as sysdba\" @hcheck.sql",
+        "PDB level:",
+        healthPdbSteps
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable. This RFC only executes database discovery/report scripts; no scheduler or application activation is requested.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate that all requested outputs were generated without ORA-, SP2-, PLS-, shell, or Perl errors.",
+        `Confirm DB Discovery outputs exist for each target PDB:\n${pdbList}`,
+        "Confirm each discovery .LST file has a corresponding generated HTML report.",
+        "Confirm Security Features output was generated for CDB level and for each target PDB.",
+        "Confirm HealthCheckup output was generated for CDB level and for each target PDB.",
+        "Confirm output file names or evidence captions identify the target database/server and PDB scope."
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "This is a read-only discovery/report activity; rollback is not expected because no deployment or data change is requested.",
+        "If any script fails, stop execution, capture the command, prompt, and error output, and notify the requester/DBA team.",
+        "Do not rerun failed scripts or change database/session settings beyond the approved instructions unless the DBA/request owner confirms the correction.",
+        "If temporary files must be removed or replaced, keep the failed logs/reports as evidence before cleanup."
+      ].join("\n\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Pre-change CDB/PDB context evidence (`show con_name` and `show pdbs`).",
+        "2. Directory listing showing the unzipped script folders/files.",
+        "3. Terminal execution logs for Discovery, Security Features, and HealthCheckup scripts.",
+        "4. Discovery .LST and generated HTML report for each target PDB.",
+        "5. Security Features output for CDB level and each target PDB.",
+        "6. HealthCheckup output for CDB level and each target PDB.",
+        "7. Final summary confirming the outputs/reports were shared with the requester.",
+        "Do not attach screenshots or files that expose credential values."
+      ].join("\n")
+    }
+  ];
+}
+
+function backupTableExistenceQuery(tables: string[]) {
+  const predicates = tables.map((tableName) => {
+    const schema = tableSchemaName(tableName) || "<SCHEMA_NAME>";
+    const objectName = tableObjectName(tableName).toUpperCase();
+    return `(OWNER = '${schema.toUpperCase()}' AND TABLE_NAME = '${objectName}')`;
+  });
+  return [
+    "SELECT OWNER, TABLE_NAME",
+    "FROM ALL_TABLES",
+    `WHERE ${predicates.length ? predicates.join("\n   OR ") : "TABLE_NAME = '<BACKUP_TABLE_NAME>'"}`,
+    "ORDER BY OWNER, TABLE_NAME;"
+  ].join("\n");
+}
+
+function buildDatabaseBackupPurgePlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const pairs = databaseBackupPurgePairs(text);
+  const targetHost = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
+  const environmentLabel = selectedEnvironment || "<Environment>";
+  const sourceTables = uniqueValues(pairs.map((pair) => pair.sourceTable));
+  const backupTables = uniqueValues(pairs.map((pair) => pair.backupTable));
+  const schemaList = uniqueValues([...sourceTables, ...backupTables].map(tableSchemaName).filter(Boolean));
+  const sourceTableList = sourceTables.length ? asBullets(sourceTables) : "- <SOURCE_TABLE>";
+  const backupTableList = backupTables.length ? asBullets(backupTables) : "- <BACKUP_TABLE>";
+  const schemaLine = schemaList.length ? `Target schema(s):\n${asBullets(schemaList)}` : "Target schema(s):\n- <SCHEMA_NAME>";
+  const preCountQueries = pairs.map((pair, index) => [
+    `-- Purge candidate count ${index + 1}: ${pair.sourceTable}`,
+    formatSqlCount(pair.sourceTable, pair.deleteWhere, "PURGE_CANDIDATES")
+  ].join("\n")).join("\n\n");
+  const backupStatements = pairs.map((pair, index) => [
+    `-- Backup ${index + 1}: ${pair.sourceTable} -> ${pair.backupTable}`,
+    formatCreateBackupSql(pair)
+  ].join("\n")).join("\n\n");
+  const backupCountQueries = pairs.map((pair, index) => [
+    `-- Backup row count ${index + 1}: ${pair.backupTable}`,
+    formatSqlCount(pair.backupTable, "", "BACKUP_ROWS")
+  ].join("\n")).join("\n\n");
+  const deleteStatements = pairs.map((pair, index) => [
+    `-- Purge ${index + 1}: ${pair.sourceTable}`,
+    formatDeleteSql(pair)
+  ].join("\n")).join("\n\n");
+  const postCountQueries = pairs.map((pair, index) => [
+    `-- Post-purge remaining candidate count ${index + 1}: ${pair.sourceTable}`,
+    formatSqlCount(pair.sourceTable, pair.deleteWhere, "REMAINING_PURGE_CANDIDATES")
+  ].join("\n")).join("\n\n");
+  const restoreStatements = pairs.map((pair, index) => [
+    `-- Restore option ${index + 1}: ${pair.backupTable} -> ${pair.sourceTable}`,
+    formatRestoreSql(pair)
+  ].join("\n")).join("\n\n");
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved for database backup and purge execution.",
+        `Target environment:\n- ${environmentLabel}`,
+        `Target database/server:\n- ${targetHost}`,
+        schemaLine,
+        `Source table(s):\n${sourceTableList}`,
+        `Backup table(s) to be created:\n${backupTableList}`,
+        "Confirm the execution will be performed by an authorized DBA or approved database operator.",
+        "Confirm the execution account has privileges to query the source tables, create backup tables, delete rows, and commit/rollback the transaction.",
+        environmentLabel === "PROD"
+          ? "Production warning: this RFC includes destructive DELETE statements. Continue only inside the approved change window and after backup validation succeeds."
+          : "Destructive DML warning: this RFC includes DELETE statements. Continue only after backup validation succeeds.",
+        "Do not capture or expose database credential values in the Action Plan, SQL output, screenshots, or RFC evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "preAnalysis",
+      title: "Pre-Execution Validation",
+      content: [
+        "Connect to the target database using the approved SQL execution tool.",
+        "Confirm the target database/session context before running the purge.",
+        "Validate that the backup tables do not already exist. Execute:",
+        backupTableExistenceQuery(backupTables),
+        "Expected result:",
+        "- No rows returned for the requested backup table names.",
+        "- If any backup table already exists, stop and confirm the required handling with the requester/DBA before continuing.",
+        "Capture purge candidate counts before creating the backup tables. Execute:",
+        preCountQueries || "<PRE_PURGE_COUNT_QUERY>",
+        "Save the count for each table. These values must match the backup row counts before DELETE execution."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup Execution and Validation",
+      content: [
+        "Create backup tables using the same filters requested for the purge.",
+        "Execute:",
+        backupStatements || "<CREATE_BACKUP_TABLE_SQL>",
+        "Validate backup row counts immediately after backup creation. Execute:",
+        backupCountQueries || "<BACKUP_COUNT_QUERY>",
+        "Required validation:",
+        "- Each backup row count must match the corresponding pre-execution purge candidate count.",
+        "- Do not continue to DELETE if any backup count does not match.",
+        "- Capture the backup creation output and count validation as RFC evidence.",
+        "Note: CREATE TABLE AS SELECT is DDL in Oracle and commits the backup table creation. The DELETE step must still be controlled and committed only after validation."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Purge Execution",
+      content: [
+        "Execute the DELETE statements only after the backup counts match the purge candidate counts.",
+        "Execute:",
+        deleteStatements || "<DELETE_SQL>",
+        "Review and capture the affected row count returned for each DELETE statement.",
+        "Required validation before commit:",
+        "- Each DELETE affected-row count must match the corresponding validated backup row count.",
+        "- If any count does not match or an Oracle error appears, execute ROLLBACK and escalate before retrying.",
+        "Commit only after all DELETE counts are validated.",
+        "COMMIT;"
+      ].join("\n\n")
+    },
+    {
+      id: "validation",
+      title: "Post-Execution Validation",
+      content: [
+        "Validate that the purged candidate records no longer remain in the source tables.",
+        "Execute:",
+        postCountQueries || "<POST_PURGE_COUNT_QUERY>",
+        "Expected result:",
+        "- 0 rows for each validation query, unless the requester/DBA confirms a different acceptable result.",
+        "Confirm the original integration failure condition is cleared or has been handed back to the integration/application owner for validation.",
+        "Do not drop backup tables unless the RFC explicitly requests it and the DBA/requester approves it."
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If DELETE has not been committed and validation fails, execute:",
+        "ROLLBACK;",
+        "If DELETE was committed and restoration is required, restore only after DBA/requester approval using the backup tables created by this RFC.",
+        "Potential restore statements:",
+        restoreStatements || "<RESTORE_FROM_BACKUP_SQL>",
+        "After any approved restore, validate row counts and capture evidence.",
+        "Do not drop backup tables until the requester/DBA confirms the retention or cleanup plan."
+      ].join("\n\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Target environment/database confirmation.",
+        "2. Backup table existence validation before execution.",
+        "3. Pre-execution purge candidate counts.",
+        "4. Backup table creation output.",
+        "5. Backup row count validation.",
+        "6. DELETE affected-row counts.",
+        "7. COMMIT confirmation, or ROLLBACK/error evidence if execution stops.",
+        "8. Post-execution validation counts.",
+        "9. Final confirmation shared with the requester/application owner.",
+        "Do not attach credential/password evidence."
+      ].join("\n")
+    }
+  ];
+}
+
 function databaseBackupGuidance(kind: string, restoreMentioned: boolean) {
   if (kind === "profilePasswordLifeTime") {
     return [
@@ -518,6 +1052,8 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 }
 
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  if (hasDatabaseBackupPurgeInstructions(text)) return buildDatabaseBackupPurgePlan(text, selectedEnvironment);
+  if (hasDatabaseDiscoveryInstructions(text)) return buildDatabaseDiscoveryPlan(text, selectedEnvironment);
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
   if (hasDatabaseComponentInstall(text)) return buildDatabaseComponentsPlan(text, selectedEnvironment);
   if (hasDatabasePasswordResetRequest(text)) return buildDatabasePasswordResetPlan(text, selectedEnvironment);

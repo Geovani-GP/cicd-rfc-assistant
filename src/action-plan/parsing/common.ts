@@ -74,6 +74,10 @@ function isTableOfContentsLine(line: string) {
 function bodyInstallationStart(cleaned: string) {
   const lines = cleaned.split("\n").filter(Boolean);
   return lines.findIndex((line, index) => {
+    if (/^\d+(?:\.\d+)*\s+Overview Installation\b/i.test(line) && !isTableOfContentsLine(line)) {
+      const lookAhead = lines.slice(index + 1, index + 10).join("\n");
+      return /\b(?:Table environments|Environment Url|Environment Information)\b/i.test(lookAhead);
+    }
     if (!/^Installation Instructions(?:\s+for\b|\s*$)/i.test(line) || isTableOfContentsLine(line)) return false;
     const lookAhead = lines.slice(index + 1, index + 8).join("\n");
     return /\bEnvironment Information\.?\b/i.test(lookAhead) || /\bInstallation artifacts\b/i.test(lookAhead);
@@ -92,7 +96,8 @@ function findNextMajorHeading(lines: string[], from: number) {
 function isMajorIm090Heading(line: string) {
   if (!line || isTableOfContentsLine(line)) return false;
   if (/^\d+(?:\.\d+)*\s+(?:IN|OUT|LAC|LACL|LACLS|ICWC|ICWE|GB)[A-Z0-9_-]*(?:_[A-Z0-9_-]+)+\b/i.test(line)) return true;
-  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Configure and start scheduler|Scheduled(?: an)? Integration|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
+  if (/^\d+(?:\.\d+)*\s+Installation\s+(?:[A-Z0-9_-]+(?:_[A-Z0-9_-]+)+|(?:IN|OUT|SYNC)_[A-Z0-9_]+)\b/i.test(line)) return true;
+  const heading = "(?:Overview Installation|Environment Information|Installation artifacts|Pre installation steps|Pre-Installation Steps|Get a backup integration|Get a backup lookups\\.?|Installation Steps|Installation [A-Z0-9_-]+(?:_[A-Z0-9_-]+)+|Activate integrations and schedulers|Activate integrations|Configure and start schedulers?|Scheduled(?: an)? Integration|Appendix|Appendix Lookups|Pre-configuration and integration dependencies|Steps for setting up connections|Steps for import a library|Steps for setting up Lookups|Integration.?s backup.*|Schedule activation|Verification Checklist|Return Point|Open and Closed Issues|Open Issues|Closed Issues)";
   return new RegExp(`^\\d+(?:\\.\\d+)*\\s+${heading}\\.?$`, "i").test(line) ||
     new RegExp(`^${heading}\\.?$`, "i").test(line);
 }
@@ -222,16 +227,59 @@ function findEnvironmentBlock(section: string, environment: string) {
   return { heading, block: selected ?? null, hasBlocks: true };
 }
 
-function overviewEnvironmentLabel(line: string) {
-  const match = line.match(/^\s*(Dev|Development|Regression|Test|Pre[- ]?Prod|TE|Prod|Production)\s+(?:OIC|WMS|ERP|OTM|OSB|MFT|DB)\b/i);
-  if (!match) return "";
-  const label = match[1].trim();
+const overviewEnvironmentMarkerPattern = /\b(Development|Regression|Production|Pre[- ]?Prod|Test|Dev|Prod|TE|PR)\s+(?:OIC|WMS|ERP|OTM|OSB|MFT|DB)\b/gi;
+
+function canonicalOverviewEnvironmentLabel(label: string) {
   return /^Prod/i.test(label) ? "Production" : label;
 }
 
-function overviewEnvironmentNames(section: string) {
-  const names = section
+function overviewEnvironmentMarkers(line: string) {
+  return Array.from(line.matchAll(overviewEnvironmentMarkerPattern)).map((match) => ({
+    index: match.index ?? 0,
+    label: canonicalOverviewEnvironmentLabel(match[1].trim())
+  }));
+}
+
+function splitOverviewEnvironmentLine(line: string) {
+  const markers = overviewEnvironmentMarkers(line);
+  if (!markers.length) return [line];
+  const chunks: string[] = [];
+  if (markers[0].index > 0) {
+    const prefix = line.slice(0, markers[0].index).trim();
+    if (prefix) chunks.push(prefix);
+  }
+  for (const [index, marker] of markers.entries()) {
+    const next = markers[index + 1];
+    const chunk = line.slice(marker.index, next?.index ?? line.length).trim();
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function overviewEnvironmentLines(section: string) {
+  const lines = section
     .split("\n")
+    .flatMap((line) => splitOverviewEnvironmentLine(line.trim()))
+    .filter(Boolean);
+  const output: string[] = [];
+  for (const line of lines) {
+    const previous = output[output.length - 1] ?? "";
+    const isContinuation = previous &&
+      /https?:\/\/\S+[-/]$/i.test(previous) &&
+      !/^(?:Dev|Development|Regression|Test|Pre[- ]?Prod|Prod|Production|TE|PR|OIC|MFT|ERP|OTM|OSB|DB|PORT|InstanceID|User|Password)\b/i.test(line);
+    if (isContinuation) output[output.length - 1] = `${previous}${line}`;
+    else output.push(line);
+  }
+  return output;
+}
+
+function overviewEnvironmentLabel(line: string) {
+  const marker = overviewEnvironmentMarkers(line)[0];
+  return marker ? marker.label : "";
+}
+
+function overviewEnvironmentNames(section: string) {
+  const names = overviewEnvironmentLines(section)
     .map(overviewEnvironmentLabel)
     .filter(Boolean);
   return Array.from(new Map(names.map((name) => [normalizeEnvironmentName(name), name])).values());
@@ -240,7 +288,7 @@ function overviewEnvironmentNames(section: string) {
 function filterOverviewEnvironmentSection(section: string, environment: string) {
   const aliases = environmentAliases(environment);
   if (!section || !aliases.length) return section;
-  const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = overviewEnvironmentLines(section);
   const selected: string[] = [];
   let includeCurrentEnvironment = false;
   for (const line of lines) {

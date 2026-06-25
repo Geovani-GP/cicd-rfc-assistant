@@ -30,6 +30,8 @@ The app is currently developed and validated on macOS, using Electron + React + 
 - MFT manual conversion support for known configuration/change patterns.
 - Oracle Database conversion support for SQL-driven plans and dedicated `PASSWORD_LIFE_TIME` profile changes.
 - CI/CD package wizard for repository-based deployment packages.
+- CI/CD Action Plan generation for standard repository / merge request / pipeline flows.
+- CI/CD standard notes for pipeline-managed backup/deployment/activation/validation, secure password-administrator sessions for connection credentials, and CI/CD tool output as evidence.
 - `int_adhoc.txt` / `int_full.txt` generation.
 - `DevOps/inputs/inputs.properties` updates.
 - Review screen before commit and push.
@@ -53,6 +55,26 @@ The app is currently developed and validated on macOS, using Electron + React + 
   - DOCX/PDF export
   - export from the failed step or final step
   - exported evidence no longer includes capture timestamps or auto-generated capture filenames
+
+## Current OIC Action Plan Behavior
+
+The OIC manual Action Plan parser has been validated against standard IM090 installation documents and RFC scope notes. It currently supports:
+
+- compact `Overview Installation` environment tables where multiple environments appear on the same extracted PDF line
+- target environment filtering for DEV, REG, TEST, and PROD aliases
+- OIC artifact inspection for `.iar` packages, lookup `.csv` files, connections, DVMs, and schedules
+- RFC-scope backup extraction for integrations and lookups
+- structured OIC install plans that separate integration import, lookup CSV import, connection validation, activation, scheduler start, validation, rollback, and evidence
+- connection alias cleanup for truncated artifact-internal names when the RFC provides the full connection name
+- scheduled integration detection from IM090 tables and artifact inspection
+- secure credential handling: password values are never requested, copied into the plan, or expected as evidence
+
+For CI/CD Action Plans, the generated plan intentionally stays aligned with the team standard:
+
+- the pipeline is treated as the owner of backup, deployment, activation, and validation stages
+- connection credential validation/configuration is handled through an approved secure session with the password administrator
+- execution evidence is the CI/CD Assistant/package summary and CI-CD Tool pipeline output
+- the plan does not repeat every manual OIC console step when the pipeline already owns that behavior
 
 ## Converter Architecture
 
@@ -148,13 +170,13 @@ Notes:
 
 Training progress is tracked by product using real RFC/IM090 examples reviewed during development. The counts below are working estimates, not formal coverage guarantees.
 
-Last updated: 2026-05-24
+Last updated: 2026-06-17
 
 | Product | Training files used | Unique cases | Coverage estimate | Current status |
 | --- | ---: | ---: | --- | --- |
-| OIC | 17 | 16 | 83-87% | Strongest coverage. Handles standard installs, multi-IAR plans, CSV/lookups, WSDL, ZIP libraries, connection declarations, scheduled integrations, scheduler stop plus integration disablement, deactivation-vs-installation distinction, RFC scope exclusions for Dashboard/lookups, credential-line filtering, wrapped artifact names, letter-spaced PDF text, and noisy PDF/DOCX extraction. |
+| OIC | 20 | 19 | 88-92% | Strongest coverage. Handles standard installs, multi-IAR plans, CSV/lookups, lookup-only update/import RFCs, WSDL, ZIP libraries, connection declarations, scheduled integrations, schedule-stop-only RFCs, scoped backups from RFC notes, compact Overview environment tables, scheduler stop plus integration disablement, deactivation-vs-installation distinction, RFC scope exclusions for Dashboard/lookups, credential-line filtering, wrapped/truncated artifact names, letter-spaced PDF text, noisy PDF/DOCX extraction, and CI/CD standard Action Plan wording. |
 | ODI Studio | 3 | 3 | 60-65% | Covers topology password updates for REST/Oracle Data Servers, ODI component import with SQL, backup/export, variables, mappings, datastores, and scenario regeneration. |
-| Oracle Database | 4 | 3 | 65-70% | Covers focused `PASSWORD_LIFE_TIME` profile extension plans, database user password resets, and database component installation with ordered SQL scripts, schema/PDB connection, object status validation, rollback, and evidence. |
+| Oracle Database | 6 | 5 | 75-80% | Covers focused `PASSWORD_LIFE_TIME` profile extension plans, database user password resets, database component installation with ordered SQL scripts, FMW/database discovery scripts with CDB/PDB execution, and PROD backup+purge data changes with CTAS backup tables, candidate counts, backup validation before DELETE, commit control, contingency, and evidence. |
 | OSB | 2 | 2 | 45-50% | Covers OSB export packages, pipelines, proxy services, business services, and service accounts. |
 | MFT | 0 | 0 | 30% | Parser structure exists, but more real documents are needed. |
 | SOA | 0 | 0 | Initial | Product option exists; training data still pending. |
@@ -181,6 +203,9 @@ Current tracked training set:
   - `GB_IM090_ICWC-CX-506.IN_CX_TO_ERP_ ASSIGNPASSWORD_V1.0.pdf`
   - `GB_IM090_ICWC-CX-284.OUT_OEC_TO_ERP_CUSTOMERS.OUT_OEC_TO_CUSTOMERS_V1.0.pdf`
   - `GB_IM090_ICWC-CX-289.IN_OEC_UPDATE_CUSTOMERS_v1.0.pdf`
+  - `ICWC_OTM-116. OUT_OM_TO_OTM_SALES_ORDERS_RELEASE_OIC_V4_20260602.pdf` for RFC `4-B003H8Q`
+  - RFC `4-B003NR2` stop schedule request for `IN_ODI_ERP_ORDENES_TO_OTM_BBU_ESS` on `GBOICGLR1TE`
+  - RFC `4-B003NS6` lookup update request for `CONFIG_KEY_ORDERRELEASE_TO_OTM_ONLY` on `GBOIC3GLR2PR`
 - ODI Studio:
   - RFC overview for topology password update on `OIC_PRY_INTPLATCOM_IMPORT`
   - `IM090_ICWE-ERP-956_OUT_ERP_TO_TRANSLATOR_EDI856_ASN.docx`
@@ -189,6 +214,8 @@ Current tracked training set:
   - `PASSWORD_LIFE_TIME` extension action plan examples for application schemas
   - `GB_IM090_ICWE-CDM-CAP-006.OUT_CDM_TO_MC1_EXPORT_CUSTOMERS_UY_DB_v1.0.pdf`
   - RFC `4-B0037KJ` overview for database user password reset on `GBDBTRANBZR1TE`
+  - RFC `4-B003F4K` FMW Upgrade Discovery for `GBSOAC2CMPR3TE` / database `GENR3TE`
+  - RFC `4-B003N8N` backup and purge data change for `GBDBBBUR2PR`, using `CREATE TABLE ... AS SELECT` backup tables followed by matching `DELETE FROM ... WHERE ...` filters
 - OSB:
   - `GB_IM090_ConfigurationInstructionsICWC-CX-529.OUT_RTM_TO_CDM_SYNCH_CUSTOMERS_OSB.pdf`
   - `SubmitExtractJobOICTech.jar`
@@ -216,12 +243,17 @@ Training review passes:
 | OIC | `GB_IM090_ICWC-CX-506.IN_CX_TO_ERP_ ASSIGNPASSWORD_V1.0.pdf` | 2 | Wrapped IAR name cleanup, lookup CSV, connection extraction, and password-line filtering validated. |
 | OIC | `GB_IM090_ICWC-CX-284.OUT_OEC_TO_ERP_CUSTOMERS.OUT_OEC_TO_CUSTOMERS_V1.0.pdf` | 2 | Letter-spaced PDF extraction, dual IAR install, shared lookup CSVs, connection extraction, and image-stream noise filtering validated. |
 | OIC | `GB_IM090_ICWC-CX-289.IN_OEC_UPDATE_CUSTOMERS_v1.0.pdf` | 1 | Single-IAR OIC upgrade with Dashboard/Lookup RFC exclusions, REG target vs PREPROD reference handling, OEC/OIC connection extraction, and secure credential-session note validated. |
+| OIC | `ICWC_OTM-116. OUT_OM_TO_OTM_SALES_ORDERS_RELEASE_OIC_V4_20260602.pdf` / RFC `4-B003H8Q` | 6 | Compact Overview environment table parsing, TEST target detection, scoped integration/lookup backups, three-IAR plus lookup CSV import, connection alias repair, `CONN_IN_ORDER_RELEASE_CREATION` normalization, scheduler detection, internal DVM noise suppression, CI/CD standard Action Plan wording, and support diagnostic cleanup validated. |
+| OIC | RFC `4-B003NR2` stop schedule request | 1 | Schedule-stop-only pattern validated for `IN_ODI_ERP_ORDENES_TO_OTM_BBU_ESS`, avoiding install/import backup wording, avoiding false missing artifact validation, preserving integration activation state, and warning when the pasted OIC URL does not appear to match the target instance. |
+| OIC | RFC `4-B003NS6` lookup update request | 1 | Lookup-only update/import pattern validated for `CONFIG_KEY_ORDERRELEASE_TO_OTM_ONLY.csv`, detecting `Design > Lookups`, CSV drag/drop import, and `Import and replace` wording without generating integration install/deactivation wording. |
 | ODI Studio | RFC overview for `OIC_PRY_INTPLATCOM_IMPORT` password update | 2 | Topology password update pattern validated. |
 | ODI Studio | `IM090_ICWE-ERP-956_OUT_ERP_TO_TRANSLATOR_EDI856_ASN.docx` | 2 | ODI backup/export, SQL, imports, variables, datastores, and scenario regeneration validated. |
 | ODI Studio | `Step document for password.docx` | 2 | Oracle physical architecture Data Server password update, `GB_EDI_OUT_STG`, `OracleDIAgent`, and secure password handling validated. |
 | Oracle Database | `PASSWORD_LIFE_TIME` extension examples | 3 | Simple profile-change Action Plan pattern validated against team feedback. |
 | Oracle Database | `GB_IM090_ICWE-CDM-CAP-006.OUT_CDM_TO_MC1_EXPORT_CUSTOMERS_UY_DB_v1.0.pdf` | 2 | DB component install, SQL order, schema/PDB, object validation, and credential filtering validated. |
 | Oracle Database | RFC `4-B0037KJ` database user password reset | 2 | Natural-language reset request, target users, PDBTRAN connection, `ALTER USER`, secure password sharing, and no-password-evidence handling validated. |
+| Oracle Database | RFC `4-B003F4K` / `4-B003F4V` FMW Upgrade Discovery on `GENR3TE` / `TRANR3TE` | 2 | Middleware-named environments correctly overridden to database discovery when instructions include `Discovery_script.zip`, `Security_script.zip`, `HCHECK_script.zip`, SYSDBA `sqlplus`, CDB/PDB prompts, `ORACLE_PDB_SID`, LST/HTML report generation, read-only evidence handling, missing CDB warning, and customer reply/comment parsing such as `one CDB which is TRANR3TE (TRANR3TE_syd15g)` while preserving provenance outside the original Action Plan. |
+| Oracle Database | RFC `4-B003N8N` backup and purge data on `GBDBBBUR2PR` | 1 | PROD backup+purge pattern validated from paired `CREATE TABLE ... AS SELECT` and `DELETE FROM ... WHERE ...` statements, with table item extraction, backup-table existence check, pre-counts, backup row-count matching, commit control, post-counts, contingency, and evidence. |
 | OSB | `GB_IM090_ConfigurationInstructionsICWC-CX-529.OUT_RTM_TO_CDM_SYNCH_CUSTOMERS_OSB.pdf` | 2 | OSB project/package/resource extraction validated. |
 | OSB | `SubmitExtractJobOICTech.jar` | 2 | OSB JAR inspection for pipeline, proxy service, business service, and service account validated. |
 | JAVA | RFC overview for `R5-GBJAVABZR1TE-POM User password reset` | 2 | WebLogic Admin Console password reset, realm/user extraction, inconsistent user warning, and no-password-evidence handling validated. |
@@ -257,6 +289,16 @@ If the user captures only schemas/users, the generated plan uses a profile place
 ```
 
 That means the profile should be resolved before execution. A future improvement is to add an optional `Resolved profile(s)` field so generated SQL can be fully concrete.
+
+For backup and purge requests, the Database converter detects paired SQL statements where a backup table is created with `CREATE TABLE ... AS SELECT ... WHERE ...` and the source table is later purged with `DELETE FROM ... WHERE ...`. The generated plan is intentionally conservative:
+
+- identify source tables and backup tables as configuration items
+- verify backup tables do not already exist
+- capture purge candidate counts before backup creation
+- create backup tables with the same filters requested by the RFC
+- validate backup row counts before any `DELETE`
+- commit only after DELETE affected-row counts match the validated backup counts
+- keep backup tables for contingency unless the RFC explicitly approves cleanup
 
 ## Development
 

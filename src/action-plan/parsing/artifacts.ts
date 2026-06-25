@@ -103,6 +103,14 @@ function extractArtifactFileNames(value: string) {
   return matches;
 }
 
+function isLikelyNoisyInstallableArtifactName(value: string) {
+  const normalized = value.replace(/[^A-Z0-9_]/gi, "").toUpperCase();
+  return normalized.length > 140 ||
+    /FINDNEXTISSUE|FILEREF|DOCUMENTCONTROL|CONFIGURATIONINSTRUCTIONS|OPENANDCLOSEDISSUES/.test(normalized) ||
+    (/MAP_/.test(normalized) && /PKG_/.test(normalized)) ||
+    (/MAP_/.test(normalized) && /ESC_/.test(normalized));
+}
+
 function extractArtifactFileNamesFromLine(value: string) {
   const exact = extractArtifactFileNames(value);
   if (exact.length) return exact;
@@ -134,7 +142,8 @@ export function installableArtifactNames(text: string) {
   const artifacts = [...extractArtifactFileNames(repairedText), ...extractArtifactFileNames(compactText)]
     .map((item) => cleanArtifactCandidate(item).replace(/\s+/g, ""))
     .map(cleanArtifactFileName)
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((item) => !isLikelyNoisyInstallableArtifactName(item));
   return Array.from(new Map(artifacts.map((item) => [normalizeEnvironmentName(item), item])).values());
 }
 

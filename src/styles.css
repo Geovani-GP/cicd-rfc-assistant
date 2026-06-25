@@ -1514,6 +1514,13 @@ label small {
   gap: 10px;
 }
 
+.repo-sync-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .case-strip {
   display: grid;
   grid-template-columns: minmax(170px, 1.1fr) minmax(180px, 1.15fr) repeat(3, minmax(120px, 0.75fr));
@@ -1567,7 +1574,6 @@ label small {
   grid-template-columns: auto minmax(220px, 330px);
   align-items: center;
   gap: 10px;
-  margin-left: auto;
 }
 
 .repo-select-label span {
@@ -4717,6 +4723,39 @@ textarea:focus {
 
 .summary strong {
   overflow-wrap: anywhere;
+}
+
+.summary .summary-value-with-badge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.path-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.path-status-badge.exists {
+  border: 1px solid #addfbf;
+  color: #18794e;
+  background: #e8f8ee;
+}
+
+.path-status-badge.create {
+  border: 1px solid #f0c27b;
+  color: #8a5a00;
+  background: #fff4dc;
 }
 
 .empty-state {

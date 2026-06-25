@@ -84,6 +84,14 @@ function objectPattern() {
   return /\b(?:PRC|RPC|PCR|PKG|SCN|MAP|FILE|TAB|VL)[A-Za-z0-9_]*\b/g;
 }
 
+function isLikelyNoisyOdiObjectName(value: string) {
+  const normalized = value.replace(/[^A-Z0-9_]/gi, "").toUpperCase();
+  return normalized.length > 90 ||
+    /FINDNEXTISSUE|FILEREF|DOCUMENTCONTROL|CONFIGURATIONINSTRUCTIONS|OPENANDCLOSEDISSUES/.test(normalized) ||
+    (/MAP_/.test(normalized) && /PKG_/.test(normalized)) ||
+    (/MAP_/.test(normalized) && /ESC_/.test(normalized));
+}
+
 function linesBetween(text: string, start: RegExp, end: RegExp) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const startIndex = lines.findIndex((line) => start.test(line));
@@ -107,7 +115,8 @@ function odiObjectNames(text: string) {
   const matches = text.match(objectPattern()) ?? [];
   const values = exported.length ? exported : matches;
   return uniqueValues(values.map(normalizeOdiObjectName))
-    .filter((item) => item.length >= 5);
+    .filter((item) => item.length >= 5)
+    .filter((item) => !isLikelyNoisyOdiObjectName(item));
 }
 
 function normalizeOdiObjectName(value: string) {
@@ -127,17 +136,26 @@ function componentValues(text: string, label: string) {
 }
 
 function odiArtifacts(text: string) {
-  return uniqueValues([
+  const values = uniqueValues([
     ...Array.from(text.matchAll(/\bArtifact file:\s*([^\n\r]+\.xml)\b/gi)).map((match) => match[1].trim()),
+    ...Array.from(text.matchAll(/\b(?:using|file|artifact)\s+(?:the\s+)?(?:xml\s+project\s+file\s+)?(?:for\s+this\s+integration\s+)?([A-Z0-9_.-]+\.zip)\b/gi)).map((match) => match[1].trim()),
     ...(text.match(/\b[A-Z0-9_.-]+\.xml\b/gi) ?? [])
-  ]);
+  ]).filter((item) => !isLikelyNoisyOdiObjectName(item));
+  return values.filter((item) => {
+    const withoutDownloadSuffix = item.replace(/(\d+)(\.zip)$/i, "$2");
+    return withoutDownloadSuffix === item || !values.some((other) => other.toUpperCase() === withoutDownloadSuffix.toUpperCase());
+  });
 }
 
 function odiMappings(text: string) {
-  return uniqueValues([
+  const values = uniqueValues([
     ...componentValues(text, "ODI Mapping").map(normalizeOdiObjectName),
     ...odiObjectNames(text).filter((item) => /^MAP_/i.test(item))
   ]);
+  return values.filter((item) => {
+    const withoutDownloadSuffix = item.replace(/\d+$/g, "");
+    return withoutDownloadSuffix === item || !values.some((other) => other.toUpperCase() === withoutDownloadSuffix.toUpperCase());
+  });
 }
 
 function odiPackages(text: string) {
@@ -197,6 +215,8 @@ function odiProjectPaths(text: string) {
 function odiScenario(text: string) {
   const joinedText = text.replace(/([A-Z0-9])\s*\n\s*(_[A-Z0-9_]+)/g, "$1$2");
   return firstMatch(text, [
+    /Regenerate\s+Scenario\s+([A-Z0-9_]+)\b/i,
+    /Scenarios?\s*(?:→|>|-)\s*([A-Z0-9_]+)\s+version\s+\d+/i,
     /Regenerate\s+([A-Z0-9_]+\s+Version\s+\d+)/i,
     /\b([A-Z0-9_]+\s+Version\s+\d+)\s*>\s*click\s+Regenerate/i,
     /Right click on the\s+([A-Z0-9_]+\s+Version\s+\d+)\s+scenario/i

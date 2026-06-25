@@ -40,7 +40,11 @@ export type ActionSourceDocument = {
 };
 
 export type DraftSummary = {
+  riceFolderPath: string;
+  riceFolderAbsolutePath: string;
+  riceFolderExists: boolean;
   targetPath: string;
+  targetExists: boolean;
   filesToCopy: Array<{ source: string; destination: string; kind: string }>;
   manifestPath: string;
   manifestEntries: string[];
@@ -172,7 +176,7 @@ declare global {
       selectActionDocument: () => Promise<ActionSourceDocument | null>;
       selectEvidenceImages: () => Promise<EvidenceImage[]>;
       captureAppWindow: () => Promise<EvidenceImage>;
-      captureScreenRegion: () => Promise<EvidenceImage>;
+      captureScreenRegion: () => Promise<EvidenceImage | null>;
       saveEvidenceImage: (payload: {
         rfc?: string;
         phase?: string;
@@ -212,6 +216,7 @@ declare global {
       }) => Promise<{ path: string; baseDirectory: string; outputDirectory: string } | string | null>;
       getPathForFile: (file: File) => string;
       scanRepositories: (basePath: string) => Promise<RepositoryInfo[]>;
+      syncRepository: (repoPath: string) => Promise<{ repo: RepositoryInfo; output: string }>;
       cloneRepository: (payload: { url: string; destination: string }) => Promise<RepositoryInfo>;
       prepareRfcDraft: (payload: unknown) => Promise<DraftSummary>;
       getDraftSummary: (payload: unknown) => Promise<DraftSummary>;
