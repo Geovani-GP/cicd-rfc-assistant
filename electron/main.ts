@@ -775,12 +775,86 @@ function isIgnorableGitStatusLine(line: string) {
   return filePath.split("/").some((part) => part === ".DS_Store" || part.startsWith("._"));
 }
 
+function isSafeMacMetadataPath(filePath: string) {
+  return filePath.split("/").some((part) => part === ".DS_Store" || part.startsWith("._"));
+}
+
 function blockingGitStatusLines(statusOutput: string) {
   return statusOutput
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .filter((line) => !isIgnorableGitStatusLine(line));
+}
+
+function ignorableGitStatusLines(statusOutput: string) {
+  return statusOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .filter(isIgnorableGitStatusLine);
+}
+
+async function cleanIgnorableGitChanges(repoPath: string) {
+  const status = await git(["status", "--porcelain"], repoPath);
+  if (!status.ok) return { ok: false, cleaned: [] as string[], error: status.stderr };
+  const lines = ignorableGitStatusLines(status.stdout);
+  const cleaned: string[] = [];
+  for (const line of lines) {
+    const filePath = gitStatusLinePath(line);
+    if (!filePath) continue;
+    if (line.startsWith("??")) {
+      const absolutePath = resolve(repoPath, filePath);
+      if (!absolutePath.startsWith(resolve(repoPath))) continue;
+      try {
+        await rm(absolutePath, { force: true, recursive: false });
+        cleaned.push(filePath);
+      } catch {
+        // Continue with tracked cleanup; blocking status will surface any remaining issue.
+      }
+      continue;
+    }
+    const checkout = await git(["checkout", "--", filePath], repoPath);
+    if (checkout.ok) cleaned.push(filePath);
+    else return { ok: false, cleaned, error: checkout.stderr };
+  }
+  const metadataCleanup = await cleanMacMetadataFiles(repoPath, cleaned);
+  if (!metadataCleanup.ok) return metadataCleanup;
+  return { ok: true, cleaned };
+}
+
+async function cleanMacMetadataFiles(repoPath: string, cleaned: string[] = []) {
+  const rootPath = resolve(repoPath);
+  const tracked = await git(["ls-files", "-m", "--", ".DS_Store", ":(glob)**/.DS_Store", "._*", ":(glob)**/._*"], repoPath);
+  if (!tracked.ok) return { ok: false, cleaned, error: tracked.stderr };
+  const untracked = await git(["ls-files", "-o", "--exclude-standard", "--", ".DS_Store", ":(glob)**/.DS_Store", "._*", ":(glob)**/._*"], repoPath);
+  if (!untracked.ok) return { ok: false, cleaned, error: untracked.stderr };
+  const ignored = await git(["ls-files", "-o", "-i", "--exclude-standard", "--", ".DS_Store", ":(glob)**/.DS_Store", "._*", ":(glob)**/._*"], repoPath);
+  if (!ignored.ok) return { ok: false, cleaned, error: ignored.stderr };
+
+  const trackedFiles = Array.from(new Set(tracked.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter(isSafeMacMetadataPath)));
+  for (const filePath of trackedFiles) {
+    const checkout = await git(["checkout", "--", filePath], repoPath);
+    if (checkout.ok) cleaned.push(filePath);
+    else return { ok: false, cleaned, error: checkout.stderr };
+  }
+
+  const disposableFiles = Array.from(new Set([...untracked.stdout.split(/\r?\n/), ...ignored.stdout.split(/\r?\n/)]
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(isSafeMacMetadataPath)));
+  for (const filePath of disposableFiles) {
+    const absolutePath = resolve(repoPath, filePath);
+    if (!absolutePath.startsWith(`${rootPath}/`) && absolutePath !== rootPath) continue;
+    try {
+      await rm(absolutePath, { force: true, recursive: false });
+      cleaned.push(filePath);
+    } catch {
+      // Any remaining file will be reported by the next git operation if it is still blocking.
+    }
+  }
+
+  return { ok: true, cleaned: Array.from(new Set(cleaned)) };
 }
 
 function classifyFile(filePath: string): SelectedFile["kind"] {
@@ -2006,6 +2080,8 @@ ipcMain.handle("scan-repositories", async (_event, basePath: string) => {
 
 ipcMain.handle("sync-repository", async (_event, repoPath: string) => {
   const repositoryPath = resolve(repoPath);
+  const cleanup = await cleanIgnorableGitChanges(repositoryPath);
+  if (!cleanup.ok) throw new Error(cleanup.error);
   const status = await git(["status", "--porcelain"], repositoryPath);
   if (!status.ok) throw new Error(status.stderr);
   const blockingChanges = blockingGitStatusLines(status.stdout);
@@ -2017,9 +2093,24 @@ ipcMain.handle("sync-repository", async (_event, repoPath: string) => {
   if (!checkout.ok) throw new Error(checkout.stderr);
   const pull = await git(["pull"], repositoryPath);
   if (!pull.ok) throw new Error(pull.stderr);
+  const cleanupOutput = cleanup.cleaned.length
+    ? `Limpieza automatica de archivos locales ignorables: ${cleanup.cleaned.join(", ")}\n\n`
+    : "";
   return {
     repo: await getRepositoryInfo(repositoryPath),
-    output: pull.stdout || `Repositorio actualizado en ${releaseBranch}.`
+    output: cleanupOutput + (pull.stdout || `Repositorio actualizado en ${releaseBranch}.`)
+  };
+});
+
+ipcMain.handle("clean-repository-metadata", async (_event, repoPath: string) => {
+  const repositoryPath = resolve(repoPath);
+  const cleanup = await cleanIgnorableGitChanges(repositoryPath);
+  if (!cleanup.ok) throw new Error(cleanup.error);
+  return {
+    repo: await getRepositoryInfo(repositoryPath),
+    output: cleanup.cleaned.length
+      ? `Archivos locales seguros limpiados: ${cleanup.cleaned.join(", ")}`
+      : "No se encontraron archivos locales seguros para limpiar."
   };
 });
 
@@ -2050,6 +2141,12 @@ async function commitRfcLocal(payload: DraftPayload) {
       logPath,
       output: `${output}${backToRelease.ok ? `\n\nRepositorio regresado a ${releaseBranch}.` : `\n\nNo se pudo regresar a ${releaseBranch}: ${backToRelease.stderr}`}`
     };
+  }
+  const cleanup = await cleanIgnorableGitChanges(payload.repoPath);
+  lines.push(`cleanup ignorable files: ${cleanup.ok ? cleanup.cleaned.join(", ") || "sin cambios" : cleanup.error}`);
+  if (!cleanup.ok) {
+    const logPath = await writeLog(branch, lines);
+    return { ok: false, branch, logPath, output: cleanup.error };
   }
   const checkoutBase = await git(["checkout", releaseBranch], payload.repoPath);
   lines.push(`checkout ${releaseBranch}: ${checkoutBase.ok ? "OK" : checkoutBase.stderr}`);

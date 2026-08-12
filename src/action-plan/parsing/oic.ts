@@ -90,6 +90,10 @@ function oicScheduleContentIsNotApplicable(content: string) {
     !/\bevery\s+\d+|\bstart schedule\b|\bstart running\b|\bfrequency\b/i.test(content);
 }
 
+function stripOicBackoutFromValidation(content: string) {
+  return content.replace(/\n?\s*(?:\d+(?:\.\d+)*\s+)?Backout steps?\b[\s\S]*$/i, "").trim();
+}
+
 function hasOicConnectionOnlyInstructions(text: string) {
   return /\bConnections?>\s*OIC\b|R\d-?OIC\s*CONNECTIONS|Configuration\s*Instructions\s*connectors|Configuration\s*Steps/i.test(text) &&
     /\bConnection\s*Name\s*:|\bSearch\s*for\s*[“"]?[A-Z0-9_]{6,}[”"]?\s*connection/i.test(text) &&
@@ -106,6 +110,15 @@ function hasVisualBuilderExportWithDataInstructions(text: string) {
   return /\bVisual Builder\b/i.test(text) &&
     /\bExport with Data\b|\bexports?\b[\s\S]{0,120}\bobjects?\s+Visual Builder\b|\bVisual Builder\b[\s\S]{0,160}\bexport/i.test(text) &&
     !/\bImport\b[\s\S]{0,80}\bVisual Builder\b|\bdeploy\b|\bactivate\b/i.test(text);
+}
+
+function hasVisualBuilderApplicationImportInstructions(text: string) {
+  const artifacts = installableArtifactNames(text);
+  const hasVisualBuilderZip = artifacts.some((artifact) => /\.zip$/i.test(artifact) && /\bTO_[A-Z0-9_]+|visual|vb|screen/i.test(artifact));
+  const hasOnlyIarArtifacts = artifacts.some((artifact) => /\.iar$/i.test(artifact)) && !artifacts.some((artifact) => /\.zip$/i.test(artifact));
+  if (hasOnlyIarArtifacts) return false;
+  return /\bVisual Builder\b|\bVBCS\b|\bVB\b/i.test(text) &&
+    (hasVisualBuilderZip || /\bApplication from file\b|\bvisual-application\.json\b/i.test(text));
 }
 
 function visualBuilderProjectName(text: string) {
@@ -125,6 +138,82 @@ function visualBuilderProjectStatus(text: string) {
 
 function visualBuilderOicUrl(text: string) {
   return cleanOicConnectionValue(firstMatch(text, [/\bLogin to OIC Instance\s*\((https?:\/\/[^)\s]+)\)/i, /\b(https?:\/\/[^\s)]+\/ic\/home\/?)/i]));
+}
+
+function visualBuilderImportArtifactNames(text: string) {
+  const artifacts = installableArtifactNames(text).filter((artifact) => /\.zip$/i.test(artifact));
+  const visualBuilderArtifacts = artifacts.filter((artifact) => /\bTO_[A-Z0-9_]+|visual|vb|screen/i.test(artifact));
+  return uniqueValues(visualBuilderArtifacts.length ? visualBuilderArtifacts : artifacts);
+}
+
+function visualBuilderApplicationId(text: string, artifacts: string[]) {
+  const idFromDocument = firstMatch(text, [
+    /\bApplication\s+ID\s+([A-Z0-9_]+-\d+(?:\.\d+)+)\b/i,
+    /\bapplication=([A-Z0-9_]+-\d+(?:\.\d+)+)\b/i
+  ]);
+  if (idFromDocument) return idFromDocument;
+  const fromArtifact = artifacts
+    .map((artifact) => artifact.replace(/\.zip$/i, ""))
+    .find((artifact) => /-\d+(?:\.\d+)+$/i.test(artifact));
+  return fromArtifact || "";
+}
+
+function visualBuilderApplicationName(text: string, artifacts: string[]) {
+  const fromDocument = firstMatch(text, [
+    /\bApplication\s+Name\s+([A-Z0-9_]{8,})(?:\s|$)/i,
+    /\bApplication\s+Display\s+Name\s+([A-Z0-9_]{8,})(?:\s|$)/i
+  ]);
+  if (fromDocument) return fromDocument;
+  const applicationId = visualBuilderApplicationId(text, artifacts);
+  if (applicationId) return applicationId.replace(/-\d+(?:\.\d+)+$/i, "");
+  const fromArtifact = artifacts
+    .map((artifact) => artifact.replace(/-\d+(?:\.\d+)*\.zip$/i, "").replace(/\.zip$/i, ""))
+    .find((artifact) => /^[A-Z0-9_]{8,}$/i.test(artifact));
+  return fromArtifact || "";
+}
+
+function compactedVisualBuilderUrlText(text: string) {
+  return text
+    .replace(/-\s*\n\s*/g, "-")
+    .replace(/\s*\n\s*/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function visualBuilderUrlForTarget(text: string, selectedEnvironment: string) {
+  const targetInstance = targetInstanceFromText(text).toLowerCase();
+  const compactText = compactedVisualBuilderUrlText(text);
+  const urls = Array.from(compactText.matchAll(/https?:\/\/oic-vbcs-[^\s]+?\/ic\/builder\/?/gi)).map((match) => match[0]);
+  const environmentSuffix = environmentSuffixFromSelection(selectedEnvironment, targetInstance);
+  const byTarget = targetInstance ? urls.find((url) => url.toLowerCase().includes(targetInstance)) : "";
+  if (byTarget) return cleanOicConnectionValue(byTarget);
+  const bySuffix = environmentSuffix ? urls.find((url) => new RegExp(`${environmentSuffix}-vb`, "i").test(url)) : "";
+  if (bySuffix) return cleanOicConnectionValue(bySuffix);
+  return cleanOicConnectionValue(urls[0] || "");
+}
+
+function environmentSuffixFromSelection(selectedEnvironment: string, targetInstance = "") {
+  const source = `${selectedEnvironment} ${targetInstance}`;
+  if (/\bPROD(?:UCTION)?\b|PR\b/i.test(source)) return "pr";
+  if (/\bREG(?:RESSION)?\b|RE\b/i.test(source)) return "re";
+  if (/\bTEST\b|TE\b/i.test(source)) return "te";
+  return "";
+}
+
+function visualBuilderUserForTarget(text: string, selectedEnvironment: string) {
+  const suffix = environmentSuffixFromSelection(selectedEnvironment, targetInstanceFromText(text).toLowerCase());
+  const users = Array.from(text.matchAll(/\bUser\s*:?\s*([a-z0-9][a-z0-9-]*-(?:te|re|pr))\b/gim)).map((match) => match[1]);
+  const bySuffix = suffix ? users.find((user) => user.toLowerCase().endsWith(`-${suffix}`)) : "";
+  return bySuffix || users[0] || "";
+}
+
+function visualBuilderServiceConnectionUrl(text: string, selectedEnvironment: string, applicationId: string) {
+  const explicit = cleanOicConnectionValue(firstMatch(compactedVisualBuilderUrlText(text), [
+    /(https?:\/\/oic-vbcs-[^\s]+?\/ic\/builder\/\?root=application&application=[^&\s]+&artifact=services_-_catalog\.json%23backends_-_ics&section=servers)/i
+  ]));
+  if (explicit && (!targetInstanceFromText(text) || explicit.toLowerCase().includes(targetInstanceFromText(text).toLowerCase()))) return explicit;
+  const baseUrl = visualBuilderUrlForTarget(text, selectedEnvironment);
+  if (!baseUrl || !applicationId) return "";
+  return `${baseUrl.replace(/\/?$/, "/")}?root=application&application=${applicationId}&artifact=services_-_catalog.json%23backends_-_ics&section=servers`;
 }
 
 function credentialSessionMessage() {
@@ -159,23 +248,96 @@ function oicInstallationFallback(
       : "",
     metadata.connections.length ? credentialSessionMessage() : "",
     scope.commonConnectionsMayExist ? "Configure only missing or failing connections using credentials entered during the approved password administrator working session." : "",
+    scope.ignoreConnections ? "Do not execute connection configuration steps; Connections are marked as N/A in the IM090." : "",
     scope.ignoreLookups ? "Do not execute lookup import/configuration steps." : "",
+    metadata.dvms.length && !scope.ignoreLookups ? `Validate the included DVM/lookup component(s) after import:\n${asBullets(metadata.dvms)}` : "",
+    scope.explicitLookupImports.length ? `Import only the explicit additional lookup(s) requested after integration installation:\n${asBullets(scope.explicitLookupImports)}` : "",
     scope.ignoreDashboard ? "Do not execute Dashboard / Visual Builder validation steps." : "",
-    metadata.integrations.length ? `Activate ${metadata.integrations.join(" and ")}.` : "Activate the imported integration.",
+    scope.activateOnlyIntegrations.length
+      ? `Activate only the requested integration(s):\n${asBullets(scope.activateOnlyIntegrations)}`
+      : metadata.integrations.length ? `Activate ${metadata.integrations.join(" and ")}.` : "Activate the imported integration.",
     "Refresh activation status until the integration is active."
   ];
   return lines.filter(Boolean).map((line, index) => `${index + 1}. ${indentNestedBullets(line)}`).join("\n");
 }
 
+function oicContentHasExplicitScheduleInstruction(content: string) {
+  return /\b(?:start schedule|start the schedule|configure and start|edit schedule|define recurrence|frequency|every\s+\d+\s+(?:minutes?|hours?)|scheduled integration)\b/i.test(content);
+}
+
+function oicInstallationContentLooksGenericOrContaminated(
+  content: string,
+  artifacts: string[],
+  integrations: string[],
+  selectedEnvironment: string
+) {
+  if (!content.trim()) return false;
+  if (/\bIf RFC is raised for\b/i.test(content)) return true;
+  if (/\bGBUK ERP-CPGVision Products Interface\b/i.test(content)) return true;
+
+  const targetEnvironment = normalizeEnvironmentName(selectedEnvironment);
+  const otherEnvironmentBranches = Array.from(content.matchAll(/\bIf RFC is raised for\s+([A-Z0-9]+)\b/gi))
+    .map((match) => normalizeEnvironmentName(match[1] ?? ""))
+    .filter((value) => value && value !== targetEnvironment);
+  if (otherEnvironmentBranches.length) return true;
+
+  const knownTokens = uniqueValues([
+    ...integrations,
+    ...artifacts
+      .filter((artifact) => /\.iar$/i.test(artifact))
+      .map((artifact) => artifact.replace(/\.[^.]+$/i, "").replace(/_\d{2}\.\d{2}\.\d{4}$/i, ""))
+  ]).map((value) => value.toUpperCase());
+
+  const mentionedIntegrationNames = uniqueValues(
+    Array.from(content.matchAll(/\b((?:IN|OUT|SYNC)_[A-Z0-9_]{6,}|[A-Z]{2,}(?:_[A-Z0-9]+){3,})\b/g))
+      .map((match) => match[1])
+      .filter((value) => !/\b(?:OIC|RFC|DVM|WSDL|URL|REST|SOAP|ERP|GBUK)\b/i.test(value))
+  );
+
+  return mentionedIntegrationNames.some((name) => {
+    const normalized = name.toUpperCase();
+    return knownTokens.length > 0 && !knownTokens.some((token) => token.includes(normalized) || normalized.includes(token));
+  });
+}
+
 function oicScopeOverrides(text: string) {
   const hasConnectionCredentialScope = /\bconnections?\b/i.test(text) && /\b(?:passwords?|credentials?|username|security policy|authentication)\b/i.test(text);
   const lookupImportIsOptional = /\blookups?\b[\s\S]{0,220}\bnot mandatory unless explicitly required\b|\bOnly import the lookups specified in the RFC\b/i.test(text);
+  const connectionsMarkedNa = oicIm090SectionMarkedNotApplicable(text, "connections?");
+  const lookupsMarkedNa = oicIm090SectionMarkedNotApplicable(text, "lookups?");
+  const explicitLookupImports = oicExplicitAdditionalLookupImports(text);
   return {
     ignoreDashboard: /\b(?:ignore|exclude|do not (?:install|validate|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\b(?:dashboard|visual builder)\b|\b(?:dashboard|visual builder)\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
-    ignoreLookups: lookupImportIsOptional || /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text),
-    commonConnectionsMayExist: /\bconnections?\b[\s\S]{0,160}\b(?:common use|already configured|could be already configured|ignore them if that's the case)\b/i.test(text),
-    requiresOnlineCredentialSession: hasConnectionCredentialScope || /\b(?:credentials?|passwords?)\b[\s\S]{0,180}\b(?:session|secure channel|owner|administrator)\b/i.test(text)
+    ignoreConnections: connectionsMarkedNa,
+    ignoreLookups: !explicitLookupImports.length && (lookupsMarkedNa || lookupImportIsOptional || /\b(?:ignore|exclude|do not (?:import|configure|modify|include)|no incluir|ignorar)\b[\s\S]{0,120}\blookups?\b|\blookups?\b[\s\S]{0,120}\b(?:separated RFC|separate RFC|another RFC|ignore|exclude)\b/i.test(text)),
+    explicitLookupImports,
+    commonConnectionsMayExist: !connectionsMarkedNa && /\b(?:connections?|connectors?)\b[\s\S]{0,180}\b(?:common use|already configured|currently is configured|could be already configured|not necesary change|not necessary change|ignore them if that's the case)\b/i.test(text),
+    requiresOnlineCredentialSession: !connectionsMarkedNa && (hasConnectionCredentialScope || /\b(?:credentials?|passwords?|wallet)\b[\s\S]{0,220}\b(?:session|meet|meeting|secure channel|owner|administrator|Daniela)\b/i.test(text)),
+    noScheduleStart: /\b(?:please\s+)?(?:do\s+)?not\s+start(?:ing)?\s+(?:the\s+)?scheduler\b|\bactivity\s+for\s+start\s+the\s+scheduler\s+is\s+an\s+other\s+RFC\b|\bstart\s+the\s+scheduler\s+is\s+(?:a|an)other\s+RFC\b/i.test(text),
+    activateOnlyIntegrations: oicActivateOnlyIntegrations(text)
   };
+}
+
+function oicExplicitAdditionalLookupImports(text: string) {
+  return uniqueValues([
+    ...Array.from(text.matchAll(/\bOnly\s+must\s+be\s+import(?:ed)?\s+after\s+the\s+installation\s+(?:the\s+)?([A-Z][A-Z0-9_]{6,})\b/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\bOnly\s+import\s+(?:the\s+)?(?:lookup\s+)?([A-Z][A-Z0-9_]{6,})\b/gi)).map((match) => match[1])
+  ]).filter((value) => /CONFIG|LOOKUP/i.test(value));
+}
+
+function oicActivateOnlyIntegrations(text: string) {
+  return uniqueValues([
+    ...Array.from(text.matchAll(/\bonly\s+act(?:ive|ivate)\s+integration\s*\(\s*([A-Z][A-Z0-9_]{6,})\s*\)/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\bonly\s+act(?:ive|ivate)\s+(?:the\s+)?integration\s+([A-Z][A-Z0-9_]{6,})\b/gi)).map((match) => match[1])
+  ]).filter((value) => /_/.test(value));
+}
+
+function oicIm090SectionMarkedNotApplicable(text: string, sectionNamePattern: string) {
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*(?:(?:\\d+(?:\\.\\d+)*)|[ivx]+\\.)?\\s*(?:Steps\\s+for\\s+setting\\s+up\\s+)?${sectionNamePattern}\\s*(?:\\n|:)\\s*(?:N\\s*\\/\\s*A|NA|Not\\s+Applicable)\\b`,
+    "i"
+  );
+  return pattern.test(text);
 }
 
 function oicScopeConnectionBlocks(text: string, connection: string) {
@@ -349,16 +511,35 @@ function oicScheduleStopIntegrationCandidates(text: string) {
   return uniqueValues([
     ...Array.from(text.matchAll(/\bstop\s+scheduler\s+((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1]),
     ...Array.from(text.matchAll(/\bstop\s+schedule\s+for\s+the\s+integration\s*:?\s*((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1]),
-    ...Array.from(text.matchAll(/\bintegration\s*:?\s*((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1])
+    ...Array.from(text.matchAll(/\bintegration\s*:?\s*((?:IN|OUT|SYNC)_[A-Z0-9_]+)/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\b((?:IN|OUT|SYNC)_[A-Z0-9_]+)\s+integration\s+schedule\s+to\s+be\s+stopped\b/gi)).map((match) => match[1])
   ]);
 }
 
 function hasOicScheduleStopOnlyInstructions(text: string) {
-  const hasStopSchedule = /\b(?:stop|pause)\s+(?:the\s+)?(?:schedule|scheduler)\b|\bSchedule\b[\s\S]{0,120}\bStop\b/i.test(text);
+  const hasStopSchedule = /\b(?:stop|pause)\s+(?:the\s+|this\s+)?(?:schedule|scheduler)\b|\b(?:schedule|scheduler)\s+(?:to\s+be\s+)?(?:stopped|paused)\b|\bSchedule\b[\s\S]{0,120}\bStop\b/i.test(text);
   const hasIntegration = oicScheduleStopIntegrationCandidates(text).length > 0 || /\b(?:IN|OUT|SYNC)_[A-Z0-9_]+\b/i.test(text);
   const hasInstallScope = /\bInstallation artifacts\b|\.iar\b|\.csv\b|\bClick on Import button\b|\bChoose file button to browse file to be imported\b/i.test(text);
   const hasIntegrationDisableScope = /\b(?:deactivate|inactivate)\b|\bdisable\s+integration\b|\bDeactivate button\b|\bConfigured status\b/i.test(text);
   return hasStopSchedule && hasIntegration && !hasInstallScope && !hasIntegrationDisableScope;
+}
+
+function oicScheduleStartIntegrationCandidates(text: string) {
+  return uniqueValues([
+    ...Array.from(text.matchAll(/\bSearch\s+for\s+[“"]?((?:IN|OUT|SYNC|INT)\d*[A-Z0-9_]{5,})[”"]?\s+integration\b/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\b(?:start|activate)\s+(?:the\s+)?(?:schedule|scheduler)\s+(?:for|of)\s+[“"]?((?:IN|OUT|SYNC|INT)\d*[A-Z0-9_]{5,})[”"]?/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\b((?:IN|OUT|SYNC|INT)\d*[A-Z0-9_]{5,})\b/g)).map((match) => match[1])
+  ])
+    .filter((value) => /_/.test(value))
+    .filter((value) => !/\b(?:INTEGRATION|SCHEDULED|SCHEDULE)\b/i.test(value));
+}
+
+function hasOicScheduleStartOnlyInstructions(text: string) {
+  const hasStartSchedule = /\bStart\s+(?:scheduled\s+integration|Schedule)\b|\bClick\s+On\s+[“"]?Start Schedule[”"]?\b|\bConfirm\s+or\s+Start Schedule\b/i.test(text);
+  const hasIntegration = oicScheduleStartIntegrationCandidates(text).length > 0;
+  const hasInstallScope = /\bInstallation artifacts\b|\.iar\b|\.par\b|\.zip\b|\.csv\b|\bClick on Import button\b|\bChoose file button to browse file to be imported\b/i.test(text);
+  const hasStopOrDisableScope = /\b(?:stop|pause|disable|deactivate|inactivate)\b/i.test(text);
+  return hasStartSchedule && hasIntegration && !hasInstallScope && !hasStopOrDisableScope;
 }
 
 function hasOicResetPasswordInstructions(text: string) {
@@ -428,6 +609,13 @@ function isLikelyTruncatedConnectionAlias(value: string, other: string) {
   const key = normalizedConnectionKey(value);
   const otherKey = normalizedConnectionKey(other);
   if (key === otherKey || key.length < 8 || otherKey.length <= key.length) return false;
+  const keyParts = key.split("_");
+  const otherParts = otherKey.split("_");
+  const keyTail = keyParts.at(-1) ?? "";
+  const otherTail = otherParts.at(-1) ?? "";
+  const keyPrefix = keyParts.slice(0, -1).join("_");
+  const otherPrefix = otherParts.slice(0, -1).join("_");
+  if (keyPrefix && keyPrefix === otherPrefix && keyTail && otherTail && keyTail !== otherTail) return false;
   if (otherKey.startsWith(key) && otherKey.length - key.length >= 8) return true;
   if (key.length < 18 || !otherKey.startsWith(key.slice(0, 12))) return false;
   const distance = editDistance(key, otherKey);
@@ -451,6 +639,9 @@ function linesMatching(text: string, pattern: RegExp) {
 function connectionCandidatesFromText(text: string) {
   const repairedText = repairWrappedOicConnectionNames(text);
   const technicalConnections = repairedText.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_CON(?:N)?ECTION\b/g) ?? [];
+  const oicServiceApiConnections = Array.from(
+    repairedText.matchAll(/\bOIC\s+SERVICE\s+API\s+CONNECTION(?:[_\s][A-Z0-9]+)?\b/gi)
+  ).map((match) => match[0]);
   const connPrefixedConnections = repairedText.match(/\bCONN_[A-Z0-9_]+\b/g) ?? [];
   const editForConnections = Array.from(
     repairedText.matchAll(/\bedit\s+for\s+([A-Z0-9][A-Z0-9_ .-]{4,100})\b/gi)
@@ -486,7 +677,7 @@ function connectionCandidatesFromText(text: string) {
   )
     .map((match) => match[1])
     .filter((value) => /\bCON(?:N)?ECTION\b/i.test(value));
-  const values = uniqueValues([...technicalConnections, ...connPrefixedConnections, ...editForConnections, ...editConnectionNames, ...connectorNameConnections, ...namedConnections, ...settingConnections, ...explicitSearchedConnections, ...chosenConnections, ...searchedConnections, ...reversedSearchedConnections, ...setupConnections])
+  const values = uniqueValues([...technicalConnections, ...oicServiceApiConnections, ...connPrefixedConnections, ...editForConnections, ...editConnectionNames, ...connectorNameConnections, ...namedConnections, ...settingConnections, ...explicitSearchedConnections, ...chosenConnections, ...searchedConnections, ...reversedSearchedConnections, ...setupConnections])
     .filter((value) => !/^connection$/i.test(value.trim()))
     .filter((value) => /_/.test(value) || value === value.toUpperCase());
   return values.filter((value) => {
@@ -607,6 +798,8 @@ function canonicalOicConnectionName(connection: string) {
   if (key === "API_ERP_ADAPTER") return "ERP SERVICE API";
   if (key === "OSBTEC_REST_SERVICE_API") return "OSBTec REST Service API";
   if (key === "REPORT_SERVICE_SOAP_API") return "REPORT SERVICE SOAP CONNECTION ERP";
+  if (key === "OIC_SERVIC_API_CONNEC_SCM" || key === "OIC_SERVICE_API_CONNECTION_SCM") return "OIC SERVICE API CONNECTION_SCM";
+  if (key === "OIC_SERVIC_API_CONNEC_GEN2" || key === "OIC_SERVICE_API_CONNECTION_GEN2") return "OIC SERVICE API CONNECTION GEN2";
   return connection;
 }
 
@@ -629,6 +822,7 @@ function connectionReferenceDetails(
   const tableSection = oicConnectionTableSection(text, key);
   const scopeEndpoint = oicScopeConnectionEndpoint(text, connection);
   const targetOicUrl = oicAdminConsoleUrlForTarget(text, selectedEnvironment);
+  const detailsSharedInZoom = /\bConnection details to be shared in Zoom session\b/i.test(text);
   const credentials = scope.requiresOnlineCredentialSession
     ? "Coordinate a working session with the password administrator for username/password entry or validation."
     : "Use the approved secure channel for username/password.";
@@ -698,7 +892,7 @@ function connectionReferenceDetails(
     accessType = "Public Gateway";
   } else if (/\bOIC\b.*\bSERVICE\b.*\bAPI\b|\bOIC_SERVICE_REST_API\b/.test(key)) {
     type = "REST API Base URL";
-    endpoint = oicUrl || targetPending;
+    endpoint = detailsSharedInZoom ? targetPending : oicUrl || targetPending;
     security = "Basic Authentication";
   } else if (/\bREST\b.*\bAPI\b/.test(key)) {
     type = "REST API Base URL";
@@ -721,7 +915,7 @@ function connectionReferenceDetails(
 
   if (scopeEndpoint) {
     endpoint = scopeEndpoint;
-  } else if (endpoint === targetPending && /\bOIC\b|_OIC_|OIC_/i.test(key)) {
+  } else if (endpoint === targetPending && !detailsSharedInZoom && /\bOIC\b|_OIC_|OIC_/i.test(key)) {
     endpoint = targetOicUrl || targetPending;
   } else if (endpoint === targetPending && /\bERP\b|_ERP_|ERP_/i.test(key) && erpHost) {
     endpoint = `${erpHost}/fscmService/ErpIntegrationService?wsdl`;
@@ -952,6 +1146,16 @@ function oicLookupNames(text: string) {
 }
 
 export function oicConfigurationItems(text: string) {
+  if (hasVisualBuilderApplicationImportInstructions(text)) {
+    const artifacts = visualBuilderImportArtifactNames(text);
+    const applicationName = visualBuilderApplicationName(text, artifacts);
+    const applicationId = visualBuilderApplicationId(text, artifacts);
+    return [
+      applicationName ? `Visual Builder application: ${applicationName}` : "Visual Builder application import",
+      applicationId ? `Application ID: ${applicationId}` : "",
+      artifacts.length ? `Artifact: ${artifacts[0]}` : ""
+    ].filter(Boolean);
+  }
   if (hasVisualBuilderExportWithDataInstructions(text)) {
     const project = visualBuilderProjectName(text);
     const version = visualBuilderProjectVersion(text);
@@ -1172,6 +1376,110 @@ function buildVisualBuilderExportWithDataPlan(text: string, selectedEnvironment:
   ];
 }
 
+function buildVisualBuilderApplicationImportPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target OIC / Visual Builder environment";
+  const artifacts = visualBuilderImportArtifactNames(text);
+  const artifact = artifacts[0] || "<Visual Builder application .zip>";
+  const applicationId = visualBuilderApplicationId(text, artifacts);
+  const applicationName = visualBuilderApplicationName(text, artifacts) || applicationId || "<Visual Builder application>";
+  const vbUrl = visualBuilderUrlForTarget(text, selectedEnvironment) || oicAdminConsoleUrlForTarget(text, selectedEnvironment) || "<Target Visual Builder URL>";
+  const serviceUrl = visualBuilderServiceConnectionUrl(text, selectedEnvironment, applicationId);
+  const serviceUser = visualBuilderUserForTarget(text, selectedEnvironment);
+  const artifactNote = artifacts.some((item) => /1\.0\.0\.zip$/i.test(item)) && /1\.0\.1\.zip/i.test(text)
+    ? "Use the artifact from the latest RFC comment/files. If the IM090 body mentions 1.0.1, confirm before execution because the attached/current artifact is 1.0.0."
+    : "";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        `Confirm RFC approval to import and publish the Visual Builder application in ${target}.`,
+        `Visual Builder URL: ${vbUrl}`,
+        `Application: ${applicationName}`,
+        applicationId ? `Application ID: ${applicationId}` : "",
+        `Artifact to import: ${artifact}`,
+        artifactNote,
+        serviceUser ? `Service connection user for the target environment: ${serviceUser}` : "Confirm the service connection user for the target environment.",
+        "Coordinate with the password administrator to enter password values during execution.",
+        "Do not capture or expose password values, tokens, or sensitive credential details in evidence."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Before importing, validate whether the Visual Builder application already exists in the target environment.",
+        "If the application exists, export/capture the current application state before replacing or publishing changes.",
+        "If it does not exist, capture evidence that this is a new import and backup is not applicable.",
+        "Capture current environment/application status before continuing."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        `1. Login to Visual Builder for the target environment:\n   - ${vbUrl}`,
+        "2. From the Visual Builder applications page, select Import.",
+        "3. Select Application from file.",
+        `4. Upload and import the approved artifact:\n   - ${artifact}`,
+        `5. Confirm the application is imported and visible in Development:\n   - ${applicationName}`,
+        "6. Open the imported application and navigate to Service Connections / Servers.",
+        serviceUrl ? `   - Service connection URL reference: ${serviceUrl}` : "",
+        "7. Edit the service connection server configuration.",
+        "8. Enable Allow anonymous access to the service connection infrastructure if required by the IM090.",
+        "9. Configure Authentication for Logged-In Users and Authentication for Anonymous Users using Basic authentication.",
+        serviceUser ? `10. Enter/validate username ${serviceUser}; the password administrator must enter the password value.` : "10. Enter/validate the approved username; the password administrator must enter the password value.",
+        "11. Save the service connection configuration.",
+        "12. Stage the Visual Builder application.",
+        "13. Publish the staged application."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for Visual Builder application import/publish.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate the Visual Builder application was imported successfully.",
+        "Validate the service connection configuration was saved successfully.",
+        "Validate the application was staged and published successfully.",
+        "Open the Live application and confirm the screen loads correctly.",
+        "Validate there are no authentication, service connection, or backend invocation errors during the smoke test."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If import fails, stop execution and capture the error before retrying.",
+        "If the artifact version in the IM090 differs from the attached/current artifact, confirm the correct ZIP with the requester before continuing.",
+        "If service connection authentication fails, do not expose the password; coordinate with the password administrator and retry with approved values.",
+        "If publish fails or rollback is required, restore the previous exported application state when available."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence showing:",
+        "1. Target Visual Builder environment.",
+        "2. Pre-change application search/status.",
+        "3. Import result for the Visual Builder ZIP.",
+        "4. Service connection configuration saved/tested without exposing credentials.",
+        "5. Stage and Publish completion.",
+        "6. Live application validation.",
+        "7. Final execution summary shared with the requester/customer."
+      ].join("\n")
+    }
+  ];
+}
+
 function buildOicConnectionOnlyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   const connections = oicConnectionDetails(text);
   const targetInstance = targetInstanceFromText(text);
@@ -1299,7 +1607,9 @@ function oicScheduledIntegrationCandidates(text: string) {
 }
 
 function hasStructuredOicInstallationSections(text: string) {
-  return /^\s*\d+(?:\.\d+)*\s+Installation\s+(?:[A-Z0-9_-]+(?:_[A-Z0-9_-]+)+|(?:IN|OUT|SYNC)_[A-Z0-9_]+)\b/im.test(text);
+  return /^\s*\d+(?:\.\d+)*\s+Installation\s+(?:[A-Z0-9_-]+(?:_[A-Z0-9_-]+)+|(?:IN|OUT|SYNC)_[A-Z0-9_]+)\b/im.test(text) ||
+    /\bDeployment of Integrations\b[\s\S]{0,1200}\bOIC Connection Configuration\b/i.test(text) ||
+    /\bClick on Import button\b[\s\S]{0,900}\bOIC Connections? to Replace and Configure Steps\b/i.test(text);
 }
 
 function oicDocumentIntegrationList(text: string) {
@@ -1343,9 +1653,10 @@ function oicDetectedMetadata(text: string) {
   const dvms = linesMatching(text, /^dvm:\s*([A-Z0-9_ .-]+)/i);
   const scheduleEntries = oicScheduledIntegrationCandidates(text);
   const inspectedSchedules = linesMatching(text, /^schedule:\s*([A-Z0-9_ .-]+)/i);
+  const hasExplicitScheduleInstruction = oicContentHasExplicitScheduleInstruction(text);
   const schedules = uniqueValues([
     ...scheduleEntries,
-    ...inspectedSchedules.filter((schedule) => !scheduleEntries.length || !/^Schedule_/i.test(schedule))
+    ...inspectedSchedules.filter((schedule) => hasExplicitScheduleInstruction && (!scheduleEntries.length || !/^Schedule_/i.test(schedule)))
   ]);
   return { integrations: uniqueValues(integrations), connections, dvms, schedules };
 }
@@ -1524,6 +1835,103 @@ function buildOicScheduleStopOnlyPlan(text: string, selectedEnvironment: string)
         "4. Post-change stopped schedule status.",
         "5. Integration status after execution.",
         "6. Error or rollback/restart evidence if applicable.",
+        "Do not attach credential/password evidence."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildOicScheduleStartOnlyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const integrations = oicScheduleStartIntegrationCandidates(text);
+  const integrationBlock = integrations.length ? asBullets(integrations) : "- <INTEGRATION_NAME>";
+  const targetInstance = targetInstanceFromText(text);
+  const target = [selectedEnvironment, targetInstance].filter(Boolean).join(" / ") || selectedEnvironment || "target OIC environment";
+  const loginUrl = oicDirectLoginUrl(text);
+  const urlTargetMismatch = Boolean(loginUrl && targetInstance && !loginUrl.toLowerCase().includes(targetInstance.toLowerCase()));
+  const hasCutoverInstruction = /\bcutover\b|Sprint\d+/i.test(text);
+  const prepareContent = (content: string) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content), selectedEnvironment);
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: prepareContent([
+        "Confirm the RFC is approved to start the requested OIC integration schedule.",
+        hasCutoverInstruction ? "Confirm the execution is aligned with the approved cutover window/instruction." : "",
+        `Target OIC environment:\n- ${target}`,
+        `Target scheduled integration(s):\n${integrationBlock}`,
+        loginUrl ? `OIC URL provided in RFC:\n- ${loginUrl}` : "Confirm the target OIC URL before execution.",
+        urlTargetMismatch
+          ? "Warning: the URL provided in the instructions does not appear to contain the target instance name. Confirm the correct OIC URL with the requester before execution."
+          : "",
+        "Confirm the execution user has privileges to search integrations and start schedules.",
+        "Do not capture or expose password values in the Action Plan, screenshots, logs, or RFC evidence."
+      ].filter(Boolean).join("\n\n"))
+    },
+    {
+      id: "backup",
+      title: "Pre-Change Evidence",
+      content: [
+        "No integration import/deployment backup is required because this RFC only starts an existing schedule.",
+        "Before execution, search the target integration in the target OIC environment.",
+        `Target scheduled integration(s):\n${integrationBlock}`,
+        "Open the Schedule option and capture the current schedule status before starting it.",
+        "Capture the current integration activation/status without modifying the integration itself.",
+        "If the integration or schedule is not found, stop and confirm the target environment/integration name with the requester."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Start Schedule",
+      content: [
+        "Login to the Oracle Integration console for the confirmed target environment.",
+        "Go to Home > Integrations > Integrations.",
+        `Search the target integration:\n${integrationBlock}`,
+        "Open the Actions menu for the target integration and select Schedule.",
+        "Click Start Schedule.",
+        "When the confirmation dialog appears, click Confirm or Start Schedule.",
+        "Do not import, deactivate, delete, or otherwise modify the integration unless a separate approved RFC explicitly requests it."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: [
+        "The schedule start is the requested change for this RFC.",
+        `Confirm the schedule was started for:\n${integrationBlock}`
+      ].join("\n\n")
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Search the target integration again after execution.",
+        `Validate the schedule is started/running for:\n${integrationBlock}`,
+        "Confirm the integration remains in the expected activation/configuration state.",
+        "If a recent schedule run is created, confirm it does not show startup/authentication errors."
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the schedule was started incorrectly or before the approved cutover point, stop the schedule and notify the requester.",
+        "If the schedule fails to start, capture the Oracle/OIC error message and escalate before retrying.",
+        "Do not retry repeatedly or change integration configuration without approval."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Confirmed target OIC URL/environment.",
+        "2. Integration search result.",
+        "3. Pre-change schedule status.",
+        "4. Start Schedule confirmation.",
+        "5. Post-change started/running schedule status.",
+        "6. Integration status after execution.",
+        "7. Error or contingency evidence if applicable.",
         "Do not attach credential/password evidence."
       ].join("\n")
     }
@@ -2055,19 +2463,26 @@ function buildOicPackageImportPlan(text: string, selectedEnvironment: string): M
 }
 
 export function buildManualPhasesFromDocument(text: string, selectedEnvironment = ""): ManualActionPhase[] {
+  if (hasVisualBuilderApplicationImportInstructions(text)) return buildVisualBuilderApplicationImportPlan(text, selectedEnvironment);
   if (hasVisualBuilderExportWithDataInstructions(text)) return buildVisualBuilderExportWithDataPlan(text, selectedEnvironment);
   if (hasOicLookupOnlyInstructions(text)) return buildOicLookupOnlyPlan(text, selectedEnvironment);
   if (hasOicConnectionOnlyInstructions(text)) return buildOicConnectionOnlyPlan(text, selectedEnvironment);
   if (hasOicResetPasswordInstructions(text)) return buildOicResetPasswordPlan(text, selectedEnvironment);
   if (hasOicTracingInstructions(text)) return buildOicTracingPlan(text, selectedEnvironment);
   if (hasOicScheduleStopOnlyInstructions(text)) return buildOicScheduleStopOnlyPlan(text, selectedEnvironment);
+  if (hasOicScheduleStartOnlyInstructions(text)) return buildOicScheduleStartOnlyPlan(text, selectedEnvironment);
   if (hasOicScheduledJobDisableInstructions(text)) return buildOicScheduledJobDisablePlan(text, selectedEnvironment);
   if (hasOicDeactivationInstructions(text)) return buildOicDeactivationPlan(text, selectedEnvironment);
   const packageImportPlan = buildOicPackageImportPlan(text, selectedEnvironment);
   if (packageImportPlan.length) return packageImportPlan;
   const scope = oicScopeOverrides(text);
   const operational = operationalIm090Text(text);
-  const metadata = oicDetectedMetadata(text);
+  const detectedMetadata = oicDetectedMetadata(text);
+  const metadata = {
+    ...detectedMetadata,
+    connections: scope.ignoreConnections ? [] : detectedMetadata.connections,
+    dvms: scope.ignoreLookups ? [] : scope.explicitLookupImports.length ? scope.explicitLookupImports : detectedMetadata.dvms
+  };
   const connectionReference = connectionReferenceBlock(text, selectedEnvironment, metadata.connections, scope);
   const lines = actionPlanLinesFromIm090(text);
   const startAt = 0;
@@ -2125,13 +2540,14 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
     "Return Point"
   ]);
   const scheduleNotApplicable = !metadata.schedules.length && oicScheduleContentIsNotApplicable(scheduleContent);
-  const validationContent = validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]);
+  const validationContent = stripOicBackoutFromValidation(validation || looseSectionByHeadings(operational, ["Verification Checklist"], ["Return Point"]));
   const returnPointContent = returnPoint || looseSectionByHeadings(operational, ["Return Point"], ["Open and Closed Issues"]);
   const prepareContent = (content: string, options: { dedupe?: boolean } = {}) => prepareManualPhaseContent(sanitizeOicSensitiveContent(content, { omitWsdlFileExamples: Boolean(loadedArtifacts.length) }), selectedEnvironment, options);
   const preInstallClean = /^pre$/i.test(preInstallContent.trim()) || isNonExecutablePreInstallContent(preInstallContent) ? "" : preInstallContent;
-  const useScopedInstallation = scope.ignoreDashboard || scope.ignoreLookups;
+  const useScopedInstallation = scope.ignoreDashboard || scope.ignoreLookups || scope.ignoreConnections;
   const fallbackInstallationContent = oicInstallationFallback(scope, metadata, artifacts, selectedEnvironment, text);
-  const useFallbackInstallation = useScopedInstallation || structuredInstallationSections;
+  const useFallbackInstallation = useScopedInstallation || structuredInstallationSections ||
+    oicInstallationContentLooksGenericOrContaminated(installationContent || directInstructionContent, artifacts, metadata.integrations, selectedEnvironment);
   const prerequisiteEnvironmentContent = useFallbackInstallation
     ? oicTargetEnvironmentSummary(text, selectedEnvironment)
     : environmentContent;
@@ -2158,6 +2574,8 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
         metadata.connections.length ? credentialSessionMessage() : "",
         connectionReference,
         !useFallbackInstallation && !scope.ignoreLookups ? detectedBlock("DVM/lookups detected", metadata.dvms) : "",
+        scope.ignoreConnections ? "Connections are marked as N/A in the IM090; connection configuration is not expected unless the import process reports an exception." : "",
+        scope.ignoreLookups ? "Lookups are marked as N/A in the IM090; lookup import/configuration is not expected." : "",
         scope.requiresOnlineCredentialSession && !metadata.connections.length ? "Execution requires an online session with the RFC owner and password administrator to provide/validate credentials through the approved secure channel." : "",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         preInstallClean
@@ -2190,26 +2608,31 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
       content: prepareContent([
         metadata.schedules.length
           ? "Configure and start the required schedule(s) only after successful activation."
-          : scheduleNotApplicable
+          : scope.noScheduleStart
+            ? "Do not start the scheduler in this RFC. The scheduler start activity is handled by another RFC."
+            : scheduleNotApplicable
             ? oicScheduleFallback()
             : scheduleContent || oicScheduleFallback(),
-        detectedBlock("Schedules detected", metadata.schedules),
-        metadata.schedules.length ? "Capture schedule activation evidence." : ""
+        scope.noScheduleStart ? "" : detectedBlock("Schedules detected", metadata.schedules),
+        metadata.schedules.length && !scope.noScheduleStart ? "Capture schedule activation evidence." : ""
       ].filter(Boolean).join("\n\n")),
-      defaultIncluded: Boolean(metadata.schedules.length || (!scheduleNotApplicable && scheduleContent.trim()))
+      defaultIncluded: Boolean(!scope.noScheduleStart && (metadata.schedules.length || (!scheduleNotApplicable && scheduleContent.trim())))
     },
     {
       id: "validation",
       title: "Validation",
       content: prepareContent([
         validationContent || "Validate deployed artifacts/components and confirm there are no deployment errors.",
-        metadata.integrations.length ? "Validate all imported integrations are active." : "",
+        scope.activateOnlyIntegrations.length
+          ? `Validate only the requested integration(s) are active:\n${asBullets(scope.activateOnlyIntegrations)}`
+          : metadata.integrations.length || artifacts.some((artifact) => /\.iar$/i.test(artifact)) ? "Validate all imported integrations are active." : "",
         metadata.connections.length ? "Validate all required connections show a successful test." : "",
         !scope.ignoreLookups && lookupArtifactItems.length ? `Validate imported lookup file(s) are saved correctly:\n${asBullets(lookupArtifactItems)}` : "",
         !useFallbackInstallation && !scope.ignoreLookups && !lookupArtifactItems.length && metadata.dvms.length ? "Validate DVM/lookup values are saved correctly without exposing passwords." : "",
         scope.ignoreDashboard ? "Confirm Dashboard / Visual Builder validation or installation was not executed as requested in the RFC." : "",
-        scope.ignoreLookups ? "Confirm lookup import/configuration was not executed as requested in the RFC." : "",
-        metadata.schedules.length ? "Validate required schedules are active." : ""
+        scope.ignoreConnections ? "Confirm connection configuration was not required according to the IM090." : "",
+        scope.ignoreLookups ? "Confirm lookup import/configuration was not required according to the IM090." : "",
+        scope.noScheduleStart ? "Confirm the scheduler was not started because it is handled by another RFC." : metadata.schedules.length ? "Validate required schedules are active." : ""
       ].filter(Boolean).join("\n\n"))
     },
     {
@@ -2222,22 +2645,25 @@ export function buildManualPhasesFromDocument(text: string, selectedEnvironment 
       title: "Evidence",
       content: prepareContent([
         "Capture evidence for each relevant installation step.",
-        "Verify the source IM090 PDF is already available in the RFC; attach it only if it is missing.",
+        "Verify the source IM090 document is already available in the RFC; attach it only if it is missing.",
         "Attach backup evidence to the RFC.",
         "Attach final validation evidence and share the execution result.",
-        scope.ignoreDashboard || scope.ignoreLookups ? "Attach evidence or execution notes for RFC scope exclusions." : ""
+        scope.ignoreDashboard || scope.ignoreConnections || scope.ignoreLookups || scope.noScheduleStart ? "Attach evidence or execution notes for RFC scope exclusions." : ""
       ].join("\n"))
     }
   ];
 
-  if (scope.ignoreDashboard || scope.ignoreLookups || scope.commonConnectionsMayExist) {
+  if (scope.ignoreDashboard || scope.ignoreConnections || scope.ignoreLookups || scope.commonConnectionsMayExist || scope.noScheduleStart || scope.explicitLookupImports.length) {
     phases.splice(1, 0, {
       id: "scope",
       title: "RFC Scope Adjustments",
       content: [
         scope.ignoreDashboard ? "Dashboard / Visual Builder section is excluded by the RFC description. Do not execute Dashboard validation, installation, or modification in this RFC." : "",
-        scope.ignoreLookups ? "Lookup import/configuration is excluded by the RFC description. Do not import, replace, or modify lookup values in this RFC." : "",
-        scope.commonConnectionsMayExist ? "Common-use connections may already be configured. Validate and test them first; change only connections that are missing or failing validation." : ""
+        scope.ignoreConnections ? "Connections are marked as N/A in the IM090. Do not configure or modify OIC connections unless execution raises an unexpected dependency error and the requester approves the change." : "",
+        scope.ignoreLookups ? "Lookups are marked as N/A in the IM090. Do not import, replace, or modify lookup values unless execution raises an unexpected dependency error and the requester approves the change." : "",
+        scope.explicitLookupImports.length ? `Only the explicitly requested additional lookup(s) should be imported after integration installation:\n${asBullets(scope.explicitLookupImports)}` : "",
+        scope.commonConnectionsMayExist ? "Common-use connections may already be configured. Validate and test them first; change only connections that are missing or failing validation." : "",
+        scope.noScheduleStart ? "Scheduler start is explicitly excluded by the RFC comment. Do not execute IM090 scheduler start steps." : ""
       ].filter(Boolean).join("\n\n")
     });
   }

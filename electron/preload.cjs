@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("cicd", {
+  platform: process.platform,
   checkPrerequisites: () => ipcRenderer.invoke("check-prerequisites"),
   selectDirectory: () => ipcRenderer.invoke("select-directory"),
   selectFiles: (extensions) => ipcRenderer.invoke("select-files", extensions),
@@ -19,6 +20,7 @@ contextBridge.exposeInMainWorld("cicd", {
   getPathForFile: (file) => webUtils?.getPathForFile(file) ?? file?.path ?? "",
   scanRepositories: (basePath) => ipcRenderer.invoke("scan-repositories", basePath),
   syncRepository: (repoPath) => ipcRenderer.invoke("sync-repository", repoPath),
+  cleanRepositoryMetadata: (repoPath) => ipcRenderer.invoke("clean-repository-metadata", repoPath),
   cloneRepository: (payload) => ipcRenderer.invoke("clone-repository", payload),
   prepareRfcDraft: (payload) => ipcRenderer.invoke("prepare-rfc-draft", payload),
   getDraftSummary: (payload) => ipcRenderer.invoke("get-draft-summary", payload),

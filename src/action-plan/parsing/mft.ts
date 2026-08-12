@@ -3,7 +3,7 @@ import { asBullets } from "./common";
 import type { ManualActionPhase } from "./types";
 
 export function hasMftInstructions(text: string) {
-  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts|MFT server|MFT folders?|User Access|Folder Access Settings)\b/i.test(text) ||
+  return /\b(?:MFT|mftconsole|transfer rule|Deploy Transfer|Preprocessing Actions|Search Artifacts|MFT server|MFT folders?|User Access|Folder Access Settings|assignments? of roles?|assigments? of roles?)\b/i.test(text) ||
     /\bmft\/(?:source|target|transfer|security)\//i.test(text);
 }
 
@@ -72,7 +72,7 @@ function mftAccessPermissions(text: string) {
 function hasMftFolderAccessInstructions(text: string) {
   return mftFolderPaths(text).length > 0 &&
     (/\bcreate\b[\s\S]{0,80}\bfolders?\b|\bfolders?\b[\s\S]{0,80}\bMFT server\b/i.test(text) ||
-      /\bFolder Access Settings\b|\bUser Access\b|\bPermissions?:\b/i.test(text));
+      /\bFolder Access Settings\b|\bUser Access\b|\bPermissions?:\b|\bassign\b[\s\S]{0,100}\b(?:roles?|permissions?)\b/i.test(text));
 }
 
 export function mftConfigurationItems(text: string) {
@@ -83,7 +83,12 @@ export function mftConfigurationItems(text: string) {
   for (const match of text.matchAll(/(?:^|[\s"'“”‘’()[\]{}:;,\n])([A-Z0-9][A-Z0-9_.-]+?\.(?:xml|zip|asc))(?=$|[^A-Z0-9_.-])/gi)) {
     items.push(`Artifact: ${cleanMftCandidate(match[1])}`);
   }
-  for (const folder of mftFolderPaths(text)) items.push(`Folder: ${folder}`);
+  const folders = mftFolderPaths(text);
+  if (folders.length > 8) {
+    items.push(`Folders: ${folders.length} requested paths (listed in Implementation Steps)`);
+  } else {
+    for (const folder of folders) items.push(`Folder: ${folder}`);
+  }
   for (const user of mftAccessUsers(text)) items.push(`User: ${user}`);
   const permissions = mftAccessPermissions(text);
   if (permissions.length) items.push(`Permissions: ${permissions.join("/")}`);
@@ -177,7 +182,7 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
   const folders = mftFolderPaths(text);
   const users = mftAccessUsers(text);
   const permissions = mftAccessPermissions(text);
-  const folderLines = folders.length ? asBullets(folders) : "- Confirm MFT folder paths requested in the RFC.";
+  const folderSummary = folders.length ? `${folders.length} requested folder path(s) listed in Implementation Steps.` : "Confirm MFT folder paths requested in the RFC.";
   const userLines = users.length ? asBullets(users) : "- Confirm MFT users requested in the RFC.";
   const permissionLines = permissions.length ? asBullets(permissions) : "- Confirm required permissions.";
   const instance = text.match(/\b(?:Target instance|Instance):\s*([A-Z0-9_-]+)/i)?.[1]?.trim() ?? "";
@@ -189,14 +194,15 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
       title: "Prerequisites",
       content: [
         `Validate access to the target MFT environment before starting the change: ${target}.`,
+        "IM090 is not required when the RFC description provides the complete operational scope: folder paths, MFT users/roles, and permissions.",
         "Validate SFTP access with an approved admin user. Use an SFTP client such as FileZilla or an approved equivalent.",
         "Requester/owner must provide or confirm the MFT hostname, port, admin user, and credentials through the approved secure channel before execution.",
         "Do not capture or expose password values in the Action Plan or RFC evidence.",
         "",
-        "Folders requested:",
-        folderLines,
+        "Folder scope:",
+        `- ${folderSummary}`,
         "",
-        "Users requested:",
+        "Users/roles requested:",
         userLines,
         "",
         "Permissions requested:",
@@ -229,30 +235,32 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
         "   - Host: MFT hostname for the target environment",
         "   - Port: MFT port for the target environment",
         "   - User: approved admin user",
-        "   - Password: provided through secure channel",
+        "   - Credentials must be entered only through the approved secure channel; do not document password values.",
         "3. Validate each parent path exists or create the required parent structure as needed.",
         "4. Create the following folders:",
         folders.map((folder) => `   - ${folder}`).join("\n") || "   - <folder paths from RFC>",
         "5. Capture evidence of the created folders.",
         "",
-        "Configure User Permissions.",
+        "Configure User/Role Permissions.",
         "",
         "6. Login to MFT Console for the target instance.",
         "7. Click Administration.",
         "8. Go to Embedded Servers > User Access.",
-        "9. In Folder Access Settings For, select User.",
+        "9. In Folder Access Settings for User, search/select the requested user or role.",
         users.map((user, index) => [
-          `${10 + index}. Search and configure user: ${user}`,
-          "   - Click Add Folder.",
-          "   - Add the requested folders:",
-          folders.map((folder) => `     - ${folder}`).join("\n") || "     - <folder paths from RFC>",
-          "   - Click Add Selected.",
-          "   - Select the requested permissions:",
+          `${10 + index}. Search and configure user/role: ${user}`,
+          "   - Review whether each requested folder is already listed in the access table.",
+          "   - If a requested folder is not listed, click the Add (+) button.",
+          "   - Select the missing folder path(s) from the folder selector.",
+          "   - Click Add Selected to add the folder(s) to this user's access list.",
+          "   - For every requested folder, select only the permissions requested by the RFC:",
           permissions.map((permission) => `     - ${permission}`).join("\n") || "     - <permissions from RFC>",
-          "   - Click Save.",
+          "   - Do not set the folder as Home Folder unless the RFC explicitly requests it.",
+          "   - Do not add Delete, Create Dir, or Delete Dir unless the RFC explicitly requests those permissions.",
+          "   - Click Save before moving to the next user/role.",
           "   - Capture evidence for this user."
         ].join("\n")).join("\n"),
-        `${10 + users.length}. Confirm all requested users have the same folder access configuration.`,
+        `${10 + users.length}. Confirm all requested users/roles have the same folder access configuration.`,
         `${11 + users.length}. Save all changes and capture final evidence.`
       ].filter(Boolean).join("\n")
     },
@@ -268,10 +276,9 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
       content: [
         "Validate the MFT folders and user permissions after implementation.",
         "",
-        "1. Confirm each requested folder exists in the target MFT server:",
-        folderLines,
+        "1. Confirm every folder listed in Implementation Steps exists in the target MFT server.",
         "",
-        "2. Confirm each requested user has access to the requested folders:",
+        "2. Confirm each requested user/role has access to the requested folders:",
         userLines,
         "",
         "3. Confirm the assigned permissions match the RFC request:",
@@ -303,7 +310,7 @@ function buildMftFolderAccessPlan(text: string, selectedEnvironment: string): Ma
         "- SFTP connection to the target MFT environment.",
         "- Folder listing before changes for relevant parent paths.",
         "- Folder creation results.",
-        "- MFT Console User Access configuration for each requested user.",
+        "- MFT Console User Access configuration for each requested user/role.",
         "- Assigned permissions.",
         "- Final validation results.",
         "- Rollback evidence, if applicable.",
@@ -678,9 +685,6 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
     ].filter(Boolean).join("\n");
   }
   if (hasMftFolderAccessInstructions(instructions)) {
-    const folders = mftFolderPaths(instructions);
-    const users = mftAccessUsers(instructions);
-    const permissions = mftAccessPermissions(instructions);
     return [
       "Environment:",
       `- MFT Instance: ${instanceName}`,
@@ -693,16 +697,7 @@ export function mftManualPlanMetadata(productName: string, environmentName: stri
       "- Access impact is limited to the requested folders and users.",
       "",
       "Scope:",
-      `- ${environmentName} environment only`,
-      "",
-      "Expected Outcome:",
-      "Requested MFT folders created and requested users assigned with the approved folder permissions.",
-      "",
-      folders.length ? `Folders:\n${asBullets(folders)}` : "",
-      "",
-      users.length ? `Users:\n${asBullets(users)}` : "",
-      "",
-      permissions.length ? `Permissions:\n${asBullets(permissions)}` : ""
+      `- ${environmentName} environment only`
     ].filter(Boolean).join("\n");
   }
   const transferRule = mftTransferRules(instructions)[0] ?? "<Transfer rule>";

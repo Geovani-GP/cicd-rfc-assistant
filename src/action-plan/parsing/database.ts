@@ -19,6 +19,13 @@ function hasDatabasePasswordResetRequest(text: string) {
     /\bGB_[A-Z0-9_$#.-]+\b/i.test(text);
 }
 
+function hasDatabaseUnlockWithOicConnectionPasswordRequest(text: string) {
+  return /\bunlock\b[\s\S]{0,120}\b(?:user|database|account)\b|\bACCOUNT\s+UNLOCK\b/i.test(text) &&
+    /\bGB_[A-Z0-9_$#.-]+\b/i.test(text) &&
+    /\b(?:OIC|connector|conector|connection)\b/i.test(text) &&
+    /\b(?:password|contrase(?:n|ñ)a|credentials?)\b/i.test(text);
+}
+
 export function hasDatabaseDiscoveryInstructions(text: string) {
   const hasDiscoveryScript = /\b(?:Discovery_script\.zip|discovery_script\.sql|generate_html\.pl)\b/i.test(text);
   const hasSecurityScript = /\b(?:Security_script\.zip|security_features_status_(?:CDB|PDB)\.sql)\b/i.test(text);
@@ -30,9 +37,12 @@ export function hasDatabaseDiscoveryInstructions(text: string) {
 
 export function hasDatabaseInstructions(text: string) {
   return hasDatabaseDiscoveryInstructions(text) ||
+    hasLaclsColombiaMagneticMediaDbInstall(text) ||
+    hasLaclsUruguayCommercialReceiptsDbInstall(text) ||
     hasDatabaseBackupPurgeInstructions(text) ||
     hasSqlInstructions(text) ||
     hasProfilePasswordLifeTimeRequest(text) ||
+    hasDatabaseUnlockWithOicConnectionPasswordRequest(text) ||
     hasDatabasePasswordResetRequest(text);
 }
 
@@ -51,6 +61,14 @@ function databaseUserNames(text: string) {
   return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
 }
 
+function oicConnectionNamesFromDatabaseRequest(text: string) {
+  const matches = [
+    ...Array.from(text.matchAll(/\b(?:connector|conector|connection)\s+([A-Z][A-Z0-9_$#.-]+)\b/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\b([A-Z][A-Z0-9_$#.-]*_DB[A-Z0-9_$#.-]*)\b/g)).map((match) => match[1])
+  ];
+  return uniqueValues(matches);
+}
+
 function uniqueValues(values: string[]) {
   const byKey = new Map<string, string>();
   for (const value of values) {
@@ -63,6 +81,55 @@ function uniqueValues(values: string[]) {
 
 function sqlScriptNames(text: string) {
   return uniqueValues(text.match(/\b[A-Z0-9_.$#-]+\.sql\b/gi) ?? []);
+}
+
+function hasLaclsColombiaMagneticMediaDbInstall(text: string) {
+  return /\bLACLS\b/i.test(text) &&
+    /\bColombia\b/i.test(text) &&
+    /\bMagnetic Media\b/i.test(text) &&
+    /\bCREATE\/UPDATE DATABASE REPOSITORY\b|\bRunning Install script\b|\bInstall_co_mm_doc_equi\.sql\b/i.test(text);
+}
+
+function laclsDatabasePackageNames(text: string) {
+  return uniqueValues(text.match(/\bLACLS Magnetic Media DB\.zip\b/gi) ?? []);
+}
+
+function laclsDatabaseInstallScript(text: string) {
+  return sqlScriptNames(text).find((item) => /^Install_co_mm_doc_equi\.sql$/i.test(item)) ?? "Install_co_mm_doc_equi.sql";
+}
+
+function laclsDatabaseSqlScripts(text: string) {
+  const scripts = sqlScriptNames(text);
+  const installScript = laclsDatabaseInstallScript(text);
+  const ordered = [
+    installScript,
+    ...scripts.filter((item) => !/^Install_co_mm_doc_equi\.sql$/i.test(item))
+  ];
+  return uniqueValues(ordered);
+}
+
+function hasLaclsUruguayCommercialReceiptsDbInstall(text: string) {
+  return /\bLACLS\b/i.test(text) &&
+    /\bUruguay\b|\bUruguayan\b|\bUY\b/i.test(text) &&
+    /\bCommercial Receipts\b|\bR_COMERC\b|\bResguardo\b/i.test(text) &&
+    /\bINSTALLING DATABASE COMPONENTS\b|\bInstall_uy_cr\.sql\b/i.test(text);
+}
+
+function laclsUruguayCommercialReceiptsPackageNames(text: string) {
+  return uniqueValues(text.match(/\bLACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip\b/gi) ?? []);
+}
+
+function laclsUruguayCommercialReceiptsInstallScript(text: string) {
+  return sqlScriptNames(text).find((item) => /^Install_uy_cr\.sql$/i.test(item)) ?? "Install_uy_cr.sql";
+}
+
+function laclsUruguayCommercialReceiptsSqlScripts(text: string) {
+  const scripts = sqlScriptNames(text);
+  const installScript = laclsUruguayCommercialReceiptsInstallScript(text);
+  return uniqueValues([
+    installScript,
+    ...scripts.filter((item) => !/^Install_uy_cr\.sql$/i.test(item))
+  ]);
 }
 
 function databaseComponentSchema(text: string) {
@@ -290,6 +357,32 @@ export function databaseConfigurationItems(text: string) {
       `Backup table: ${pair.backupTable}`
     ]);
     return uniqueValues(items);
+  }
+  if (hasLaclsColombiaMagneticMediaDbInstall(text)) {
+    const packages = laclsDatabasePackageNames(text);
+    const scripts = laclsDatabaseSqlScripts(text);
+    return uniqueValues([
+      ...packages.map((item) => `Package: ${item}`),
+      `Install script: ${laclsDatabaseInstallScript(text)}`,
+      scripts.length > 1 ? `Internal SQL scripts invoked by installer: ${scripts.length - 1}` : ""
+    ].filter(Boolean));
+  }
+  if (hasLaclsUruguayCommercialReceiptsDbInstall(text)) {
+    const packages = laclsUruguayCommercialReceiptsPackageNames(text);
+    const scripts = laclsUruguayCommercialReceiptsSqlScripts(text);
+    return uniqueValues([
+      ...packages.map((item) => `Package: ${item}`),
+      `Install script: ${laclsUruguayCommercialReceiptsInstallScript(text)}`,
+      scripts.length > 1 ? `Internal SQL scripts invoked by installer: ${scripts.length - 1}` : ""
+    ].filter(Boolean));
+  }
+  if (hasDatabaseUnlockWithOicConnectionPasswordRequest(text)) {
+    const users = databaseUserNames(text);
+    const connections = oicConnectionNamesFromDatabaseRequest(text);
+    return uniqueValues([
+      ...users.map((item) => `Database user: ${item}`),
+      ...connections.map((item) => `OIC connection: ${item}`)
+    ]);
   }
   return databaseProfileCandidates(text);
 }
@@ -537,6 +630,133 @@ ACCOUNT UNLOCK;`;
         "5. Evidence for no-action scenarios when a user does not exist.",
         `Share the new password with ${recipient} through the approved secure channel.`,
         "Do not attach or expose the password value in the RFC evidence."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildDatabaseUnlockWithOicConnectionPasswordPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const users = databaseUserNames(text);
+  const connections = oicConnectionNamesFromDatabaseRequest(text);
+  const targetDatabase = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
+  const user = users[0] ?? "<DATABASE_USER>";
+  const connection = connections[0] ?? "<OIC_DB_CONNECTION>";
+  const passwordCustodian = text.match(/\bDaniela\s+Gomez\b/i)?.[0] ?? "the authorized password custodian";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved to unlock the database user and update the related OIC database connection password.",
+        `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+        `Target database/server:\n- ${targetDatabase}`,
+        `Database user:\n- ${user}`,
+        `OIC database connection:\n- ${connection}`,
+        `Coordinate a live secure session with ${passwordCustodian} to enter the approved password in the OIC connection.`,
+        "Confirm access to the database using SYSTEM or another user with DBA privileges.",
+        "Confirm the target PDB before executing ALTER USER.",
+        "Do not capture, paste, store, or expose credential values in the RFC, screenshots, terminal output, logs, Action Plan, or evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Pre-Change Validation",
+      content: [
+        "Login to the database server as oracle OS user.",
+        "Connect to the database using SQL*Plus or the approved SQL execution tool.",
+        "Validate current container:",
+        "SHOW CON_NAME;",
+        "If connected to CDB$ROOT, switch to the target PDB:",
+        "ALTER SESSION SET CONTAINER = PDBTRAN;",
+        "Validate current database account status:",
+        `SELECT username,
+       account_status,
+       expiry_date,
+       lock_date,
+       profile
+FROM dba_users
+WHERE username = '${user}';`,
+        "Capture the output as pre-change evidence.",
+        "No OIC integration export backup is required because this activity updates connection credentials only. Capture current OIC connection name/status as evidence before changing it."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Execution Steps",
+      content: [
+        "Unlock the database account:",
+        `ALTER USER ${user} ACCOUNT UNLOCK;`,
+        "If password restore/reset is required during the live session, execute it only with the approved password provided by the authorized custodian:",
+        `ALTER USER ${user}
+IDENTIFIED BY "<approved_password>";`,
+        "Do not expose the password value in evidence.",
+        "Login to the OIC environment associated with the RFC.",
+        "Navigate to Design > Connections.",
+        `Search and edit the database connection:\n- ${connection}`,
+        `During the live secure session, request ${passwordCustodian} to enter the approved password.`,
+        "Save the connection.",
+        "Run Test Connection."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable. No scheduler activation is requested for this account unlock and OIC connection credential update.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate database account status after the change:",
+        `SELECT username,
+       account_status,
+       expiry_date,
+       lock_date
+FROM dba_users
+WHERE username = '${user}';`,
+        "Expected result:",
+        "- ACCOUNT_STATUS = OPEN",
+        `Validate OIC connection ${connection} with Test Connection.`,
+        "Expected result:",
+        "- Test Connection completed successfully.",
+        `Validate affected integrations that use ${connection}, if applicable.`,
+        "Monitor that the account does not return to LOCKED(TIMED):",
+        `SELECT username,
+       account_status,
+       lock_date
+FROM dba_users
+WHERE username = '${user}';`,
+        "Expected result:",
+        "- The account remains OPEN."
+      ].join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the user does not exist, stop and escalate to the DBA/requester.",
+        "If ALTER USER fails, capture the Oracle error and stop execution.",
+        "If OIC Test Connection fails, coordinate with the authorized password custodian to re-enter the approved password.",
+        "Do not perform repeated retries with unknown, guessed, or outdated passwords.",
+        "If the account becomes LOCKED(TIMED) again, investigate whether an application, integration, scheduler, or external process is still using outdated credentials.",
+        "If required, temporarily stop or disable the affected process before unlocking again, with customer/owner approval."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Pre-change database account status.",
+        "2. Container/PDB validation.",
+        "3. Account unlock execution confirmation.",
+        "4. Post-change database account status showing OPEN.",
+        `5. OIC connection ${connection} Test Connection successful.`,
+        "6. Affected integration validation, if applicable.",
+        "7. Final monitoring showing the account remains OPEN.",
+        "Do not attach screenshots or logs that expose password or credential values."
       ].join("\n")
     }
   ];
@@ -857,6 +1077,193 @@ function buildDatabaseBackupPurgePlan(text: string, selectedEnvironment: string)
   ];
 }
 
+function buildLaclsColombiaMagneticMediaDbPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const targetHost = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
+  const environmentLabel = selectedEnvironment || "<ENVIRONMENT>";
+  const packageList = laclsDatabasePackageNames(text);
+  const installScript = laclsDatabaseInstallScript(text);
+  const sqlScripts = laclsDatabaseSqlScripts(text);
+  const internalScripts = sqlScripts.filter((script) => script.toUpperCase() !== installScript.toUpperCase());
+  const validationScripts = sqlScripts.filter((script) => /^LACLS_CO_|^Install_/i.test(script));
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved to create/update the LACLS Colombia Magnetic Media and Equivalent Document database repository.",
+        `Target environment:\n- ${environmentLabel}`,
+        `Target database/server:\n- ${targetHost}`,
+        "Confirm the execution is limited to the guide section requested by the RFC: pages 15 and 16, Create/Update Database Repository / Running Install script.",
+        "Confirm the LACLS database user is available and has privileges to create/update the required tables, types, PL/SQL objects, ORDS/REST metadata, and related repository objects.",
+        packageList.length ? `Required package:\n${asBullets(packageList)}` : "Required package:\n- LACLS Magnetic Media DB.zip",
+        `Main install script:\n- ${installScript}`,
+        internalScripts.length ? `Internal SQL scripts included in the DB package and expected to be invoked by the installer:\n${asBullets(internalScripts)}` : "",
+        "Do not capture or expose database credential values in the Action Plan, SQL output, screenshots, or RFC evidence."
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Before execution, confirm an approved database backup, restore point, schema export, or DBA-approved rollback option is available.",
+        "Capture the current target database/session context before running the installer.",
+        "Capture current object status for the LACLS repository objects when available.",
+        "If this is a first-time installation and no prior objects exist, document that object-level backup is not applicable and rely on the approved database-level backup/restore point."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "1. Copy or unzip the LACLS Magnetic Media DB package into the approved stage area on the execution workstation/server.",
+        "2. Confirm the DB package contains the main installer and the SQL scripts required by the guide.",
+        "3. Open SQL*Plus, SQL Developer, or the approved SQL execution tool.",
+        "4. Connect to the Oracle Database using the LACLS user.",
+        "5. Run the main install script from the DB package path:",
+        `@<PACK_PATH>/CO/DB/sql/${installScript}`,
+        "6. Allow the install script to invoke the required internal SQL statements. Do not run the internal fix scripts individually unless the guide, DBA, or requester explicitly instructs it.",
+        "7. Capture the full execution output/spool log."
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this database repository installation. No scheduler activation is requested in the DB scope.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate that the install script completed without ORA-, PLS-, SP2-, or compilation errors.",
+        "Confirm the expected LACLS Colombia DB repository objects were created or updated.",
+        validationScripts.length ? `Validate relevant DB scripts/components from the package scope:\n${asBullets(validationScripts)}` : "",
+        "Run or capture compilation validation if provided by the package, including LACLS_CO_COMPILE.sql when applicable.",
+        "Confirm object status is VALID for packages, procedures, functions, views, and related repository objects affected by the installer.",
+        "If ORDS/REST repository setup is included in the DB package, validate the related SQL completed successfully and hand off endpoint validation to the application/OIC owner if required."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the installer fails before completion, stop execution and capture the exact command, script name, and error output.",
+        "Do not rerun individual internal scripts or apply manual corrections unless confirmed by the DBA/requester.",
+        "If rollback is required, use the approved database backup, restore point, schema export, or DBA-approved rollback procedure.",
+        "Escalate to the DBA/requester before retrying with modified scripts, different users, or different package contents."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Target database/server and environment confirmation.",
+        "2. DB package/stage area listing showing the installer script.",
+        "3. Backup or restore point confirmation, or first-install no-prior-object note.",
+        "4. SQL execution/spool output for the main install script.",
+        "5. Validation evidence showing no ORA-, PLS-, SP2-, or compilation errors.",
+        "6. Object status/compile validation evidence.",
+        "7. Final confirmation shared with the requester/customer.",
+        "Do not attach screenshots or files that expose credential values."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildLaclsUruguayCommercialReceiptsDbPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const targetHost = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
+  const environmentLabel = selectedEnvironment || "<ENVIRONMENT>";
+  const packageList = laclsUruguayCommercialReceiptsPackageNames(text);
+  const installScript = laclsUruguayCommercialReceiptsInstallScript(text);
+  const sqlScripts = laclsUruguayCommercialReceiptsSqlScripts(text);
+  const internalScripts = sqlScripts.filter((script) => script.toUpperCase() !== installScript.toUpperCase());
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved to install/update the LACLS Uruguay Commercial Receipts database components.",
+        `Target environment:\n- ${environmentLabel}`,
+        `Target database/server:\n- ${targetHost}`,
+        "Confirm the execution is limited to the guide section requested by the RFC: pages 16 and 17, Installing Database Components / Execute the Install Script.",
+        "Confirm the LACLS database user is available and has privileges to create/update the required tables, types, PL/SQL code, and related database objects.",
+        packageList.length ? `Required package:\n${asBullets(packageList)}` : "Required package:\n- LACLS_UY_COMMERCIAL_RECEIPTS_DB.zip",
+        `Main install script:\n- ${installScript}`,
+        internalScripts.length ? `Internal SQL scripts included in the DB package and expected to be invoked by the installer:\n${asBullets(internalScripts)}` : "",
+        "Do not capture or expose database credential values in the Action Plan, SQL output, screenshots, or RFC evidence."
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Before execution, confirm an approved database backup, restore point, schema export, or DBA-approved rollback option is available.",
+        "Capture the current target database/session context before running the installer.",
+        "Capture current object status for the LACLS Uruguay Commercial Receipts objects when available.",
+        "If this is a first-time installation and no prior objects exist, document that object-level backup is not applicable and rely on the approved database-level backup/restore point."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "1. Copy or unzip the LACLS Uruguay Commercial Receipts DB package into the approved stage area on the execution workstation/server.",
+        "2. Confirm the DB package contains the main installer and the SQL scripts required by the guide.",
+        "3. Open SQL*Plus, SQL Developer, or the approved SQL execution tool.",
+        "4. Connect to the Oracle Database using the LACLS user.",
+        "5. Run the main install script from the DB package path:",
+        `@<PACK_PATH>/UY/R_COMERC/DB/sql/${installScript}`,
+        "6. Allow the install script to invoke all other statements needed to install the Commercial Receipts database objects.",
+        "7. Capture the full execution output/spool log."
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this database installation. No scheduler activation is requested in the DB scope.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate that the install script completed without ORA-, PLS-, SP2-, or compilation errors.",
+        "Confirm the expected LACLS Uruguay Commercial Receipts database objects were created or updated.",
+        "Confirm object status is VALID for packages, procedures, functions, views, tables, types, and related objects affected by the installer.",
+        "If any object is INVALID, capture the object name and compilation error, then escalate to the DBA/requester before closing the RFC."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the installer fails before completion, stop execution and capture the exact command, script name, and error output.",
+        "Do not rerun individual internal scripts or apply manual corrections unless confirmed by the DBA/requester.",
+        "If rollback is required, use the approved database backup, restore point, schema export, or DBA-approved rollback procedure.",
+        "Escalate to the DBA/requester before retrying with modified scripts, different users, or different package contents."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. Target database/server and environment confirmation.",
+        "2. DB package/stage area listing showing the installer script.",
+        "3. Backup or restore point confirmation, or first-install no-prior-object note.",
+        "4. SQL execution/spool output for the main install script.",
+        "5. Validation evidence showing no ORA-, PLS-, SP2-, or compilation errors.",
+        "6. Object status/compile validation evidence.",
+        "7. Final confirmation shared with the requester/customer.",
+        "Do not attach screenshots or files that expose credential values."
+      ].join("\n")
+    }
+  ];
+}
+
 function databaseBackupGuidance(kind: string, restoreMentioned: boolean) {
   if (kind === "profilePasswordLifeTime") {
     return [
@@ -1054,8 +1461,11 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   if (hasDatabaseBackupPurgeInstructions(text)) return buildDatabaseBackupPurgePlan(text, selectedEnvironment);
   if (hasDatabaseDiscoveryInstructions(text)) return buildDatabaseDiscoveryPlan(text, selectedEnvironment);
+  if (hasLaclsColombiaMagneticMediaDbInstall(text)) return buildLaclsColombiaMagneticMediaDbPlan(text, selectedEnvironment);
+  if (hasLaclsUruguayCommercialReceiptsDbInstall(text)) return buildLaclsUruguayCommercialReceiptsDbPlan(text, selectedEnvironment);
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
   if (hasDatabaseComponentInstall(text)) return buildDatabaseComponentsPlan(text, selectedEnvironment);
+  if (hasDatabaseUnlockWithOicConnectionPasswordRequest(text)) return buildDatabaseUnlockWithOicConnectionPasswordPlan(text, selectedEnvironment);
   if (hasDatabasePasswordResetRequest(text)) return buildDatabasePasswordResetPlan(text, selectedEnvironment);
 
   const sql = prepareManualPhaseContent(text, selectedEnvironment);

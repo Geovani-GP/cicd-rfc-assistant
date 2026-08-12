@@ -6,8 +6,11 @@ import {
   ChevronRight,
   CheckCircle2,
   ClipboardPaste,
+  Circle,
   Download,
   ExternalLink,
+  Eraser,
+  Highlighter,
   ImagePlus,
   FileText,
   Folder,
@@ -19,20 +22,26 @@ import {
   Loader2,
   Menu,
   MessageSquareText,
+  Minus,
   Palette,
   PanelRightOpen,
+  PenLine,
   Play,
   Plus,
   Copy,
   RefreshCw,
   Settings,
+  Square,
   Trash2,
+  Type,
   UploadCloud,
   UserRound,
+  Undo2,
+  ArrowRight,
   X
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, PointerEvent, ReactNode } from "react";
 import type { CSSProperties } from "react";
 import {
   artifactLinesFromText,
@@ -92,6 +101,7 @@ const projectUrl =
 
 const defaultBasePath = "";
 const desktopApi = window.cicd;
+const supportsRegionCapture = desktopApi?.platform === "darwin";
 const releaseBranch = "release";
 const pipelinePhases: PipelinePhase[] = ["DEV", "REG", "TEST", "PROD"];
 const actionPlanEnvironments = ["DEV", "REG", "TEST", "PROD"];
@@ -500,6 +510,20 @@ type EvidenceItem = EvidenceImage & {
   createdAt: string;
   note: string;
   source: "capture" | "region" | "file" | "clipboard";
+};
+type ImageEditTool = "pen" | "rectangle" | "circle" | "line" | "arrow" | "marker" | "mosaic" | "text";
+type ImageEditOperation = {
+  tool: ImageEditTool;
+  points?: Array<{ x: number; y: number }>;
+  start?: { x: number; y: number };
+  end?: { x: number; y: number };
+  color: string;
+  size: number;
+  text?: string;
+};
+type ImageTextDraft = {
+  canvasPoint: { x: number; y: number };
+  screenPoint: { x: number; y: number };
 };
 type EvidenceLog = {
   id: string;
@@ -1050,6 +1074,7 @@ const copy = {
     },
     messages: {
       unexpected: "Ocurrio un error inesperado.",
+      taskAlreadyRunning: "Ya hay una operacion en curso. Espera a que termine antes de intentar de nuevo.",
       webMode: "Vista web activa. Abre la app con Electron para usar verificaciones locales.",
       folderElectron: "El selector de carpetas esta disponible al abrir la app con Electron.",
       scanElectron: "El escaneo de repositorios esta disponible al abrir la app con Electron.",
@@ -1071,6 +1096,8 @@ const copy = {
       noFiles: "Agrega al menos un artefacto antes de continuar.",
       packageCleared: "Paquete limpiado. Agrega artefactos para continuar.",
       stepRequired: "Agrega comentario o evidencia antes de avanzar.",
+      actionPlanRequiredFields: "Completa RFC, producto e instancia antes de generar el Action Plan.",
+      executionRequiredFields: "Completa RFC y ambiente antes de capturar o exportar evidencia.",
       evidenceSetupRequired: "Completa RFC, ambiente, ejecucion y pasos antes de capturar evidencia.",
       exportNeedRfc: "Captura el numero de RFC antes de exportar evidencia.",
       exportNeedRun: "Captura el numero de run antes de exportar evidencia.",
@@ -1129,6 +1156,7 @@ const copy = {
       openVbs: "Abrir VBS",
       commitLocal: "Preparar cambios",
       pushBranch: "Add, commit y push",
+      cleanSafeFiles: "Limpiar seguros",
       undoCommit: "Descartar cambios",
       commitPush: "Commit y push"
     },
@@ -1163,6 +1191,7 @@ const copy = {
       currentEvidence: "Evidencia del paso",
       comment: "Comentario del paso",
       stepFailed: "Paso fallo",
+      confirmStepFailed: "Marcar este paso como fallido? La evidencia se cerrara hasta este paso.",
       failedStepPrefix: "Paso marcado como fallido.",
       previous: "Anterior",
       next: "Siguiente",
@@ -1342,6 +1371,7 @@ const copy = {
     },
     messages: {
       unexpected: "Something unexpected happened.",
+      taskAlreadyRunning: "An operation is already running. Wait until it finishes before trying again.",
       webMode: "Web preview is active. Open the Electron app to use local checks.",
       folderElectron: "Folder selection is available in the Electron app.",
       scanElectron: "Repository scanning is available in the Electron app.",
@@ -1363,6 +1393,8 @@ const copy = {
       noFiles: "Add at least one artifact before continuing.",
       packageCleared: "Package cleared. Add artifacts to continue.",
       stepRequired: "Add a comment or evidence before continuing.",
+      actionPlanRequiredFields: "Complete RFC, product, and instance before generating the Action Plan.",
+      executionRequiredFields: "Complete RFC and environment before capturing or exporting evidence.",
       evidenceSetupRequired: "Complete RFC, environment, execution, and steps before capturing evidence.",
       exportNeedRfc: "Enter the RFC number before exporting evidence.",
       exportNeedRun: "Enter the run number before exporting evidence.",
@@ -1421,6 +1453,7 @@ const copy = {
       openVbs: "Open VBS",
       commitLocal: "Prepare changes",
       pushBranch: "Add, commit, push",
+      cleanSafeFiles: "Clean safe files",
       undoCommit: "Discard changes",
       commitPush: "Commit and push"
     },
@@ -1455,6 +1488,7 @@ const copy = {
       currentEvidence: "Step evidence",
       comment: "Step comment",
       stepFailed: "Step failed",
+      confirmStepFailed: "Mark this step as failed? Evidence will be closed up to this step.",
       failedStepPrefix: "Step marked as failed.",
       previous: "Previous",
       next: "Next",
@@ -1634,6 +1668,7 @@ const copy = {
     },
     messages: {
       unexpected: "Ocorreu um erro inesperado.",
+      taskAlreadyRunning: "Ja existe uma operacao em andamento. Aguarde finalizar antes de tentar novamente.",
       webMode: "Preview web ativo. Abra o app Electron para usar verificacoes locais.",
       folderElectron: "A selecao de pastas esta disponivel no app Electron.",
       scanElectron: "A busca de repositorios esta disponivel no app Electron.",
@@ -1655,6 +1690,8 @@ const copy = {
       noFiles: "Adicione pelo menos um artefato antes de continuar.",
       packageCleared: "Pacote limpo. Adicione artefatos para continuar.",
       stepRequired: "Adicione comentario ou evidencia antes de continuar.",
+      actionPlanRequiredFields: "Complete RFC, produto e instancia antes de gerar o Action Plan.",
+      executionRequiredFields: "Complete RFC e ambiente antes de capturar ou exportar evidencia.",
       evidenceSetupRequired: "Complete RFC, ambiente, execucao e passos antes de capturar evidencia.",
       exportNeedRfc: "Capture o numero do RFC antes de exportar evidencia.",
       exportNeedRun: "Capture o numero do run antes de exportar evidencia.",
@@ -1713,6 +1750,7 @@ const copy = {
       openVbs: "Abrir VBS",
       commitLocal: "Preparar mudancas",
       pushBranch: "Add, commit e push",
+      cleanSafeFiles: "Limpar seguros",
       undoCommit: "Descartar mudancas",
       commitPush: "Commit e push"
     },
@@ -1747,6 +1785,7 @@ const copy = {
       currentEvidence: "Evidencia do passo",
       comment: "Comentario do passo",
       stepFailed: "Passo falhou",
+      confirmStepFailed: "Marcar este passo como falho? A evidencia sera encerrada ate este passo.",
       failedStepPrefix: "Passo marcado como falho.",
       previous: "Anterior",
       next: "Proximo",
@@ -2642,6 +2681,8 @@ export function App() {
   const [remoteKnowledgeVersion, setRemoteKnowledgeVersion] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [busyAction, setBusyAction] = useState<"sync" | "clean" | "prepare" | "discard" | "push" | null>(null);
   const [actionDocumentProcessing, setActionDocumentProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [prerequisites, setPrerequisites] = useState<Prerequisite[]>([]);
@@ -2740,6 +2781,17 @@ export function App() {
     initialExecutionDraft?.pipelineStepFailures ?? {}
   );
   const [imagePreview, setImagePreview] = useState<EvidenceItem | null>(null);
+  const imageEditorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imageEditorImageRef = useRef<HTMLImageElement | null>(null);
+  const imageEditorDraftRef = useRef<ImageEditOperation | null>(null);
+  const [imageEditTool, setImageEditTool] = useState<ImageEditTool>("mosaic");
+  const [imageEditColor, setImageEditColor] = useState("#d04a38");
+  const [imageEditSize, setImageEditSize] = useState(12);
+  const [imageEditText, setImageEditText] = useState("");
+  const [imageEditTextDraft, setImageEditTextDraft] = useState<ImageTextDraft | null>(null);
+  const [imageEditTextHistory, setImageEditTextHistory] = useState<string[]>([]);
+  const [imageEditOperations, setImageEditOperations] = useState<ImageEditOperation[]>([]);
+  const [imageEditorReady, setImageEditorReady] = useState(false);
   const [instantTooltip, setInstantTooltip] = useState<InstantTooltip | null>(null);
 
   const t = copy[lang];
@@ -3209,9 +3261,9 @@ export function App() {
     if (activeStep === "pipeline") return true;
     return matchesCurrentRfc(recordRfc, text);
   };
-  const sortEvidenceDescending = (items: EvidenceItem[]) =>
-    items.slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
-  const currentStepEvidence = sortEvidenceDescending(
+  const sortEvidenceAscending = (items: EvidenceItem[]) =>
+    items.slice().sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const currentStepEvidence = sortEvidenceAscending(
     evidenceItems.filter(
       (item) =>
         item.step === activeStep &&
@@ -3461,10 +3513,82 @@ export function App() {
       "<DATABASE_SERVER>";
   }
 
+  function missingRequiredCsvArtifacts(text: string) {
+    const effectiveProduct = effectiveActionProductForText(text);
+    if (effectiveProduct !== "OIC" || oicManualScopeIgnoresLookups(text)) return [];
+    const csvArtifacts = dedupeArtifactNames(installableArtifactNames(text).filter((artifact) => /\.csv$/i.test(artifact)));
+    if (!csvArtifacts.length) return [];
+    const loadedCsvKeys = new Set([
+      ...actionArtifactFiles.filter((file) => /\.csv$/i.test(file.name)).map((file) => normalizeArtifactIdentityKey(file.name)),
+      ...artifactLinesFromText(artifactText).filter((artifact) => /\.csv$/i.test(artifact)).map(normalizeArtifactIdentityKey)
+    ]);
+    return csvArtifacts.filter((artifact) => !loadedCsvKeys.has(normalizeArtifactIdentityKey(artifact)));
+  }
+
+  function oicTargetConsoleMismatchWarnings(text: string) {
+    const effectiveProduct = effectiveActionProductForText(text);
+    const targetInstance = actionInstance.trim();
+    if (effectiveProduct !== "OIC" || !targetInstance) return [];
+    const targetKey = normalizeEnvironmentName(targetInstance);
+    const targetPattern = escapeRegexLiteral(targetInstance).replace(/\s+/g, "\\s+");
+    const blockMatch = text.match(new RegExp(`\\bTargets?\\s+${targetPattern}[\\s\\S]{0,220}?\\bOIC\\s+Console\\s+(https?:\\/\\/\\S+)`, "i"));
+    const url = blockMatch?.[1]?.replace(/[).,;]+$/, "") ?? "";
+    if (!url) return [];
+    const urlKey = normalizeEnvironmentName(url);
+    return urlKey.includes(targetKey)
+      ? []
+      : [`OIC Console URL in the IM090 does not match target instance ${targetInstance}: ${url}`];
+  }
+
+  function oicScopeTargetMismatchWarnings(text: string) {
+    const effectiveProduct = effectiveActionProductForText(text);
+    const targetInstance = actionInstance.trim();
+    if (effectiveProduct !== "OIC" || !targetInstance) return [];
+    const targetKey = normalizeEnvironmentName(targetInstance);
+    const targetEnvironment = environmentFromInstanceSuffix(targetInstance);
+    const source = [actionScopeNotes, actionActivity].filter((value) => value.trim()).join("\n");
+    const candidates = Array.from(source.matchAll(/\bGBOIC[A-Z0-9_$#.-]*(?:DE|RE|TE|PR)\b/gi))
+      .map((match) => match[0])
+      .filter((candidate) => {
+        const candidateEnvironment = environmentFromInstanceSuffix(candidate);
+        return !targetEnvironment || !candidateEnvironment || candidateEnvironment === targetEnvironment;
+      });
+    const mismatch = candidates.find((candidate) => normalizeEnvironmentName(candidate) !== targetKey);
+    return mismatch ? [`RFC target instance ${mismatch} differs from selected Action Plan instance ${targetInstance}`] : [];
+  }
+
   function actionPlanWarningItems(text: string) {
     const items: string[] = [];
     if (hasDatabaseDiscoveryMissingDatabaseName(text)) {
       items.push(`CDB/database name for ${databaseDiscoveryTargetHost(text)}`);
+    }
+    items.push(...oicScopeTargetMismatchWarnings(text));
+    items.push(...oicTargetConsoleMismatchWarnings(text));
+    if (effectiveActionProductForText(text) === "OIC" && /\bConnection details to be shared in Zoom session\b/i.test(text)) {
+      items.push("OIC connection URL/endpoint and username details must be confirmed during the approved Zoom/password administrator session");
+    }
+    for (const artifact of missingRequiredCsvArtifacts(text)) {
+      items.push(`${artifact} lookup CSV artifact referenced by the IM090 is not attached/loaded`);
+    }
+    const isLaclsColombiaDbInstall = effectiveActionProductForText(text) === "Base de datos" &&
+      /\bLACLS\b/i.test(text) &&
+      /\bColombia\b/i.test(text) &&
+      /\bMagnetic Media\b/i.test(text) &&
+      /\bCREATE\/UPDATE DATABASE REPOSITORY\b|\bInstall_co_mm_doc_equi\.sql\b/i.test(text);
+    const isLaclsUruguayCommercialReceiptsDbInstall = effectiveActionProductForText(text) === "Base de datos" &&
+      /\bLACLS\b/i.test(text) &&
+      /\bUruguay\b|\bUruguayan\b|\bUY\b/i.test(text) &&
+      /\bCommercial Receipts\b|\bR_COMERC\b|\bResguardo\b/i.test(text) &&
+      /\bINSTALLING DATABASE COMPONENTS\b|\bInstall_uy_cr\.sql\b/i.test(text);
+    if (isLaclsColombiaDbInstall) {
+      const hasDbPackage = actionArtifactFiles.some((file) => /^LACLS Magnetic Media DB\.zip$/i.test(file.name)) ||
+        artifactLinesFromText(artifactText).some((item) => /^LACLS Magnetic Media DB\.zip$/i.test(item));
+      if (!hasDbPackage) items.push("LACLS Magnetic Media DB.zip package for the database repository installation");
+    }
+    if (isLaclsUruguayCommercialReceiptsDbInstall) {
+      const hasDbPackage = actionArtifactFiles.some((file) => /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(file.name)) ||
+        artifactLinesFromText(artifactText).some((item) => /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item));
+      if (!hasDbPackage) items.push("LACLS_UY_COMMERCIAL_RECEIPTS_DB.zip package for the database installation");
     }
     return items;
   }
@@ -3472,10 +3596,11 @@ export function App() {
   function manualActionPlanWarning(text: string) {
     const items = actionPlanWarningItems(text);
     if (!items.length) return "";
+    const ownerLabel = effectiveActionProductForText(text) === "Base de datos" ? "DBA/requester" : "requester/technical owner";
     return [
       "Warning: Missing required Action Plan information:",
       ...items.map((item) => `- ${item}`),
-      "Confirm the missing information with the DBA/requester before execution."
+      `Confirm the missing information with the ${ownerLabel} before execution.`
     ].join("\n");
   }
 
@@ -3627,7 +3752,12 @@ export function App() {
       });
       return match ? [match] : [];
     });
-    return repaired.length ? dedupeArtifactNames([...repaired, ...inspectedArtifacts]) : inspectedArtifacts;
+    const unmatchedRequiredFiles = candidates.filter((candidate) => {
+      if (!/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(candidate)) return false;
+      const candidateKey = normalizeArtifactCompareKey(candidate);
+      return !inspectedArtifacts.some((artifact) => artifactKeysMatch(candidateKey, normalizeArtifactCompareKey(artifact)));
+    });
+    return repaired.length ? dedupeArtifactNames([...repaired, ...unmatchedRequiredFiles, ...inspectedArtifacts]) : dedupeArtifactNames([...unmatchedRequiredFiles, ...inspectedArtifacts]);
   }
 
   function artifactTextShouldUseInspectedArtifacts(value: string, inspectedArtifacts: string[]) {
@@ -3643,13 +3773,45 @@ export function App() {
   function actionArtifactComparisonRows() {
     const sourceText = manualDetectionSourceText();
     const effectiveProduct = effectiveActionProductForText(sourceText);
+    const isLaclsColombiaDbInstall = effectiveProduct === "Base de datos" &&
+      /\bLACLS\b/i.test(sourceText) &&
+      /\bColombia\b/i.test(sourceText) &&
+      /\bMagnetic Media\b/i.test(sourceText) &&
+      /\bCREATE\/UPDATE DATABASE REPOSITORY\b|\bInstall_co_mm_doc_equi\.sql\b/i.test(sourceText);
+    const isLaclsUruguayCommercialReceiptsDbInstall = effectiveProduct === "Base de datos" &&
+      /\bLACLS\b/i.test(sourceText) &&
+      /\bUruguay\b|\bUruguayan\b|\bUY\b/i.test(sourceText) &&
+      /\bCommercial Receipts\b|\bR_COMERC\b|\bResguardo\b/i.test(sourceText) &&
+      /\bINSTALLING DATABASE COMPONENTS\b|\bInstall_uy_cr\.sql\b/i.test(sourceText);
+    const isDbUnlockOicConnectionPassword = effectiveProduct === "Base de datos" &&
+      (/\bunlock\b[\s\S]{0,120}\b(?:user|database|account)\b|\bACCOUNT\s+UNLOCK\b/i.test(sourceText)) &&
+      /\bGB_[A-Z0-9_$#.-]+\b/i.test(sourceText) &&
+      /\b(?:OIC|connector|conector|connection)\b/i.test(sourceText) &&
+      /\b(?:password|contrase(?:n|ñ)a|credentials?)\b/i.test(sourceText);
+    if (isDbUnlockOicConnectionPassword) return [];
+    const isScopedLaclsDbInstall = isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall;
     if (isOdiProduct(effectiveProduct) && hasOdiJeeAgentRemediationSignals(sourceText)) return [];
     if (effectiveProduct === "OIC" && runtimeConfigurationItemsForProduct(effectiveProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
     }
-    const documentItems = (effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames())
-      .map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct));
-    const loadedItems = actionLoadedInstallableArtifactItems();
+    const rawDocumentItems = effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
+    const documentItems = rawDocumentItems
+      .map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct))
+      .filter((item) => !isScopedLaclsDbInstall || /\.sql$/i.test(item) || /^LACLS Magnetic Media DB\.zip$/i.test(item) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item));
+    const loadedItems = actionLoadedInstallableArtifactItems()
+      .filter((item) => !isScopedLaclsDbInstall || /\.sql$/i.test(item.source) || /^LACLS Magnetic Media DB\.zip$/i.test(item.source) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item.source));
+    if (isLaclsColombiaDbInstall) {
+      const hasDbPackage = loadedItems.some((item) => /^LACLS Magnetic Media DB\.zip$/i.test(item.source));
+      if (hasDbPackage && !documentItems.some((item) => /^LACLS Magnetic Media DB\.zip$/i.test(item))) {
+        documentItems.unshift("LACLS Magnetic Media DB.zip");
+      }
+    }
+    if (isLaclsUruguayCommercialReceiptsDbInstall) {
+      const hasDbPackage = loadedItems.some((item) => /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item.source));
+      if (hasDbPackage && !documentItems.some((item) => /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item))) {
+        documentItems.unshift("LACLS_UY_COMMERCIAL_RECEIPTS_DB.zip");
+      }
+    }
     const matchedKeys = new Set<string>();
     const rows = documentItems.map((documentName) => {
       const documentIsFile = /\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(documentName);
@@ -3701,8 +3863,25 @@ export function App() {
   function actionArtifactValidationBlock() {
     if (!actionArtifactFiles.length) return "";
     const sourceText = manualDetectionSourceText();
+    const effectiveProduct = effectiveActionProductForText(sourceText);
+    const isLaclsColombiaDbInstall = effectiveProduct === "Base de datos" &&
+      /\bLACLS\b/i.test(sourceText) &&
+      /\bColombia\b/i.test(sourceText) &&
+      /\bMagnetic Media\b/i.test(sourceText) &&
+      /\bCREATE\/UPDATE DATABASE REPOSITORY\b|\bInstall_co_mm_doc_equi\.sql\b/i.test(sourceText);
+    const isLaclsUruguayCommercialReceiptsDbInstall = effectiveProduct === "Base de datos" &&
+      /\bLACLS\b/i.test(sourceText) &&
+      /\bUruguay\b|\bUruguayan\b|\bUY\b/i.test(sourceText) &&
+      /\bCommercial Receipts\b|\bR_COMERC\b|\bResguardo\b/i.test(sourceText) &&
+      /\bINSTALLING DATABASE COMPONENTS\b|\bInstall_uy_cr\.sql\b/i.test(sourceText);
+    const isDbUnlockOicConnectionPassword = effectiveProduct === "Base de datos" &&
+      (/\bunlock\b[\s\S]{0,120}\b(?:user|database|account)\b|\bACCOUNT\s+UNLOCK\b/i.test(sourceText)) &&
+      /\bGB_[A-Z0-9_$#.-]+\b/i.test(sourceText) &&
+      /\b(?:OIC|connector|conector|connection)\b/i.test(sourceText) &&
+      /\b(?:password|contrase(?:n|ñ)a|credentials?)\b/i.test(sourceText);
+    if (isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall || isDbUnlockOicConnectionPassword) return "";
     const comparisonRows = actionArtifactComparisonRows();
-    const hasOicParPackage = effectiveActionProductForText(sourceText) === "OIC" &&
+    const hasOicParPackage = effectiveProduct === "OIC" &&
       (actionArtifactFiles.some((file) => /\.par$/i.test(file.name)) || installableArtifactNames(sourceText).some((artifact) => /\.par$/i.test(artifact)));
     const rows = hasDatabaseDiscoveryInstructions(sourceText)
       ? sortDatabaseDiscoveryArtifacts(comparisonRows, (row) => row.documentName !== "-" ? row.documentName : row.artifactName)
@@ -3828,7 +4007,19 @@ export function App() {
     return t.steps[step]?.[0] ?? t.pipeline.title;
   }
 
+  function actionPlanRequiredFieldsReady() {
+    return Boolean(rfc.trim() && actionProduct.trim() && actionInstance.trim());
+  }
+
+  function executionRequiredFieldsReady() {
+    return Boolean(rfc.trim() && targetEnvironment.trim());
+  }
+
   function ensureEvidenceFormReady() {
+    if (!executionRequiredFieldsReady()) {
+      setMessage(t.messages.executionRequiredFields);
+      return false;
+    }
     if (evidenceFormReady) return true;
     setMessage(t.messages.evidenceSetupRequired);
     return false;
@@ -3861,7 +4052,7 @@ export function App() {
       note,
       source
     };
-    setEvidenceItems((current) => [item, ...current]);
+    setEvidenceItems((current) => [...current, item]);
     setMessage(t.evidence.copied);
   }
 
@@ -3946,6 +4137,7 @@ export function App() {
       return;
     }
     const image = await runTask(() => desktopApi.captureAppWindow());
+    if (!image) return;
     addEvidence(image, "capture", stepTitle(activeStep));
   }
 
@@ -3988,16 +4180,205 @@ export function App() {
     }
   }
 
+  function drawArrowHead(ctx: CanvasRenderingContext2D, start: { x: number; y: number }, end: { x: number; y: number }, size: number) {
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const length = Math.max(12, size * 2.2);
+    ctx.beginPath();
+    ctx.moveTo(end.x, end.y);
+    ctx.lineTo(end.x - length * Math.cos(angle - Math.PI / 6), end.y - length * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(end.x, end.y);
+    ctx.lineTo(end.x - length * Math.cos(angle + Math.PI / 6), end.y - length * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  }
+
+  function drawMosaic(ctx: CanvasRenderingContext2D, start: { x: number; y: number }, end: { x: number; y: number }, size: number) {
+    const left = Math.max(0, Math.min(start.x, end.x));
+    const top = Math.max(0, Math.min(start.y, end.y));
+    const right = Math.min(ctx.canvas.width, Math.max(start.x, end.x));
+    const bottom = Math.min(ctx.canvas.height, Math.max(start.y, end.y));
+    const width = Math.round(right - left);
+    const height = Math.round(bottom - top);
+    if (width < 4 || height < 4) return;
+
+    const pixelSize = Math.max(10, Math.round(size * 2.4));
+    const scaledWidth = Math.max(1, Math.ceil(width / pixelSize));
+    const scaledHeight = Math.max(1, Math.ceil(height / pixelSize));
+    const buffer = document.createElement("canvas");
+    buffer.width = scaledWidth;
+    buffer.height = scaledHeight;
+    const bufferCtx = buffer.getContext("2d");
+    if (!bufferCtx) return;
+
+    bufferCtx.imageSmoothingEnabled = false;
+    bufferCtx.drawImage(ctx.canvas, left, top, width, height, 0, 0, scaledWidth, scaledHeight);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(left, top, width, height);
+    ctx.drawImage(buffer, 0, 0, scaledWidth, scaledHeight, left, top, width, height);
+    ctx.restore();
+  }
+
+  function drawImageEditOperation(ctx: CanvasRenderingContext2D, operation: ImageEditOperation) {
+    ctx.save();
+    ctx.lineWidth = operation.size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = operation.color;
+    ctx.fillStyle = operation.color;
+
+    if ((operation.tool === "pen" || operation.tool === "marker") && operation.points?.length) {
+      ctx.globalAlpha = operation.tool === "marker" ? 0.32 : 1;
+      ctx.beginPath();
+      operation.points.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.stroke();
+    } else if (operation.start && operation.end) {
+      const { start, end } = operation;
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const width = Math.abs(end.x - start.x);
+      const height = Math.abs(end.y - start.y);
+      if (operation.tool === "rectangle") {
+        ctx.strokeRect(x, y, width, height);
+      } else if (operation.tool === "circle") {
+        ctx.beginPath();
+        ctx.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (operation.tool === "line" || operation.tool === "arrow") {
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        if (operation.tool === "arrow") drawArrowHead(ctx, start, end, operation.size);
+      } else if (operation.tool === "mosaic") {
+        drawMosaic(ctx, start, end, operation.size);
+      }
+    } else if (operation.tool === "text" && operation.start && operation.text) {
+      ctx.font = `${Math.max(12, operation.size * 2)}px sans-serif`;
+      ctx.fillText(operation.text, operation.start.x, operation.start.y);
+    }
+    ctx.restore();
+  }
+
+  function renderImageEditorCanvas() {
+    const canvas = imageEditorCanvasRef.current;
+    const image = imageEditorImageRef.current;
+    if (!canvas || !image || !imageEditorReady) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (const operation of imageEditOperations) drawImageEditOperation(ctx, operation);
+    if (imageEditorDraftRef.current) drawImageEditOperation(ctx, imageEditorDraftRef.current);
+  }
+
+  function imageEditorPoint(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = imageEditorCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height
+    };
+  }
+
+  function limitImageEditText(value: string) {
+    const leadingSafeValue = value.replace(/^\s+/, "");
+    const words = leadingSafeValue.match(/\S+\s*/g) ?? [];
+    return words.slice(0, 10).join("");
+  }
+
+  function normalizeImageEditText(value: string) {
+    return limitImageEditText(value).trim().replace(/\s+/g, " ");
+  }
+
+  function closeImageTextDraft() {
+    setImageEditTextDraft(null);
+    setImageEditText("");
+  }
+
+  function applyImageTextDraft(textValue = imageEditText) {
+    const text = normalizeImageEditText(textValue);
+    if (!imageEditTextDraft || !text) {
+      closeImageTextDraft();
+      return;
+    }
+    setImageEditOperations((current) => [
+      ...current,
+      { tool: "text", start: imageEditTextDraft.canvasPoint, color: imageEditColor, size: imageEditSize, text }
+    ]);
+    setImageEditTextHistory((current) => [text, ...current.filter((item) => item !== text)].slice(0, 5));
+    closeImageTextDraft();
+  }
+
+  function startImageEdit(event: PointerEvent<HTMLCanvasElement>) {
+    if (!imagePreview || !imageEditorReady) return;
+    const point = imageEditorPoint(event);
+    if (imageEditTool === "text") {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setImageEditTextDraft({
+        canvasPoint: point,
+        screenPoint: {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        }
+      });
+      setImageEditText("");
+      return;
+    }
+    closeImageTextDraft();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    imageEditorDraftRef.current = imageEditTool === "pen" || imageEditTool === "marker"
+      ? { tool: imageEditTool, points: [point], color: imageEditColor, size: imageEditSize }
+      : { tool: imageEditTool, start: point, end: point, color: imageEditColor, size: imageEditSize };
+    renderImageEditorCanvas();
+  }
+
+  function moveImageEdit(event: PointerEvent<HTMLCanvasElement>) {
+    const draft = imageEditorDraftRef.current;
+    if (!draft) return;
+    const point = imageEditorPoint(event);
+    if (draft.points) draft.points = [...draft.points, point];
+    else draft.end = point;
+    renderImageEditorCanvas();
+  }
+
+  function finishImageEdit() {
+    const draft = imageEditorDraftRef.current;
+    if (!draft) return;
+    imageEditorDraftRef.current = null;
+    setImageEditOperations((current) => [...current, draft]);
+  }
+
+  function saveImageEdit() {
+    const canvas = imageEditorCanvasRef.current;
+    if (!imagePreview || !canvas) return;
+    const dataUrl = canvas.toDataURL("image/png");
+    const nextName = imagePreview.name.replace(/\.(png|jpg|jpeg|webp)$/i, "") + "-editada.png";
+    const updated = { ...imagePreview, name: nextName, dataUrl };
+    setEvidenceItems((items) => items.map((item) => item.id === imagePreview.id ? updated : item));
+    setImagePreview(updated);
+    setImageEditOperations([]);
+    setMessage("Imagen de evidencia editada.");
+  }
+
   const updatePipelineStepComment = useCallback((value: string) => {
     setPipelineStepComments((current) => ({ ...current, [pipelineStepKey]: value }));
   }, [pipelineStepKey]);
 
   const toggleCurrentPipelineStepFailure = useCallback(() => {
-    setPipelineStepFailures((current) => ({
-      ...current,
-      [pipelineStepKey]: !current[pipelineStepKey]
-    }));
-  }, [pipelineStepKey]);
+    setPipelineStepFailures((current) => {
+      if (current[pipelineStepKey]) {
+        const next = { ...current };
+        delete next[pipelineStepKey];
+        return next;
+      }
+      if (!window.confirm(t.pipeline.confirmStepFailed)) return current;
+      return { ...current, [pipelineStepKey]: true };
+    });
+  }, [pipelineStepKey, t.pipeline.confirmStepFailed]);
 
   function movePipelineStep(direction: 1 | -1) {
     if (direction > 0 && !isFinalPipelineStep && !currentStepComplete) {
@@ -4048,7 +4429,7 @@ export function App() {
                 item.pipelineStep === index &&
                 (item.pipelinePhase === trackingEnvironment || (!item.pipelinePhase && trackingEnvironment === "TEST"))
             )
-            .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+            .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
             .map((item) => ({ name: item.name, dataUrl: item.dataUrl, createdAt: item.createdAt }))
         };
       }),
@@ -4527,16 +4908,12 @@ export function App() {
   }
 
   function validateEvidenceForExport() {
-    if (!rfc.trim()) {
-      setMessage(t.messages.exportNeedRfc);
+    if (!executionRequiredFieldsReady()) {
+      setMessage(t.messages.executionRequiredFields);
       return false;
     }
     if (!hasExecutionActionPlan || currentPipelineSteps.length === 0) {
       setMessage(executionMode === "general" ? t.pipeline.editStepsHint : t.pipeline.planPlaceholder);
-      return false;
-    }
-    if (!targetEnvironment.trim()) {
-      setMessage(t.messages.evidenceSetupRequired);
       return false;
     }
     const stepsToValidate = failedPipelineStepIndex >= 0
@@ -4597,8 +4974,18 @@ export function App() {
     }
   }
 
-  async function runTask<T>(task: () => Promise<T>, success?: string) {
+  async function runTask<T>(
+    task: () => Promise<T>,
+    success?: string,
+    action: "sync" | "clean" | "prepare" | "discard" | "push" | null = null
+  ) {
+    if (busyRef.current) {
+      setMessage(t.messages.taskAlreadyRunning);
+      return undefined;
+    }
+    busyRef.current = true;
     setBusy(true);
+    setBusyAction(action);
     setMessage(null);
     try {
       const result = await task();
@@ -4609,7 +4996,9 @@ export function App() {
       setMessage(err.message || t.messages.unexpected);
       throw error;
     } finally {
+      busyRef.current = false;
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -4669,7 +5058,23 @@ export function App() {
       setMessage(t.caseFile.repo);
       return;
     }
-    const result = await runTask(() => desktopApi.syncRepository(repoPath), t.messages.repoSyncOk);
+    const result = await runTask(() => desktopApi.syncRepository(repoPath), t.messages.repoSyncOk, "sync");
+    if (!result) return;
+    setRepos((current) => current.map((repo) => repo.path === result.repo.path ? result.repo : repo));
+    setRepoPath(result.repo.path);
+    setFinalOutput(result.output);
+  }
+
+  async function cleanSelectedRepositoryMetadata() {
+    if (!desktopApi) {
+      setMessage(t.messages.scanElectron);
+      return;
+    }
+    if (!repoPath) {
+      setMessage(t.caseFile.repo);
+      return;
+    }
+    const result = await runTask(() => desktopApi.cleanRepositoryMetadata(repoPath), t.messages.done, "clean");
     if (!result) return;
     setRepos((current) => current.map((repo) => repo.path === result.repo.path ? result.repo : repo));
     setRepoPath(result.repo.path);
@@ -4997,12 +5402,19 @@ export function App() {
           : enteredArtifacts
       : detectedArtifacts;
     const isMftPlan = isMftManualPlan(effectiveProduct, sourceText);
+    const isMftTransferImportPlan = isMftPlan && (/\bdo\s+not\s+deploy\b|\bimport\s+only\b|\bjust\s+need\s+to\s+import\b|\bArtifact file:\s*[^\n\r]+\.zip\b|\bmft\/transfer\//i.test(sourceText));
+    const isMftFolderAccessPlan = isMftPlan && !isMftTransferImportPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
     const itemLabel = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "Configuration item(s)" : "Artifact(s) / component(s)";
     const fallbackItem = isMftPlan || isOdiPlan || isOsbPlan || isJavaPlan || oicConfigurationItems.length ? "- Confirm configuration items listed in the instructions." : "- Confirm artifacts listed in the IM090.";
     const orderedArtifacts = hasDatabaseDiscoveryInstructions(sourceText)
       ? sortDatabaseDiscoveryArtifacts(artifacts, (item) => item)
       : artifacts.map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct));
-    const artifactLines = orderedArtifacts.length ? orderedArtifacts.map((item) => `- ${item}`).join("\n") : fallbackItem;
+    const mftFolderItems = isMftFolderAccessPlan ? orderedArtifacts.filter((item) => /^Folder:\s+/i.test(item)) : [];
+    const mftNonFolderItems = isMftFolderAccessPlan ? orderedArtifacts.filter((item) => !/^Folder:\s+/i.test(item)) : orderedArtifacts;
+    const compactMftFolderLines = isMftFolderAccessPlan && mftFolderItems.length > 8
+      ? [`- Folders: ${mftFolderItems.length} requested path(s), listed in Implementation Steps.`, ...mftNonFolderItems.map((item) => `- ${item}`)].join("\n")
+      : "";
+    const artifactLines = compactMftFolderLines || (orderedArtifacts.length ? orderedArtifacts.map((item) => `- ${item}`).join("\n") : fallbackItem);
     const validationBlock = isMftPlan ? "" : actionArtifactValidationBlock();
     const productName = isJavaPlan
       ? "JAVA / WebLogic"
@@ -5022,8 +5434,6 @@ export function App() {
           "- Detection basis: DB discovery scripts, SQL*Plus as SYSDBA, CDB/PDB list, and ORACLE_PDB_SID."
         ].filter(Boolean).join("\n")
       : "";
-    const isMftTransferImportPlan = isMftPlan && (/\bdo\s+not\s+deploy\b|\bimport\s+only\b|\bjust\s+need\s+to\s+import\b|\bArtifact file:\s*[^\n\r]+\.zip\b|\bmft\/transfer\//i.test(sourceText));
-    const isMftFolderAccessPlan = isMftPlan && !isMftTransferImportPlan && /\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|\bUser:\s*|\bPermissions?:\s*/i.test(sourceText);
     const activityName = actionActivity.trim() || (isMftTransferImportPlan ? "Import MFT transfers" : isMftFolderAccessPlan ? "Create MFT folders and assign user permissions" : isMftPlan ? "Update MFT Transfer Rule" : "Manual installation");
     const databaseDiscoveryTarget = isDatabaseDiscoveryPlan ? databaseDiscoveryTargetHost(sourceText) : "";
     const activityHeader = isDatabaseDiscoveryPlan
@@ -5162,9 +5572,13 @@ export function App() {
   }
 
   function clearActionArtifacts() {
+    setArtifactText("");
     setActionArtifactFiles([]);
     setActionArtifactInspections([]);
     setExpandedActionArtifactFiles([]);
+    setActionArtifactIssuesOpen(false);
+    setActionPlanConfirmed(false);
+    setActionPlanConfirmedAt("");
   }
 
   function closeActionArtifactModal() {
@@ -5182,6 +5596,13 @@ export function App() {
     setSummary(null);
     setFinalOutput("");
     setLocalCommitResult(null);
+    clearActionArtifacts();
+    setActionPlan("");
+    setManualPhases([]);
+    setManualPhaseDisabledKeys([]);
+    setManualPhaseSourceKey("");
+    setManualPhaseIndex(0);
+    setManualReviewOpen(false);
     setMessage(t.messages.packageCleared);
     addLog("Paquete limpiado");
   }
@@ -5203,6 +5624,10 @@ export function App() {
     setManualPhaseSourceKey("");
     setManualPhaseIndex(0);
     setManualReviewOpen(false);
+    setActionArtifactModalOpen(false);
+    setActionArtifactFiles([]);
+    setActionArtifactInspections([]);
+    setExpandedActionArtifactFiles([]);
     setActionPlan("");
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
@@ -5406,7 +5831,7 @@ export function App() {
       setMessage(t.messages.noFiles);
       return;
     }
-    const result = await runTask(() => desktopApi.commitRfcLocal(currentDraftPayload()), t.messages.done);
+    const result = await runTask(() => desktopApi.commitRfcLocal(currentDraftPayload()), t.messages.done, "prepare");
     setFinalOutput(result?.output ?? "");
     setLocalCommitResult(result?.ok ? result : null);
     addLog(`RFC ${rfc.trim()}: preparacion local ${result?.ok ? "completada" : "con observaciones"}`, "review");
@@ -5421,7 +5846,7 @@ export function App() {
       setMessage("Primero prepara los cambios.");
       return;
     }
-    const result = await runTask(() => desktopApi.pushRfcBranch(currentDraftPayload()), t.messages.done);
+    const result = await runTask(() => desktopApi.pushRfcBranch(currentDraftPayload()), t.messages.done, "push");
     setFinalOutput(result?.output ?? "");
     if (result?.ok) {
       setLocalCommitResult(null);
@@ -5441,13 +5866,17 @@ export function App() {
     }
     const confirmed = window.confirm("Se descartaran los cambios locales preparados en la rama RFC. La rama no se eliminara.");
     if (!confirmed) return;
-    const result = await runTask(() => desktopApi.undoRfcLocalCommit(currentDraftPayload()), t.messages.done);
+    const result = await runTask(() => desktopApi.undoRfcLocalCommit(currentDraftPayload()), t.messages.done, "discard");
     setFinalOutput(result?.output ?? "");
     if (result?.ok) setLocalCommitResult(null);
     addLog(`RFC ${rfc.trim()}: cambios locales ${result?.ok ? "descartados" : "no pudieron descartarse"}`, "review");
   }
 
   function generateActionPlan() {
+    if (!actionPlanRequiredFieldsReady()) {
+      setMessage(t.messages.actionPlanRequiredFields);
+      return;
+    }
     setActionPlanConfirmed(false);
     setActionPlanConfirmedAt("");
     const sourceText = manualDetectionSourceText();
@@ -5584,6 +6013,38 @@ export function App() {
     ].join("\n");
   }
 
+  function lookupCsvNameFromWarning(item: string) {
+    return item.match(/\b([A-Z0-9_.$#-]+\.csv)\b/i)?.[1] ?? "";
+  }
+
+  function lookupBaseName(value: string) {
+    return artifactDisplayName(value).replace(/\.(?:csv|dvm)$/i, "").toUpperCase();
+  }
+
+  function dvmLookupNamesDetectedInLoadedArtifacts() {
+    return new Set(
+      actionLoadedArtifactItems()
+        .map((item) => item.name)
+        .filter((name) => name && !/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(name))
+        .map(lookupBaseName)
+    );
+  }
+
+  function splitLookupCsvConfirmationItems(items: string[]) {
+    const detectedDvmLookups = dvmLookupNamesDetectedInLoadedArtifacts();
+    const csvItems: string[] = [];
+    const regularItems: string[] = [];
+    for (const item of items) {
+      const csvName = lookupCsvNameFromWarning(item);
+      if (csvName && detectedDvmLookups.has(lookupBaseName(csvName))) csvItems.push(csvName);
+      else regularItems.push(item);
+    }
+    return {
+      csvItems: dedupeArtifactNames(csvItems),
+      regularItems
+    };
+  }
+
   function actionPlanAlertTitle() {
     if (actionArtifactIssues.length && actionPlanIssues.length) return a.actionPlanAlertsTitle;
     if (actionArtifactIssues.length) return a.artifactIssuesTitle;
@@ -5603,21 +6064,54 @@ export function App() {
   }
 
   function actionPlanAlertMessage() {
-    if (actionArtifactIssues.length && !actionPlanIssues.length) return actionArtifactIssueMessage();
-    if (actionPlanIssues.length && !actionArtifactIssues.length) return actionPlanIssueMessage();
+    const csvArtifactRows = actionArtifactIssues.filter((row) => /\.csv$/i.test(row.documentName));
+    const nonCsvArtifactRows = actionArtifactIssues.filter((row) => !/\.csv$/i.test(row.documentName));
+    const detectedDvmLookups = dvmLookupNamesDetectedInLoadedArtifacts();
+    const csvArtifactsWithDvm = csvArtifactRows
+      .map((row) => row.documentName)
+      .filter((artifact) => detectedDvmLookups.has(lookupBaseName(artifact)));
+    const csvArtifactsWithoutDvm = csvArtifactRows
+      .map((row) => row.documentName)
+      .filter((artifact) => !detectedDvmLookups.has(lookupBaseName(artifact)));
+    const splitPlanIssues = splitLookupCsvConfirmationItems(actionPlanIssues);
+    const confirmationCsvs = dedupeArtifactNames([...csvArtifactsWithDvm, ...splitPlanIssues.csvItems]);
 
-    const missingArtifacts = actionArtifactIssues.map((row) => `- ${row.documentName}`).join("\n") || "- <missing artifact>";
-    const missingData = actionPlanIssues.map((item) => `- ${item}`).join("\n") || "- <missing Action Plan information>";
+    if (confirmationCsvs.length && !nonCsvArtifactRows.length && !csvArtifactsWithoutDvm.length && !splitPlanIssues.regularItems.length) {
+      return [
+        "Dear Customer,",
+        "",
+        "During RFC Action Plan validation, we identified lookup CSV files referenced by the IM090 that are not attached/loaded separately in the RFC:",
+        "",
+        confirmationCsvs.map((item) => `- ${item}`).join("\n"),
+        "",
+        "Some equivalent lookup/DVM components were detected inside the attached IAR package(s). Could you please confirm whether the CSV files must be provided separately, or if the lookup/DVM components included in the IAR package(s) are sufficient and should only be validated after import?",
+        "",
+        "Best regards."
+      ].join("\n");
+    }
+
+    if (actionArtifactIssues.length && !actionPlanIssues.length && !confirmationCsvs.length) return actionArtifactIssueMessage();
+    if (actionPlanIssues.length && !actionArtifactIssues.length && !confirmationCsvs.length) return actionPlanIssueMessage();
+
+    const missingArtifactItems = [...nonCsvArtifactRows.map((row) => row.documentName), ...csvArtifactsWithoutDvm];
+    const missingArtifacts = missingArtifactItems.map((item) => `- ${item}`).join("\n") || "- <missing artifact>";
+    const missingData = splitPlanIssues.regularItems.map((item) => `- ${item}`).join("\n") || "- <missing Action Plan information>";
+    const confirmationSection = confirmationCsvs.length
+      ? [
+          "",
+          "Lookup CSV files to confirm:",
+          confirmationCsvs.map((item) => `- ${item}`).join("\n"),
+          "",
+          "Some equivalent lookup/DVM components were detected inside the attached IAR package(s). Please confirm whether the CSV files must be provided separately, or if the included lookup/DVM components are sufficient and should only be validated after import."
+        ].join("\n")
+      : "";
     return [
       "Dear Customer,",
       "",
       "During RFC Action Plan validation, we identified pending items required before execution.",
-      "",
-      "Missing artifact(s):",
-      missingArtifacts,
-      "",
-      "Missing execution information:",
-      missingData,
+      ...(missingArtifactItems.length ? ["", "Missing artifact(s):", missingArtifacts] : []),
+      ...(splitPlanIssues.regularItems.length ? ["", "Missing execution information:", missingData] : []),
+      confirmationSection,
       "",
       "Could you please provide or confirm these items before execution, or confirm they will be validated during the approved execution Zoom/session?",
       "",
@@ -6081,6 +6575,30 @@ export function App() {
   }, [currentPipelineSteps.length, pipelineStepIndex]);
 
   useEffect(() => {
+    setImageEditOperations([]);
+    setImageEditTextDraft(null);
+    setImageEditText("");
+    imageEditorDraftRef.current = null;
+    setImageEditorReady(false);
+    imageEditorImageRef.current = null;
+    if (!imagePreview) return;
+    const image = new Image();
+    image.onload = () => {
+      const canvas = imageEditorCanvasRef.current;
+      if (!canvas) return;
+      canvas.width = image.naturalWidth || image.width;
+      canvas.height = image.naturalHeight || image.height;
+      imageEditorImageRef.current = image;
+      setImageEditorReady(true);
+    };
+    image.src = imagePreview.dataUrl;
+  }, [imagePreview?.id, imagePreview?.dataUrl]);
+
+  useEffect(() => {
+    renderImageEditorCanvas();
+  }, [imageEditorReady, imageEditOperations]);
+
+  useEffect(() => {
     if (!pendingActionPlanRegeneration || actionArtifactModalOpen || busy) return;
     setPendingActionPlanRegeneration(0);
     if (!actionArtifactFiles.length && !artifactText.trim() && !manualDetectionSourceText().trim()) return;
@@ -6531,7 +7049,7 @@ export function App() {
             <div className="repo-sync-group">
               <label className="repo-select-label">
                 <span>{t.review.repository} / {t.repos.branch}</span>
-                <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
+                <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)} disabled={busy}>
                   {repos.length === 0 && <option value="">{e.noRepos}</option>}
                   {repos.map((repo) => (
                     <option key={repo.path} value={repo.path}>
@@ -6541,19 +7059,19 @@ export function App() {
                 </select>
               </label>
               <button className="secondary compact" onClick={syncSelectedRepository} disabled={!repoPath || busy}>
-                <RefreshCw size={15} />
+                {busyAction === "sync" ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
                 {t.syncRepository}
               </button>
             </div>
-            <button className="secondary compact" onClick={saveCurrentPendingWork} disabled={!currentPendingWorkSnapshot}>
+            <button className="secondary compact" onClick={saveCurrentPendingWork} disabled={!currentPendingWorkSnapshot || busy}>
               <Download size={15} />
               {t.savePendingWork}
             </button>
-            <button className="secondary compact" onClick={startNewWork}>
+            <button className="secondary compact" onClick={startNewWork} disabled={busy}>
               <Plus size={15} />
               {t.newWork}
             </button>
-            <button className="secondary compact" onClick={() => setConverterSyncOpen(true)}>
+            <button className="secondary compact" onClick={() => setConverterSyncOpen(true)} disabled={busy}>
               <RefreshCw size={15} />
               {t.syncConverters}
             </button>
@@ -7270,23 +7788,27 @@ export function App() {
             {finalOutput && <pre className="terminal">{finalOutput}</pre>}
 
             <div className="actions">
-              <button className="secondary" onClick={() => setActiveStep("package")}>
+              <button className="secondary" onClick={() => setActiveStep("package")} disabled={busy}>
                 {t.review.edit}
               </button>
-              <button className="secondary" onClick={() => desktopApi?.openExternal(projectUrl)}>
+              <button className="secondary" onClick={() => desktopApi?.openExternal(projectUrl)} disabled={busy}>
                 <GitPullRequest size={16} />
                 {t.review.openVbs}
               </button>
-              <button disabled={!canCommit} onClick={commitRfcLocal}>
-                <Play size={16} />
+              <button className="secondary" onClick={cleanSelectedRepositoryMetadata} disabled={!repoPath || busy}>
+                {busyAction === "clean" ? <Loader2 className="spin" size={16} /> : <Eraser size={16} />}
+                {t.review.cleanSafeFiles}
+              </button>
+              <button disabled={!canCommit || busy} onClick={commitRfcLocal}>
+                {busyAction === "prepare" ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                 {t.review.commitLocal}
               </button>
-              <button className="secondary" disabled={!canPushBranch} onClick={undoRfcLocalCommit}>
-                <Trash2 size={16} />
+              <button className="secondary" disabled={!canPushBranch || busy} onClick={undoRfcLocalCommit}>
+                {busyAction === "discard" ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
                 {t.review.undoCommit}
               </button>
-              <button disabled={!canPushBranch} onClick={pushRfcBranch}>
-                <UploadCloud size={16} />
+              <button disabled={!canPushBranch || busy} onClick={pushRfcBranch}>
+                {busyAction === "push" ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
                 {t.review.pushBranch}
               </button>
             </div>
@@ -7536,14 +8058,16 @@ export function App() {
                     {currentPipelineStep?.detail && <p className="guided-step-detail">{currentPipelineStep.detail}</p>}
                   </div>
                   <div className="guided-actions">
-                    <button
-                      className="icon-action"
-                      disabled={!evidenceFormReady}
-                      onClick={captureRegionEvidence}
-                      title={evidenceFormReady ? t.evidence.captureRegion : t.messages.evidenceSetupRequired}
-                    >
-                      <Camera size={18} />
-                    </button>
+                    {supportsRegionCapture && (
+                      <button
+                        className="icon-action"
+                        disabled={!evidenceFormReady}
+                        onClick={captureRegionEvidence}
+                        title={evidenceFormReady ? t.evidence.captureRegion : t.messages.evidenceSetupRequired}
+                      >
+                        <Camera size={18} />
+                      </button>
+                    )}
                     <button
                       className="icon-action"
                       disabled={!evidenceFormReady}
@@ -8692,6 +9216,10 @@ export function App() {
                 <ExternalLink size={16} />
                 {t.openFile}
               </button>
+              <button className="secondary" onClick={() => showItemInFolder(lastExportPath)}>
+                <Folder size={16} />
+                {t.openFolder}
+              </button>
               <button className="secondary" onClick={() => setExportModalOpen(false)}>
                 {t.close}
               </button>
@@ -8733,13 +9261,19 @@ export function App() {
               <AlertCircle size={26} />
             </div>
             <h2>{t.alertTitle}</h2>
-            <p>{message}</p>
+            <div className="notice-modal-message">{message}</div>
             <div className="actions export-actions">
               {lastExportPath && message.startsWith(t.messages.exportOk) && (
-                <button className="secondary" onClick={() => openLocalPath(lastExportPath)}>
-                  <ExternalLink size={16} />
-                  {t.openFile}
-                </button>
+                <>
+                  <button className="secondary" onClick={() => openLocalPath(lastExportPath)}>
+                    <ExternalLink size={16} />
+                    {t.openFile}
+                  </button>
+                  <button className="secondary" onClick={() => showItemInFolder(lastExportPath)}>
+                    <Folder size={16} />
+                    {t.openFolder}
+                  </button>
+                </>
               )}
               <button onClick={() => setMessage(null)}>{t.close}</button>
             </div>
@@ -8756,6 +9290,10 @@ export function App() {
                 <span>{stepTitle(imagePreview.step)} · {new Date(imagePreview.createdAt).toLocaleString()}</span>
               </div>
               <div className="image-modal-actions">
+                <button className="secondary compact" onClick={saveImageEdit} disabled={!imageEditOperations.length}>
+                  <CheckCircle2 size={16} />
+                  Aplicar
+                </button>
                 <button
                   className="icon-button"
                   onClick={() => saveEvidenceImage(imagePreview)}
@@ -8769,7 +9307,114 @@ export function App() {
                 </button>
               </div>
             </div>
-            <img src={imagePreview.dataUrl} alt={imagePreview.name} />
+            <div className="image-editor-shell">
+              <div className="image-editor-toolbar" aria-label="Herramientas de edicion de evidencia">
+                {([
+                  ["mosaic", "Mosaico", <Eraser size={17} />],
+                  ["marker", "Marcador", <Highlighter size={17} />],
+                  ["pen", "Lapiz", <PenLine size={17} />],
+                  ["rectangle", "Rectangulo", <Square size={17} />],
+                  ["circle", "Circulo", <Circle size={17} />],
+                  ["line", "Linea", <Minus size={17} />],
+                  ["arrow", "Flecha", <ArrowRight size={17} />],
+                  ["text", "Texto", <Type size={17} />]
+                ] as Array<[ImageEditTool, string, ReactNode]>).map(([tool, label, icon]) => (
+                  <button
+                    key={tool}
+                    className={`tool-button ${imageEditTool === tool ? "active" : ""}`}
+                    onClick={() => setImageEditTool(tool)}
+                    title={label}
+                    aria-label={label}
+                  >
+                    {icon}
+                  </button>
+                ))}
+                <label className="color-swatch-control" title="Color" aria-label="Color">
+                  <span style={{ background: imageEditColor }} />
+                  <input type="color" value={imageEditColor} onChange={(event) => setImageEditColor(event.target.value)} />
+                </label>
+                <label className="image-editor-control size-control" title="Tamano">
+                  <input
+                    type="number"
+                    min="3"
+                    max="48"
+                    value={imageEditSize}
+                    onChange={(event) => setImageEditSize(Math.min(48, Math.max(3, Number(event.target.value) || 3)))}
+                    aria-label="Tamano"
+                  />
+                </label>
+                <button
+                  className="tool-button"
+                  onClick={() => setImageEditOperations((current) => current.slice(0, -1))}
+                  disabled={!imageEditOperations.length}
+                  title="Deshacer"
+                  aria-label="Deshacer"
+                >
+                  <Undo2 size={17} />
+                </button>
+                <button
+                  className="tool-button"
+                  onClick={() => setImageEditOperations([])}
+                  disabled={!imageEditOperations.length}
+                  title="Limpiar edicion"
+                  aria-label="Limpiar edicion"
+                >
+                  <Trash2 size={17} />
+                </button>
+              </div>
+              <div className="image-editor-stage">
+                {!imageEditorReady && <div className="empty-inline">Preparando imagen...</div>}
+                <canvas
+                  ref={imageEditorCanvasRef}
+                  className="image-editor-canvas"
+                  onPointerDown={startImageEdit}
+                  onPointerMove={moveImageEdit}
+                  onPointerUp={finishImageEdit}
+                  onPointerCancel={finishImageEdit}
+                />
+                {imageEditTextDraft && (
+                  <div
+                    className="image-text-popover"
+                    style={{
+                      left: `min(${Math.round(imageEditTextDraft.screenPoint.x + 12)}px, calc(100% - 260px))`,
+                      top: `min(${Math.round(imageEditTextDraft.screenPoint.y + 12)}px, calc(100% - 176px))`
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <div className="image-text-popover-head">
+                      <strong>Texto</strong>
+                      <button className="icon-button mini" onClick={closeImageTextDraft} aria-label="Cerrar texto">
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <input
+                      autoFocus
+                      className="image-editor-text-input"
+                      value={imageEditText}
+                      onChange={(event) => setImageEditText(limitImageEditText(event.target.value))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") applyImageTextDraft();
+                        if (event.key === "Escape") closeImageTextDraft();
+                      }}
+                      placeholder="Escribe texto"
+                    />
+                      <span className="image-text-help">Maximo 10 palabras por texto.</span>
+                    {imageEditTextHistory.length > 0 && (
+                      <div className="image-text-history">
+                        {imageEditTextHistory.map((item) => (
+                          <button key={item} type="button" onClick={() => setImageEditText(item)}>
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button className="primary small" onClick={() => applyImageTextDraft()} disabled={!imageEditText.trim()}>
+                      Agregar
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

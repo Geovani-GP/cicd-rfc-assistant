@@ -170,6 +170,7 @@ export type RuntimeKnowledgeCatalog = {
 declare global {
   interface Window {
     cicd: {
+      platform: NodeJS.Platform;
       checkPrerequisites: () => Promise<Prerequisite[]>;
       selectDirectory: () => Promise<string | null>;
       selectFiles: (extensions: string[]) => Promise<SelectedFile[]>;
@@ -217,6 +218,7 @@ declare global {
       getPathForFile: (file: File) => string;
       scanRepositories: (basePath: string) => Promise<RepositoryInfo[]>;
       syncRepository: (repoPath: string) => Promise<{ repo: RepositoryInfo; output: string }>;
+      cleanRepositoryMetadata: (repoPath: string) => Promise<{ repo: RepositoryInfo; output: string }>;
       cloneRepository: (payload: { url: string; destination: string }) => Promise<RepositoryInfo>;
       prepareRfcDraft: (payload: unknown) => Promise<DraftSummary>;
       getDraftSummary: (payload: unknown) => Promise<DraftSummary>;

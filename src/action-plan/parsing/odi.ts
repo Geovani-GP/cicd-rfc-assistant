@@ -60,6 +60,38 @@ function odiUser(text: string) {
   ]);
 }
 
+function odiUrl(text: string) {
+  return firstMatch(text, [
+    /\bURL(?:\s+must\s+be\s+left\s+exactly\s+as\s+provided\s+in\s+the\s+action\s+plan)?[:\s]+(https?:\/\/[^\s<>"']+)/i,
+    /\b(https?:\/\/[a-z0-9.-]+\.integration\.[a-z0-9.-]+\.oraclecloud\.com\/?)\b/i,
+    /\b(https?:\/\/[^\s<>"']+)/i
+  ]);
+}
+
+function odiTargetEnvironmentInstance(text: string) {
+  return firstMatch(text, [
+    /\bTarget Environment\s*\n\s*(GB[A-Z0-9_-]+)/i,
+    /\bEnvironment\s*\n\s*(GB[A-Z0-9_-]+)/i,
+    /\bRFC target:\s*(?:[A-Z]+\s*-\s*)?(GB[A-Z0-9_-]+)/i
+  ]);
+}
+
+function environmentSuffixFromInstance(instance: string, selectedEnvironment: string) {
+  const suffix = instance.match(/(DE|TE|PR|RE)$/i)?.[1]?.toLowerCase();
+  if (suffix) return suffix;
+  if (/prod|production/i.test(selectedEnvironment)) return "pr";
+  if (/test/i.test(selectedEnvironment)) return "te";
+  if (/dev|development/i.test(selectedEnvironment)) return "de";
+  return "";
+}
+
+function adaptOdiValueToTargetEnvironment(value: string, targetSuffix: string) {
+  if (!value || !targetSuffix) return value;
+  return value
+    .replace(/(gboic3glr\d)(?:te|pr|de|re)\b/gi, `$1${targetSuffix}`)
+    .replace(/-(?:te|pr|de|re)\b/gi, `-${targetSuffix}`);
+}
+
 function odiAgent(text: string) {
   return firstMatch(text, [
     /select the\s+([A-Za-z0-9_.-]*Agent[A-Za-z0-9_.-]*)/i,
@@ -69,11 +101,16 @@ function odiAgent(text: string) {
 }
 
 export function hasOdiInstructions(text: string) {
-  return /\bODI\b|ODI Studio|OdiSftp|OracleDIAgent|setDomainEnv\.sh|KB183202|SUPERVISOR|Topology|Physical Architecture|RESTful Service|Data Server|ODI integration components|Connect to Repository|Regenerate .*scenario|SunopsisExport|SnpMapping|SnpPackage|ODI Mapping:|ODI Package:/i.test(text);
+  return /\bODI\b|ODI Studio|OdiSftp|OracleDIAgent|setDomainEnv\.sh|KB183202|SUPERVISOR|Topology|Physical Architecture|RESTful Service|Data Server|ODI integration components|Connect to Repository|Regenerate .*scenario|SunopsisExport|SnpMapping|SnpPackage|ODI Mapping:|ODI Package:|rolling bounce|WebLogic Console|managed servers?/i.test(text);
 }
 
 function hasOdiComponentImportInstructions(text: string) {
   return /Backup ODI integration components|Import ODI integration components|Regenerate .*scenario|Objects to be Exported|Exporting the following objects|Artifact file:\s*[^\n\r]+\.xml|ODI Mapping:|ODI Package:|ODI Scenario:|SunopsisExport|SnpMapping|SnpPackage/i.test(text);
+}
+
+function hasOdiRollingBounceInstructions(text: string) {
+  return /\brolling bounce\b|\brestart\b[\s\S]{0,120}\bmanaged servers?\b|\bslowness\b[\s\S]{0,160}\bregenerating scenarios\b/i.test(text) &&
+    /\bODI\b|GB[A-Z0-9]*ODI[A-Z0-9]*\b|OracleDIAgent|ODI_server\d+/i.test(text);
 }
 
 function hasOdiJeeAgentRemediation(text: string) {
@@ -257,6 +294,200 @@ function odiManagedServers(text: string) {
   return explicit.length ? explicit : ["ODI_server1", "ODI_server2"];
 }
 
+function odiRollingBounceManagedServers(text: string) {
+  const explicit = uniqueValues([
+    ...Array.from(text.matchAll(/\b([a-z0-9-]*odi[a-z0-9-]*_server_\d+)\b/gi)).map((match) => match[1]),
+    ...Array.from(text.matchAll(/\b(ODI_server\d+)\b/gi)).map((match) => match[1])
+  ]);
+  return explicit.length ? explicit : [];
+}
+
+function hasOdiRollingBounceCacheCleanup(text: string) {
+  return /\b(?:clean|clear|cleanup)\b[\s\S]{0,80}\b(?:cache|tmp)\b|\b(?:cache|tmp)\b[\s\S]{0,80}\b(?:clean|clear|cleanup|backup|mv)\b|\bmv\s+cache\s+cache[._-]|\bmv\s+tmp\s+tmp[._-]/i.test(text);
+}
+
+function odiDomainHomeFromRollingBounce(text: string, target: string) {
+  return firstMatch(text, [
+    /(\/u01\/oracle\/mwh\/user_projects\/domains\/[A-Za-z0-9_-]+_domain)\b/i,
+    /(\/u01\/oracle\/mwh\/user_projects\/domains\/[A-Za-z0-9_-]+)\b/i
+  ]) || `/u01/oracle/mwh/user_projects/domains/${target}_domain`;
+}
+
+function odiRollingBounceHostMap(text: string) {
+  const map = new Map<string, string>();
+  const sshMatches = Array.from(text.matchAll(/Managed Server\s+(\d+)[\s\S]{0,220}?\bssh\s+<user>@([0-9.]+)/gi));
+  for (const match of sshMatches) {
+    map.set(match[1], match[2]);
+  }
+  return map;
+}
+
+function odiRollingBounceTarget(text: string, selectedEnvironment: string) {
+  return odiTargetEnvironmentInstance(text) ||
+    firstMatch(text, [/\bEnvironment\s*\n\s*(GB[A-Z0-9_-]*ODI[A-Z0-9_-]*)/i, /\b(GB[A-Z0-9_-]*ODI[A-Z0-9_-]*)\b/i]) ||
+    selectedEnvironment ||
+    "<ODI_INSTANCE>";
+}
+
+function rfcNumberFromText(text: string) {
+  return firstMatch(text, [/\bRFC\s*:?\s*(4-B[0-9A-Z]+)/i, /\b(4-B[0-9A-Z]{5,})\b/i]);
+}
+
+function buildOdiRollingBouncePlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const target = odiRollingBounceTarget(text, selectedEnvironment);
+  const servers = odiRollingBounceManagedServers(text);
+  const serverBlock = servers.length
+    ? servers.map((server) => `- ${server}`).join("\n")
+    : "- Confirm the ODI managed server list from WebLogic Console before execution.";
+  const adminServerRequested = /\bAdmin Server\b[\s\S]{0,120}\b(?:restart|start|shutdown)|\bRepeat steps\b[\s\S]{0,80}\bAdmin Server\b/i.test(text);
+  const cleanCacheTmp = hasOdiRollingBounceCacheCleanup(text);
+  const domainHome = odiDomainHomeFromRollingBounce(text, target);
+  const hostMap = odiRollingBounceHostMap(text);
+  const cacheBackupSuffix = `${rfcNumberFromText(text) || "<RFC>"}_YYYYMMDD`;
+  const issueContext = /\bslowness\b|\bregenerating scenarios\b/i.test(text)
+    ? "Current issue context: slowness while regenerating ODI scenarios."
+    : "";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: prepareManualPhaseContent([
+        "Confirm RFC approval to execute a rolling bounce for the ODI environment.",
+        `Target ODI environment:\n- ${target}`,
+        issueContext,
+        "Confirm access to Enterprise Manager / monitoring to set and unset blackout if required.",
+        "Confirm access to the WebLogic Admin Console for the ODI domain.",
+        cleanCacheTmp ? "Confirm SSH access to each ODI managed server host and permission to switch/login as oracle OS user." : "",
+        `Confirm the ODI managed server(s) to restart:\n${serverBlock}`,
+        cleanCacheTmp ? `Confirm the domain home path:\n- ${domainHome}` : "",
+        "Confirm no ODI scenario regeneration or critical execution is running before restarting each server.",
+        "Do not capture or expose OS, WebLogic, or repository password values."
+      ].filter(Boolean).join("\n\n"), selectedEnvironment)
+    },
+    {
+      id: "backup",
+      title: "Pre-Change Evidence",
+      content: [
+        "No artifact backup is required because this RFC only restarts ODI/WebLogic services.",
+        "Capture current evidence before execution:",
+        `- Target ODI environment: ${target}`,
+        "- WebLogic Admin Console server list.",
+        `- Current state of ODI managed server(s):\n${serverBlock}`,
+        "- Current health/monitoring status.",
+        cleanCacheTmp ? "- Current cache/tmp directory state for each managed server before renaming." : "",
+        "- Any visible ODI Agent or scenario regeneration symptom relevant to the request."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "installation",
+      title: "Rolling Bounce",
+      content: cleanCacheTmp ? [
+        `1. Set EM/monitoring blackout for ${target}, if required by the operational procedure.`,
+        "2. Login to the WebLogic Admin Console for the ODI domain.",
+        "3. Go to Environment > Servers > Control.",
+        "4. Restart ODI managed servers one by one and clean cache/tmp while each managed server is stopped.",
+        "",
+        servers.length ? servers.map((server, index) => {
+          const number = server.match(/(\d+)$/)?.[1] ?? `${index + 1}`;
+          const host = hostMap.get(number);
+          return [
+            `${index + 5}. Process ${server}:`,
+            `   - Shutdown ${server} from WebLogic Console: Shutdown > Force shutdown > Yes.`,
+            "   - Wait until the server reaches SHUTDOWN state.",
+            host ? `   - Connect by SSH to the managed server host:\n     ssh <user>@${host} -o ServerAliveInterval=60` : "   - Connect by SSH to the managed server host confirmed for this server.",
+            "   - Login/switch to oracle OS user.",
+            `   - Go to:\n     ${domainHome}/servers/${server}`,
+            "   - Backup cache and tmp directories by renaming them:",
+            `     mv cache cache_${cacheBackupSuffix}`,
+            `     mv tmp tmp_${cacheBackupSuffix}`,
+            `   - Start ${server} from WebLogic Console.`,
+            "   - Wait until the server reaches RUNNING state before continuing with the next server."
+          ].join("\n");
+        }).join("\n\n") : [
+          "5. For each ODI managed server confirmed in WebLogic Console:",
+          "   - Shutdown the managed server: Shutdown > Force shutdown > Yes.",
+          "   - Wait until the server reaches SHUTDOWN state.",
+          "   - Connect by SSH to the corresponding managed server host.",
+          "   - Login/switch to oracle OS user.",
+          `   - Go to:\n     ${domainHome}/servers/<MANAGED_SERVER_NAME>`,
+          "   - Backup cache and tmp directories by renaming them:",
+          `     mv cache cache_${cacheBackupSuffix}`,
+          `     mv tmp tmp_${cacheBackupSuffix}`,
+          "   - Start the same managed server from WebLogic Console.",
+          "   - Wait until the server reaches RUNNING state before continuing with the next server."
+        ].join("\n"),
+        "",
+        adminServerRequested
+          ? "Do not clean or restart AdminServer unless the approved instructions explicitly require it and the WebLogic owner confirms the sequence."
+          : "Do not clean or restart AdminServer for this RFC unless explicitly approved by the WebLogic owner.",
+        `Unset EM/monitoring blackout for ${target} after all requested servers are RUNNING.`
+      ].join("\n") : [
+        `1. Set EM/monitoring blackout for ${target}, if required by the operational procedure.`,
+        "2. Login to the WebLogic Admin Console for the ODI domain.",
+        "3. Go to Environment > Servers.",
+        "4. Open the Control tab.",
+        "5. Restart ODI managed servers one by one:",
+        serverBlock,
+        "6. For each managed server:",
+        "   - Select the server checkbox.",
+        "   - Click Shutdown > Force shutdown > Yes.",
+        "   - Wait until the server reaches SHUTDOWN state.",
+        "   - Select the same server again.",
+        "   - Click Start > Yes.",
+        "   - Wait until the server reaches RUNNING state before continuing with the next server.",
+        adminServerRequested
+          ? "7. Restart the Admin Server only because it is explicitly requested in the approved instructions."
+          : "7. Do not restart the Admin Server unless it is explicitly approved or required by the WebLogic owner.",
+        `8. Unset EM/monitoring blackout for ${target} after all requested servers are RUNNING.`
+      ].join("\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable. This RFC is only for ODI/WebLogic rolling bounce.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate all restarted ODI managed servers are RUNNING.",
+        cleanCacheTmp ? "Validate new cache/tmp directories are recreated automatically after each managed server starts." : "",
+        "Validate the ODI Agent/application health is available after restart.",
+        "Validate scenario regeneration can be attempted by the requester or ODI owner.",
+        "Confirm no unexpected WebLogic, ODI Agent, or health check errors are present after the rolling bounce."
+      ].filter(Boolean).join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If a managed server does not stop or start correctly, stop the rolling bounce and capture the error.",
+        "Do not continue with the remaining servers until the ODI/WebLogic owner confirms the next action.",
+        "If health checks fail after restart, keep blackout active if needed, capture evidence, and escalate to the WebLogic/ODI support owner.",
+        "If rollback-like recovery is needed, follow the WebLogic owner instruction to restart or recover the affected managed server."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach evidence for:",
+        "1. EM/monitoring blackout set, if used.",
+        "2. Pre-change managed server status.",
+        "3. Shutdown/start evidence for each restarted managed server.",
+        cleanCacheTmp ? "4. cache/tmp backup rename evidence for each managed server." : "",
+        `${cleanCacheTmp ? "5" : "4"}. Final RUNNING status for all restarted servers.`,
+        `${cleanCacheTmp ? "6" : "5"}. ODI Agent/application health after restart.`,
+        `${cleanCacheTmp ? "7" : "6"}. EM/monitoring blackout unset, if used.`,
+        `${cleanCacheTmp ? "8" : "7"}. Final update to the customer/requester.`,
+        "Do not attach credential values."
+      ].filter(Boolean).join("\n")
+    }
+  ];
+}
+
 function buildOdiJeeAgentRemediationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   const instance = odiTargetInstance(text) || "<ODI_INSTANCE>";
   const domainHome = odiDomainHome(text);
@@ -401,6 +632,18 @@ function buildOdiJeeAgentRemediationPlan(text: string, selectedEnvironment: stri
 }
 
 export function odiConfigurationItems(text: string) {
+  if (hasOdiRollingBounceInstructions(text)) {
+    const target = odiRollingBounceTarget(text, "");
+    const servers = odiRollingBounceManagedServers(text);
+    const cleanCacheTmp = hasOdiRollingBounceCacheCleanup(text);
+    return [
+      `ODI Rolling Bounce: ${target}`,
+      "WebLogic Admin Console restart",
+      "EM/monitoring blackout if required",
+      cleanCacheTmp ? "Managed server cache/tmp cleanup" : "",
+      ...servers.map((server) => `Managed Server: ${server}`)
+    ].filter(Boolean);
+  }
   if (hasOdiJeeAgentRemediation(text)) {
     const instance = odiTargetInstance(text);
     const domainHome = odiDomainHome(text);
@@ -578,17 +821,22 @@ function buildOdiComponentImportPlan(text: string, selectedEnvironment: string):
 }
 
 export function buildOdiTopologyPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  if (hasOdiRollingBounceInstructions(text)) return buildOdiRollingBouncePlan(text, selectedEnvironment);
   if (hasOdiJeeAgentRemediation(text)) return buildOdiJeeAgentRemediationPlan(text, selectedEnvironment);
   if (hasOdiComponentImportInstructions(text)) return buildOdiComponentImportPlan(text, selectedEnvironment);
 
   const summary = normalizeWhitespace(odiSummary(text));
   const technology = odiTechnology(text);
   const dataServer = odiDataServer(text) || "<DATA_SERVER>";
-  const user = odiUser(text) || "<CONFIGURED_USER>";
+  const targetInstance = odiTargetEnvironmentInstance(text);
+  const targetSuffix = environmentSuffixFromInstance(targetInstance, selectedEnvironment);
+  const url = adaptOdiValueToTargetEnvironment(odiUrl(text), targetSuffix);
+  const user = adaptOdiValueToTargetEnvironment(odiUser(text), targetSuffix) || "<CONFIGURED_USER>";
   const agent = odiAgent(text);
   const environment = selectedEnvironment || "<Environment>";
   const repositoryUser = /\bSUPERVISOR\b/i.test(text) ? "SUPERVISOR user" : "approved ODI repository user";
   const hasExplicitUser = user !== "<CONFIGURED_USER>";
+  const hasExplicitUrl = Boolean(url);
 
   return [
     {
@@ -597,9 +845,13 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
       content: prepareManualPhaseContent([
         `Confirm ODI Studio access with the ${repositoryUser}.`,
         `Confirm the target environment is ${environment}.`,
+        targetInstance ? `Confirm the target ODI instance is ${targetInstance}.` : "",
+        dataServer !== "<DATA_SERVER>" ? `Confirm the Data Server to update is ${dataServer}.` : "Confirm the Data Server to update from the RFC.",
+        hasExplicitUrl ? `Confirm the target URL is approved before execution:\n- ${url}` : "Confirm the target URL before execution.",
+        hasExplicitUser ? `Confirm the configured username is approved before execution:\n- ${user}` : "Confirm the configured username before execution.",
         "Confirm the new password is available through the approved secure session.",
         "Do not capture or expose the password value."
-      ].join("\n"), selectedEnvironment)
+      ].filter(Boolean).join("\n"), selectedEnvironment)
     },
     {
       id: "backup",
@@ -608,6 +860,7 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
         "Capture current configuration evidence before the change:",
         `- Technology: ${technology}`,
         `- Data Server: ${dataServer}`,
+        hasExplicitUrl ? `- Current URL and target URL for comparison: ${url}` : "- Current URL and target URL for comparison",
         hasExplicitUser ? `- Configured user: ${user}` : "- Configured user/account: validate before update",
         "",
         "Do not capture or expose the current password value."
@@ -623,8 +876,9 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
         "Open Technologies.",
         `Open ${technology}.`,
         `Open Data Server:\n- ${dataServer}`,
-        hasExplicitUser ? `Validate that the configured user is:\n- ${user}` : "Validate the configured user/account before updating the password.",
-        "Update the password field with the password shared through the approved secure session.",
+        hasExplicitUrl ? `Update the URL exactly as approved:\n- ${url}` : "Update the URL exactly as approved in the RFC/customer confirmation.",
+        hasExplicitUser ? `Update/validate the configured user:\n- ${user}` : "Update/validate the configured user/account before updating the password.",
+        "Update the password field with the password shared through the approved secure session/password administrator.",
         "Click Save.",
         "Click Test.",
         `Select:\n- ${agent}`,
@@ -641,6 +895,8 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
       id: "validation",
       title: "Validation",
       content: [
+        hasExplicitUrl ? `Validate the saved URL is:\n- ${url}` : "Validate the saved URL matches the approved RFC value.",
+        hasExplicitUser ? `Validate the saved username is:\n- ${user}` : "Validate the saved username matches the approved RFC value.",
         `Validate the ${technology} Data Server test is successful using ${agent}.`,
         "Confirm no authentication or connectivity error is returned."
       ].join("\n")
@@ -650,10 +906,11 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
       title: "Return Point / Contingency",
       content: [
         "If the test fails:",
+        "- Revalidate the URL and username against the approved RFC/customer value.",
         "- Revalidate the password with the owner/admin.",
         `- Confirm the selected agent is ${agent}.`,
         "- Do not retry with unapproved credentials.",
-        "- Restore the previous password only if available and approved."
+        "- Restore the previous URL/username/password only if available and approved."
       ].join("\n")
     },
     {
@@ -662,7 +919,7 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
       content: [
         "Attach evidence of:",
         "1. Data Server selected.",
-        "2. Configured user validation.",
+        "2. URL and configured user validation.",
         "3. Save action.",
         `4. Successful test result with ${agent}.`,
         "",
@@ -674,6 +931,31 @@ export function buildOdiTopologyPlan(text: string, selectedEnvironment: string):
 }
 
 export function odiManualPlanMetadata(productName: string, environmentName: string, instanceName: string, instructions: string) {
+  if (isOdiProductName(productName) && hasOdiRollingBounceInstructions(instructions)) {
+    const target = odiRollingBounceTarget(instructions, instanceName || environmentName);
+    const servers = odiRollingBounceManagedServers(instructions);
+    const cleanCacheTmp = hasOdiRollingBounceCacheCleanup(instructions);
+    return [
+      "Environment:",
+      `- ODI Instance: ${target}`,
+      `- RFC Environment: ${environmentName}`,
+      "",
+      "Impact:",
+      "- ODI/WebLogic managed servers will be restarted one by one to refresh runtime health.",
+      cleanCacheTmp ? "- Managed server cache/tmp directories will be backed up by renaming while each server is stopped." : "",
+      "- No ODI repository object import, topology change, database change, or schedule activation is included.",
+      "",
+      "Scope:",
+      "- Rolling bounce only.",
+      cleanCacheTmp ? "- cache/tmp cleanup only for managed servers, unless AdminServer cleanup is explicitly approved." : "",
+      "- Admin Server restart only if explicitly approved or required by the WebLogic owner.",
+      "",
+      servers.length ? `Managed Servers:\n${servers.map((server) => `- ${server}`).join("\n")}` : "Managed Servers:\n- Confirm from WebLogic Console before execution.",
+      "",
+      "Expected Outcome:",
+      "ODI managed servers return to RUNNING state and scenario regeneration slowness is mitigated."
+    ].filter(Boolean).join("\n");
+  }
   if (isOdiProductName(productName) && hasOdiJeeAgentRemediation(instructions)) {
     const instance = odiTargetInstance(instructions) || instanceName;
     const hosts = odiMiddlewareHosts(instructions);
