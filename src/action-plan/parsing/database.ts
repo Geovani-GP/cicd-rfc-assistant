@@ -37,6 +37,7 @@ export function hasDatabaseDiscoveryInstructions(text: string) {
 
 export function hasDatabaseInstructions(text: string) {
   return hasDatabaseDiscoveryInstructions(text) ||
+    hasLaclsFiscalEventsDbPatchUpdate(text) ||
     hasLaclsColombiaMagneticMediaDbInstall(text) ||
     hasLaclsUruguayCommercialReceiptsDbInstall(text) ||
     hasDatabaseBackupPurgeInstructions(text) ||
@@ -81,6 +82,22 @@ function uniqueValues(values: string[]) {
 
 function sqlScriptNames(text: string) {
   return uniqueValues(text.match(/\b[A-Z0-9_.$#-]+\.sql\b/gi) ?? []);
+}
+
+function hasLaclsFiscalEventsDbPatchUpdate(text: string) {
+  return /\bLACLS\b/i.test(text) &&
+    /\b(?:Fiscal Events Control Solution|ReformaTributaria|Reforma Tributaria|Update Objects LACLS ATP|FISCAL_INTEG)\b/i.test(text) &&
+    /\b(?:p39731462_11130_Generic\.zip|39731462|fix39731462\.sql)\b/i.test(text) &&
+    /\b(?:ATP|Database|DB|sql|script|objects?)\b/i.test(text);
+}
+
+function laclsFiscalEventsPatchPackageNames(text: string) {
+  const packages = uniqueValues(text.match(/\bp39731462_11130_Generic\.zip\b/gi) ?? []);
+  return packages.length ? packages : ["p39731462_11130_Generic.zip"];
+}
+
+function laclsFiscalEventsPatchScript(text: string) {
+  return sqlScriptNames(text).find((item) => /^fix39731462\.sql$/i.test(item)) ?? "fix39731462.sql";
 }
 
 function hasLaclsColombiaMagneticMediaDbInstall(text: string) {
@@ -366,6 +383,14 @@ export function databaseConfigurationItems(text: string) {
       `Install script: ${laclsDatabaseInstallScript(text)}`,
       scripts.length > 1 ? `Internal SQL scripts invoked by installer: ${scripts.length - 1}` : ""
     ].filter(Boolean));
+  }
+  if (hasLaclsFiscalEventsDbPatchUpdate(text)) {
+    return uniqueValues([
+      ...laclsFiscalEventsPatchPackageNames(text).map((item) => `Patch artifact: ${item}`),
+      `Update script: ${laclsFiscalEventsPatchScript(text)}`,
+      "Target schema/user: LACLS",
+      "Dependency: RFC 4-B003ZMG completed"
+    ]);
   }
   if (hasLaclsUruguayCommercialReceiptsDbInstall(text)) {
     const packages = laclsUruguayCommercialReceiptsPackageNames(text);
@@ -1172,6 +1197,94 @@ function buildLaclsColombiaMagneticMediaDbPlan(text: string, selectedEnvironment
   ];
 }
 
+function buildLaclsFiscalEventsDbPatchUpdatePlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const environmentLabel = selectedEnvironment || "<ENVIRONMENT>";
+  const packageList = laclsFiscalEventsPatchPackageNames(text);
+  const updateScript = laclsFiscalEventsPatchScript(text);
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved to update LACLS Fiscal Events Control Solution database objects.",
+        `Target environment:\n- ${environmentLabel}`,
+        "Confirm dependency RFC 4-B003ZMG is Closed / Completed.",
+        "Confirm the LACLS schema exists in the target ATP environment and has the required privileges to execute the patch scripts.",
+        packageList.length ? `Required patch artifact:\n${asBullets(packageList)}` : "Required patch artifact:\n- p39731462_11130_Generic.zip",
+        `Main database update script:\n- ${updateScript}`,
+        "Confirm the requester clarification: patch 39619716 is the base LACLS solution, and p39731462_11130_Generic.zip contains the adjustment to execute for this RFC.",
+        "Do not capture or expose database credential values in the Action Plan, SQL output, screenshots, or RFC evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Pre-Change Evidence",
+      content: [
+        "Before execution, confirm an approved database backup, restore point, schema export, or DBA-approved rollback option is available.",
+        "Capture the target ATP/database context and LACLS schema availability before running the script.",
+        "Capture pre-change object status for LACLS database objects when available.",
+        "If object-level backup is not applicable, document the approved database-level backup/restore option before proceeding."
+      ].join("\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "1. Download or stage the patch artifact in the approved working directory:",
+        asBullets(packageList),
+        "2. Extract the patch artifact.",
+        "3. Locate the database script referenced by the IM090:",
+        `BR/FISCAL_INTEG/DB/sql/${updateScript}`,
+        "4. Open SQL*Plus, SQL Developer, or the approved SQL execution tool.",
+        "5. Connect to the target ATP/database using the LACLS schema user and approved credentials.",
+        "6. Execute the database update script:",
+        `@<PACK_PATH>/BR/FISCAL_INTEG/DB/sql/${updateScript}`,
+        "7. Capture the full execution output/spool log."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this ATP database object update. No OIC scheduler activation is requested in this RFC scope.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Validate that the script completed successfully.",
+        "Review the execution output and confirm there are no ORA-, PLS-, SP2-, or compilation errors.",
+        "Validate that the LACLS database objects were created or updated according to the IM090.",
+        "If validation queries or compilation checks are provided by the IM090/package, execute them and capture the results.",
+        "Any INVALID object or script error must be captured and escalated to the requester/DBA before closing the RFC."
+      ].join("\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the script fails, stop the execution and capture the exact script name, command, and error output.",
+        "Do not perform manual object corrections outside the approved IM090 scope.",
+        "If rollback is required, follow the rollback instructions from the IM090, approved database backup/restore point, or requester/DBA guidance.",
+        "Do not retry with modified scripts, different users, or different package contents unless approved by the requester/DBA."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. RFC approval and dependency validation for RFC 4-B003ZMG.",
+        "2. Patch artifact staged/extracted.",
+        "3. SQL script execution output for fix39731462.sql.",
+        "4. Final validation showing successful execution and no ORA-, PLS-, SP2-, or compilation errors.",
+        "5. Confirmation that no credentials or sensitive values were exposed."
+      ].join("\n")
+    }
+  ];
+}
+
 function buildLaclsUruguayCommercialReceiptsDbPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   const targetHost = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
   const environmentLabel = selectedEnvironment || "<ENVIRONMENT>";
@@ -1461,6 +1574,7 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   if (hasDatabaseBackupPurgeInstructions(text)) return buildDatabaseBackupPurgePlan(text, selectedEnvironment);
   if (hasDatabaseDiscoveryInstructions(text)) return buildDatabaseDiscoveryPlan(text, selectedEnvironment);
+  if (hasLaclsFiscalEventsDbPatchUpdate(text)) return buildLaclsFiscalEventsDbPatchUpdatePlan(text, selectedEnvironment);
   if (hasLaclsColombiaMagneticMediaDbInstall(text)) return buildLaclsColombiaMagneticMediaDbPlan(text, selectedEnvironment);
   if (hasLaclsUruguayCommercialReceiptsDbInstall(text)) return buildLaclsUruguayCommercialReceiptsDbPlan(text, selectedEnvironment);
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
