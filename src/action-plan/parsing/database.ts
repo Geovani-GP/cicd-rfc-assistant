@@ -40,6 +40,7 @@ export function hasDatabaseInstructions(text: string) {
     hasLaclsFiscalEventsDbPatchUpdate(text) ||
     hasLaclsColombiaMagneticMediaDbInstall(text) ||
     hasLaclsUruguayCommercialReceiptsDbInstall(text) ||
+    hasDatabaseScriptInstallWithRestorePoint(text) ||
     hasDatabaseBackupPurgeInstructions(text) ||
     hasSqlInstructions(text) ||
     hasProfilePasswordLifeTimeRequest(text) ||
@@ -82,6 +83,46 @@ function uniqueValues(values: string[]) {
 
 function sqlScriptNames(text: string) {
   return uniqueValues(text.match(/\b[A-Z0-9_.$#-]+\.sql\b/gi) ?? []);
+}
+
+function hasDatabaseScriptInstallWithRestorePoint(text: string) {
+  return /\brestore_point\.sh\b/i.test(text) &&
+    /\bsqlplus\s+\/\s+as\s+sysdba\b/i.test(text) &&
+    /\b@[A-Z0-9_.#$-]+\.sql\b/i.test(text) &&
+    /(?:\bpdbsid\s+PDB[A-Z0-9_$#.-]+\b|\bPDB[A-Z0-9_$#.-]+\b)/i.test(text);
+}
+
+function databaseScriptInstallScript(text: string) {
+  return text.match(/@([A-Z0-9_.#$-]+\.sql)\b/i)?.[1] ??
+    sqlScriptNames(text)[0] ??
+    "<SCRIPT_NAME.sql>";
+}
+
+function databaseScriptInstallDirectory(text: string) {
+  return text.match(/\bcd\s+([/~A-Z0-9_.$#-][^\s\r\n]*)/i)?.[1] ?? "<SCRIPT_DIRECTORY>";
+}
+
+function databaseScriptInstallRestoreCommand(text: string) {
+  const match = text.match(/(\/usr\/local\/MAS\/ohsupg\/bin\/restore_point\.sh[\s\S]{0,160}?-pdbsid\s+PDB[A-Z0-9_$#.-]+)/i)?.[1];
+  return match?.replace(/\s+-\s+/g, " -").replace(/\s+/g, " ").trim() ??
+    "/usr/local/MAS/ohsupg/bin/restore_point.sh -mode create -tag <RFC_OR_TAG> -pdbsid <PDB_SID>";
+}
+
+function databaseScriptInstallPdb(text: string) {
+  return text.match(/\bpdbsid\s+(PDB[A-Z0-9_$#.-]+)\b/i)?.[1] ??
+    text.match(/\b(PDB[A-Z0-9_$#.-]+)\s+database\b/i)?.[1] ??
+    "<PDB_SID>";
+}
+
+function databaseScriptInstallExpectedObject(text: string) {
+  return text.match(/\b([A-Z0-9_$#.-]+\.[A-Z0-9_$#.-]+)\b(?=[\s\S]{0,80}(?:are|is)\s+created\s+successfully)/i)?.[1] ??
+    text.match(/\btable\s+\(?([A-Z0-9_$#.-]+\.[A-Z0-9_$#.-]+)\)?/i)?.[1] ??
+    "";
+}
+
+function databaseScriptInstallExpectedIntegration(text: string) {
+  return uniqueValues(text.match(/\b(?:IN|OUT|INT|IEWC|ICWC|ICWE)[A-Z0-9_-]*(?:_[A-Z0-9_-]+)+\b/gi) ?? [])
+    .find((item) => !/SCRIPT_INSTALLATION/i.test(item) && !/WO_Reception-TXN_Tables_Scripts/i.test(item)) ?? "";
 }
 
 function hasLaclsFiscalEventsDbPatchUpdate(text: string) {
@@ -368,6 +409,17 @@ function formatRestoreSql(pair: DatabaseBackupPurgePair) {
 }
 
 export function databaseConfigurationItems(text: string) {
+  if (hasDatabaseScriptInstallWithRestorePoint(text)) {
+    const expectedObject = databaseScriptInstallExpectedObject(text);
+    const expectedIntegration = databaseScriptInstallExpectedIntegration(text);
+    return uniqueValues([
+      `Script: ${databaseScriptInstallScript(text)}`,
+      `Target PDB: ${databaseScriptInstallPdb(text)}`,
+      expectedObject ? `Expected object: ${expectedObject}` : "",
+      expectedIntegration ? `Related integration/process: ${expectedIntegration}` : "",
+      `Restore point command: ${databaseScriptInstallRestoreCommand(text)}`
+    ].filter(Boolean));
+  }
   if (hasDatabaseBackupPurgeInstructions(text)) {
     const items = databaseBackupPurgePairs(text).flatMap((pair) => [
       `Table: ${pair.sourceTable}`,
@@ -544,6 +596,113 @@ function buildDatabaseComponentsPlan(text: string, selectedEnvironment: string):
         "Attach final object status validation.",
         "Attach error evidence and rollback evidence if applicable.",
         "Do not attach credential/password evidence."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildDatabaseScriptInstallWithRestorePointPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const targetHost = implementationTargetName(text) || databaseTargetName(text) || "<DATABASE_SERVER>";
+  const environmentLabel = selectedEnvironment || "<ENVIRONMENT>";
+  const scriptName = databaseScriptInstallScript(text);
+  const scriptDirectory = databaseScriptInstallDirectory(text);
+  const restoreCommand = databaseScriptInstallRestoreCommand(text);
+  const pdbSid = databaseScriptInstallPdb(text);
+  const expectedObject = databaseScriptInstallExpectedObject(text);
+  const integrationName = databaseScriptInstallExpectedIntegration(text);
+  const validationQuery = expectedObject.includes(".")
+    ? `SELECT owner,
+       object_name,
+       object_type,
+       status,
+       last_ddl_time
+FROM all_objects
+WHERE owner = '${expectedObject.split(".")[0].toUpperCase()}'
+  AND object_name = '${expectedObject.split(".")[1].toUpperCase()}';`
+    : "";
+
+  return [
+    {
+      id: "prerequisites",
+      title: "Prerequisites",
+      content: [
+        "Confirm the RFC is approved for database script installation.",
+        `Target environment:\n- ${environmentLabel}`,
+        `Target database/server:\n- ${targetHost}`,
+        `Target PDB:\n- ${pdbSid}`,
+        integrationName ? `Related integration/process:\n- ${integrationName}` : "",
+        expectedObject ? `Expected database object:\n- ${expectedObject}` : "",
+        `Required script:\n- ${scriptName}`,
+        `Approved server path:\n- ${scriptDirectory}`,
+        "Confirm the non-production reference RFC is Closed / Completed when the RFC provides one.",
+        "Confirm access to the database server and privileges to create the restore point and execute the script as SYSDBA.",
+        "Do not capture or expose database credential values in the Action Plan, SQL output, screenshots, or RFC evidence."
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "backup",
+      title: "Backup / Restore Point",
+      content: [
+        "Login to the target database server using the approved OS account.",
+        "Move to the script directory:",
+        scriptDirectory !== "<SCRIPT_DIRECTORY>" ? `cd ${scriptDirectory}` : "cd <SCRIPT_DIRECTORY>",
+        "Create the restore point before execution:",
+        restoreCommand,
+        "Capture restore point creation output as pre-change evidence."
+      ].join("\n\n")
+    },
+    {
+      id: "installation",
+      title: "Installation Steps",
+      content: [
+        "1. Confirm the script exists in the approved directory:",
+        `ls -l ${scriptName}`,
+        "2. Connect to SQL*Plus as SYSDBA:",
+        "sqlplus / as sysdba",
+        "3. Execute the script:",
+        `@${scriptName}`,
+        "4. Monitor the execution until completion.",
+        "5. Exit SQL*Plus:",
+        "EXIT;",
+        "6. Capture the full execution output/log."
+      ].join("\n\n")
+    },
+    {
+      id: "schedule",
+      title: "Schedule Activation",
+      content: "Not applicable for this database script installation. No application scheduler activation is requested.",
+      defaultIncluded: false
+    },
+    {
+      id: "validation",
+      title: "Validation",
+      content: [
+        "Confirm the script completed successfully without ORA-, PLS-, or SP2- errors.",
+        expectedObject ? `Validate the expected object was created in ${pdbSid}:\n- ${expectedObject}` : "Validate the expected database object was created in the target PDB.",
+        validationQuery ? ["Execute validation query:", validationQuery].join("\n\n") : "",
+        "If any error or missing object is detected, stop and escalate to the DBA/requester before closing the RFC."
+      ].filter(Boolean).join("\n\n")
+    },
+    {
+      id: "returnPoint",
+      title: "Return Point / Contingency",
+      content: [
+        "If the script fails, stop execution and capture the exact error output.",
+        "Do not apply manual corrections unless approved by the DBA/requester.",
+        "If rollback is required, use the restore point created before execution or follow DBA-approved recovery instructions.",
+        "Do not rerun the script with modified content unless the requester/DBA approves it."
+      ].join("\n")
+    },
+    {
+      id: "evidence",
+      title: "Evidence",
+      content: [
+        "Attach the following evidence to the RFC/change record:",
+        "1. RFC approval and non-production reference validation when applicable.",
+        "2. Restore point creation output.",
+        `3. Script execution output for ${scriptName}.`,
+        expectedObject ? `4. Final validation showing ${expectedObject} was created successfully.` : "4. Final validation showing the expected database object was created successfully.",
+        "5. Confirmation that no credentials or sensitive values were exposed."
       ].join("\n")
     }
   ];
@@ -1577,6 +1736,7 @@ export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string):
   if (hasLaclsFiscalEventsDbPatchUpdate(text)) return buildLaclsFiscalEventsDbPatchUpdatePlan(text, selectedEnvironment);
   if (hasLaclsColombiaMagneticMediaDbInstall(text)) return buildLaclsColombiaMagneticMediaDbPlan(text, selectedEnvironment);
   if (hasLaclsUruguayCommercialReceiptsDbInstall(text)) return buildLaclsUruguayCommercialReceiptsDbPlan(text, selectedEnvironment);
+  if (hasDatabaseScriptInstallWithRestorePoint(text)) return buildDatabaseScriptInstallWithRestorePointPlan(text, selectedEnvironment);
   if (hasProfilePasswordLifeTimeRequest(text)) return buildProfilePasswordLifeTimePlan(text, selectedEnvironment);
   if (hasDatabaseComponentInstall(text)) return buildDatabaseComponentsPlan(text, selectedEnvironment);
   if (hasDatabaseUnlockWithOicConnectionPasswordRequest(text)) return buildDatabaseUnlockWithOicConnectionPasswordPlan(text, selectedEnvironment);

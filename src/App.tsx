@@ -3398,6 +3398,30 @@ export function App() {
     return match?.[1]?.replace(/_/g, ".") ?? undefined;
   }
 
+  function isGeneratedBackupCsvArtifact(value: string) {
+    return /\.csv$/i.test(value) && /(?:^|[_\s-])(?:BKP|BACKUP)(?:[_\s.-]|$)/i.test(value);
+  }
+
+  function normalizeLookupCsvBase(value: string) {
+    const clean = value
+      .trim()
+      .replace(/\.csv$/i, "")
+      .replace(/[_\s-](?:PROD|PRODUCTION|PR|TEST|TE|DEV|DE|REGRESSION|RE)$/i, "");
+    const scopedMatch = clean.match(/\b(?:OUT|IN|INT|GB[A-Z0-9]*|ICWC|ICWE|IEWC)[A-Z0-9_-]*(?:_[A-Z0-9_-]+)+\b/i);
+    return normalizeEnvironmentName(scopedMatch?.[0] ?? clean);
+  }
+
+  function csvArtifactKeysMatch(documentName: string, loadedName: string) {
+    if (!/\.csv$/i.test(documentName) || !/\.csv$/i.test(loadedName)) return false;
+    const documentKey = normalizeLookupCsvBase(documentName);
+    const loadedKey = normalizeLookupCsvBase(loadedName);
+    if (!documentKey || !loadedKey) return false;
+    if (documentKey === loadedKey) return true;
+    const shorter = documentKey.length <= loadedKey.length ? documentKey : loadedKey;
+    const longer = documentKey.length > loadedKey.length ? documentKey : loadedKey;
+    return shorter.length >= 14 && longer.includes(shorter);
+  }
+
   function dedupeArtifactNames(items: string[]) {
     return Array.from(new Map(items.filter(Boolean).map((item) => [normalizeArtifactIdentityKey(item), item])).values());
   }
@@ -3519,13 +3543,13 @@ export function App() {
   function missingRequiredCsvArtifacts(text: string) {
     const effectiveProduct = effectiveActionProductForText(text);
     if (effectiveProduct !== "OIC" || oicManualScopeIgnoresLookups(text)) return [];
-    const csvArtifacts = dedupeArtifactNames(installableArtifactNames(text).filter((artifact) => /\.csv$/i.test(artifact)));
+    const csvArtifacts = dedupeArtifactNames(installableArtifactNames(text).filter((artifact) => /\.csv$/i.test(artifact) && !isGeneratedBackupCsvArtifact(artifact)));
     if (!csvArtifacts.length) return [];
-    const loadedCsvKeys = new Set([
-      ...actionArtifactFiles.filter((file) => /\.csv$/i.test(file.name)).map((file) => normalizeArtifactIdentityKey(file.name)),
-      ...artifactLinesFromText(artifactText).filter((artifact) => /\.csv$/i.test(artifact)).map(normalizeArtifactIdentityKey)
+    const loadedCsvArtifacts = dedupeArtifactNames([
+      ...actionArtifactFiles.filter((file) => /\.csv$/i.test(file.name)).map((file) => file.name),
+      ...artifactLinesFromText(artifactText).filter((artifact) => /\.csv$/i.test(artifact))
     ]);
-    return csvArtifacts.filter((artifact) => !loadedCsvKeys.has(normalizeArtifactIdentityKey(artifact)));
+    return csvArtifacts.filter((artifact) => !loadedCsvArtifacts.some((loaded) => csvArtifactKeysMatch(artifact, loaded)));
   }
 
   function oicTargetConsoleMismatchWarnings(text: string) {
@@ -3751,14 +3775,15 @@ export function App() {
       const candidateKey = normalizeArtifactCompareKey(candidate);
       const match = inspectedArtifacts.find((artifact) => {
         const artifactKey = normalizeArtifactCompareKey(artifact);
-        return artifactKeysMatch(candidateKey, artifactKey);
+        return csvArtifactKeysMatch(candidate, artifact) || artifactKeysMatch(candidateKey, artifactKey);
       });
       return match ? [match] : [];
     });
     const unmatchedRequiredFiles = candidates.filter((candidate) => {
       if (!/\.(?:iar|par|xml|wsdl|csv|zip|jar|sql|asc)$/i.test(candidate)) return false;
+      if (isGeneratedBackupCsvArtifact(candidate)) return false;
       const candidateKey = normalizeArtifactCompareKey(candidate);
-      return !inspectedArtifacts.some((artifact) => artifactKeysMatch(candidateKey, normalizeArtifactCompareKey(artifact)));
+      return !inspectedArtifacts.some((artifact) => csvArtifactKeysMatch(candidate, artifact) || artifactKeysMatch(candidateKey, normalizeArtifactCompareKey(artifact)));
     });
     return repaired.length ? dedupeArtifactNames([...repaired, ...unmatchedRequiredFiles, ...inspectedArtifacts]) : dedupeArtifactNames([...unmatchedRequiredFiles, ...inspectedArtifacts]);
   }
@@ -3792,7 +3817,11 @@ export function App() {
       /\b(?:OIC|connector|conector|connection)\b/i.test(sourceText) &&
       /\b(?:password|contrase(?:n|ñ)a|credentials?)\b/i.test(sourceText);
     if (isDbUnlockOicConnectionPassword) return [];
-    const isScopedLaclsDbInstall = isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall;
+    const isDbScriptInstallWithRestorePoint = effectiveProduct === "Base de datos" &&
+      /\brestore_point\.sh\b/i.test(sourceText) &&
+      /\bsqlplus\s+\/\s+as\s+sysdba\b/i.test(sourceText) &&
+      /\b@[A-Z0-9_.#$-]+\.sql\b/i.test(sourceText);
+    const isScopedDbInstall = isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall || isDbScriptInstallWithRestorePoint;
     if (isOdiProduct(effectiveProduct) && hasOdiJeeAgentRemediationSignals(sourceText)) return [];
     if (effectiveProduct === "OIC" && runtimeConfigurationItemsForProduct(effectiveProduct, sourceText).length && !installableArtifactNames(sourceText).length) {
       return [];
@@ -3800,9 +3829,10 @@ export function App() {
     const rawDocumentItems = effectiveProduct === "OIC" ? repairedArtifactsForActionPlan(actionDocumentArtifactNames()) : actionDocumentArtifactNames();
     const documentItems = rawDocumentItems
       .map((item) => canonicalOdiArtifactName(item, sourceText, effectiveProduct))
-      .filter((item) => !isScopedLaclsDbInstall || /\.sql$/i.test(item) || /^LACLS Magnetic Media DB\.zip$/i.test(item) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item));
+      .filter((item) => !(effectiveProduct === "OIC" && isGeneratedBackupCsvArtifact(item)))
+      .filter((item) => !isScopedDbInstall || /\.sql$/i.test(item) || /^LACLS Magnetic Media DB\.zip$/i.test(item) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item));
     const loadedItems = actionLoadedInstallableArtifactItems()
-      .filter((item) => !isScopedLaclsDbInstall || /\.sql$/i.test(item.source) || /^LACLS Magnetic Media DB\.zip$/i.test(item.source) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item.source));
+      .filter((item) => !isScopedDbInstall || /\.sql$/i.test(item.source) || /^LACLS Magnetic Media DB\.zip$/i.test(item.source) || /^LACLS_UY_COMMERCIAL_RECEIPTS_DB\.zip$/i.test(item.source));
     if (isLaclsColombiaDbInstall) {
       const hasDbPackage = loadedItems.some((item) => /^LACLS Magnetic Media DB\.zip$/i.test(item.source));
       if (hasDbPackage && !documentItems.some((item) => /^LACLS Magnetic Media DB\.zip$/i.test(item))) {
@@ -3822,7 +3852,9 @@ export function App() {
       const match = loadedItems.find((item) => {
         const loadedValue = documentIsFile ? item.source : item.name;
         const loadedKey = documentIsFile ? normalizeArtifactIdentityKey(loadedValue) : normalizeArtifactCompareKey(loadedValue);
-        const isMatch = artifactKeysMatch(documentKey, loadedKey);
+        const isMatch = documentIsFile && /\.csv$/i.test(documentName)
+          ? csvArtifactKeysMatch(documentName, loadedValue)
+          : artifactKeysMatch(documentKey, loadedKey);
         if (isMatch) matchedKeys.add(`${normalizeArtifactIdentityKey(item.source)}-${item.source}`);
         return isMatch;
       });
@@ -3882,7 +3914,11 @@ export function App() {
       /\bGB_[A-Z0-9_$#.-]+\b/i.test(sourceText) &&
       /\b(?:OIC|connector|conector|connection)\b/i.test(sourceText) &&
       /\b(?:password|contrase(?:n|ñ)a|credentials?)\b/i.test(sourceText);
-    if (isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall || isDbUnlockOicConnectionPassword) return "";
+    const isDbScriptInstallWithRestorePoint = effectiveProduct === "Base de datos" &&
+      /\brestore_point\.sh\b/i.test(sourceText) &&
+      /\bsqlplus\s+\/\s+as\s+sysdba\b/i.test(sourceText) &&
+      /\b@[A-Z0-9_.#$-]+\.sql\b/i.test(sourceText);
+    if (isLaclsColombiaDbInstall || isLaclsUruguayCommercialReceiptsDbInstall || isDbUnlockOicConnectionPassword || isDbScriptInstallWithRestorePoint) return "";
     const comparisonRows = actionArtifactComparisonRows();
     const hasOicParPackage = effectiveProduct === "OIC" &&
       (actionArtifactFiles.some((file) => /\.par$/i.test(file.name)) || installableArtifactNames(sourceText).some((artifact) => /\.par$/i.test(artifact)));
