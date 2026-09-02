@@ -37,6 +37,12 @@
       "hint": "Template reference: Oracle Database script execution with restore point. Verify backups, create restore point, switch to target PDB, check invalid objects, execute scripts in order, validate invalid objects, and release evidence."
     },
     {
+      "id": "db-create-schemas",
+      "product": "Base de datos",
+      "label": "DB - Create Schemas",
+      "hint": "Template reference: Oracle Database new schema creation. Confirm target PDB/service, approved schema names, tablespace, profile limits, quota and least-privilege grants. Verify users, profiles and roles do not already exist; create approved profiles, roles and users; validate account status, profile, quota, roles and system privileges. Share initial passwords only through the approved secure channel. Never include passwords in the Action Plan, logs or evidence."
+    },
+    {
       "id": "oic-reset-password",
       "product": "OIC",
       "label": "OIC - Reset Password",

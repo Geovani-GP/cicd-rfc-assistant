@@ -210,6 +210,19 @@ declare global {
         clientToken?: string;
       }) => Promise<RuntimeKnowledgeCatalog>;
       rollbackKnowledgePackage: () => Promise<RuntimeKnowledgeCatalog | null>;
+      getAppUpdateStatus: () => Promise<{
+        state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "not-available" | "error";
+        version?: string;
+        percent?: number;
+        error?: string;
+      }>;
+      checkAppUpdate: () => Promise<{
+        state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "not-available" | "error";
+        version?: string;
+        percent?: number;
+        error?: string;
+      }>;
+      restartToInstallUpdate: () => Promise<boolean>;
       saveActionPlanText: (payload: {
         rfc?: string;
         outputDirectory?: string;

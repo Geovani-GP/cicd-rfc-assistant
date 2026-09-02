@@ -1,6 +1,6 @@
 {
   "name": "cicd-rfc-assistant",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Desktop assistant for OIC CI/CD RFC package preparation.",
   "author": "CSS Team Mex / EU",
@@ -17,15 +17,17 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
-    "dist:all": "npm run build && electron-builder --mac --win --linux"
+    "dist:all": "npm run build && electron-builder --mac --win --linux",
+    "release:build": "npm run build && electron-builder --mac --win --linux --publish never"
   },
   "dependencies": {
-    "vite": "^7.1.10",
-    "typescript": "^5.9.3",
+    "concurrently": "^9.2.1",
+    "electron-updater": "^6.8.9",
+    "lucide-react": "^0.545.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "lucide-react": "^0.545.0",
-    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.10",
     "wait-on": "^9.0.1"
   },
   "devDependencies": {
@@ -46,6 +48,12 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://cicd-rfc-converters-updates.geovani-cicd-rfc.workers.dev/app"
+      }
+    ],
     "extraResources": [
       {
         "from": "build/icon.png",
@@ -53,7 +61,7 @@
       }
     ],
     "mac": {
-      "target": "dmg",
+      "target": ["dmg", "zip"],
       "icon": "build/icon.icns",
       "extendInfo": {
         "CFBundleDisplayName": "CI/CD Assistant"

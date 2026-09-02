@@ -19,6 +19,11 @@ function hasDatabasePasswordResetRequest(text: string) {
     /\bGB_[A-Z0-9_$#.-]+\b/i.test(text);
 }
 
+function hasDatabaseSchemaCreationRequest(text: string) {
+  return /\b(?:new\s+(?:database\s+)?schemas?|create\s+(?:new\s+)?schemas?)\b/i.test(text) ||
+    /\bCREATE\s+USER\s+[A-Z][A-Z0-9_$#.-]+\b/i.test(text);
+}
+
 function hasDatabaseUnlockWithOicConnectionPasswordRequest(text: string) {
   return /\bunlock\b[\s\S]{0,120}\b(?:user|database|account)\b|\bACCOUNT\s+UNLOCK\b/i.test(text) &&
     /\bGB_[A-Z0-9_$#.-]+\b/i.test(text) &&
@@ -36,7 +41,8 @@ export function hasDatabaseDiscoveryInstructions(text: string) {
 }
 
 export function hasDatabaseInstructions(text: string) {
-  return hasDatabaseDiscoveryInstructions(text) ||
+  return hasDatabaseSchemaCreationRequest(text) ||
+    hasDatabaseDiscoveryInstructions(text) ||
     hasLaclsFiscalEventsDbPatchUpdate(text) ||
     hasLaclsColombiaMagneticMediaDbInstall(text) ||
     hasLaclsUruguayCommercialReceiptsDbInstall(text) ||
@@ -61,6 +67,18 @@ function databaseUserNames(text: string) {
     ...Array.from(text.matchAll(/\bGB_[A-Z0-9_$#.-]+\b/gi)).map((match) => match[0])
   ];
   return Array.from(new Map(matches.map((name) => [name.toUpperCase(), name])).values());
+}
+
+function createdSchemaNames(text: string) {
+  return uniqueValues(Array.from(text.matchAll(/\bCREATE\s+USER\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]));
+}
+
+function createdProfileNames(text: string) {
+  return uniqueValues(Array.from(text.matchAll(/\bCREATE\s+PROFILE\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]));
+}
+
+function createdRoleNames(text: string) {
+  return uniqueValues(Array.from(text.matchAll(/\bCREATE\s+ROLE\s+([A-Z0-9_$#.-]+)/gi)).map((match) => match[1]));
 }
 
 function oicConnectionNamesFromDatabaseRequest(text: string) {
@@ -1618,6 +1636,69 @@ function databaseReturnPointGuidance(kind: string, restoreMentioned: boolean) {
   return "If execution fails, stop the change, capture the error, and consult the DBA/technical team before retrying.";
 }
 
+function buildDatabaseSchemaCreationPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  const schemas = createdSchemaNames(text);
+  const profiles = createdProfileNames(text);
+  const roles = createdRoleNames(text);
+  const schemaList = schemas.length ? asBullets(schemas) : "- <SCHEMA_1>\n- <SCHEMA_2>";
+  const profileList = profiles.length ? asBullets(profiles) : "- <PROFILE_1>\n- <PROFILE_2>";
+  const roleList = roles.length ? asBullets(roles) : "- <ROLE_1>\n- <ROLE_2>";
+  const quotedSchemas = schemas.length ? schemas.map((name) => `'${name.toUpperCase()}'`).join(", ") : "'<SCHEMA_NAME>'";
+  const quotedProfiles = profiles.length ? profiles.map((name) => `'${name.toUpperCase()}'`).join(", ") : "'<PROFILE_NAME>'";
+  const quotedRoles = roles.length ? roles.map((name) => `'${name.toUpperCase()}'`).join(", ") : "'<ROLE_NAME>'";
+  const userStatements = schemas.length
+    ? schemas.map((schema, index) => `CREATE USER ${schema}\nIDENTIFIED BY \"<SECURE_PASSWORD_${index + 1}>\"\nDEFAULT TABLESPACE DATA\nPROFILE ${profiles[index] ?? "<APPROVED_PROFILE>"};\n\nGRANT CREATE SESSION TO ${schema};\nALTER USER ${schema} QUOTA <APPROVED_QUOTA> ON DATA;\nGRANT ${roles[index] ?? "<APPROVED_DDL_ROLE>"} TO ${schema};`).join("\n\n")
+    : "CREATE USER <SCHEMA_NAME> IDENTIFIED BY \"<SECURE_PASSWORD>\" DEFAULT TABLESPACE DATA PROFILE <APPROVED_PROFILE>;";
+
+  return [
+    { id: "prerequisites", title: "Prerequisites", content: [
+      "Confirm the RFC is approved for new schema creation in the target database.",
+      `Target environment:\n- ${selectedEnvironment || "<Environment>"}`,
+      "Confirm the exact ATP PDB/service before execution; do not rely on the environment name alone.",
+      `Requested schema(s):\n${schemaList}`,
+      `Requested profile(s):\n${profileList}`,
+      `Requested role(s):\n${roleList}`,
+      "Confirm the approved tablespace, quota, profile limits, and least-privilege grant list with the DBA and schema owner.",
+      "Obtain approval for CREATE JOB or any elevated privilege before granting it.",
+      "Generate initial passwords only in the approved secure channel. Do not put password values in the RFC, SQL text, logs, screenshots, Action Plan, or evidence."
+    ].join("\n\n") },
+    { id: "preAnalysis", title: "Pre-Execution Validation", content: [
+      "Connect using an approved DBA account and validate the target container/service:", "SHOW CON_NAME;",
+      "Validate the tablespace and quota policy before creating users.",
+      "Verify that none of the requested users, profiles, or roles already exists. Execute:",
+      `SELECT username, account_status, profile, default_tablespace\nFROM dba_users\nWHERE username IN (${quotedSchemas})\nORDER BY username;\n\nSELECT profile\nFROM dba_profiles\nWHERE profile IN (${quotedProfiles})\nORDER BY profile;\n\nSELECT role\nFROM dba_roles\nWHERE role IN (${quotedRoles})\nORDER BY role;`,
+      "Expected result: no rows for each requested object. If any object exists, stop and obtain DBA/request-owner instructions; do not overwrite or alter existing objects."
+    ].join("\n\n") },
+    { id: "installation", title: "Schema Creation", content: [
+      "Execute the DBA-approved script in this order: create profiles, create roles, create users, grant CREATE SESSION, assign quota, grant approved roles and system privileges.",
+      "Use secure runtime input for initial passwords; redact terminal history/output if the execution tool can display them.",
+      "User creation pattern (replace placeholders only during the approved secure session):", userStatements,
+      "Apply only the privileges explicitly approved in the RFC attachment. Do not add CREATE ANY, DBA, or administrator privileges."
+    ].join("\n\n") },
+    { id: "validation", title: "Validation", content: [
+      "Validate the new schemas, profiles, tablespaces and account status:",
+      `SELECT username, account_status, profile, default_tablespace\nFROM dba_users\nWHERE username IN (${quotedSchemas})\nORDER BY username;`,
+      "Validate quotas, roles and granted system privileges against the approved request:",
+      `SELECT username, tablespace_name, max_bytes\nFROM dba_ts_quotas\nWHERE username IN (${quotedSchemas})\nORDER BY username, tablespace_name;\n\nSELECT grantee, granted_role\nFROM dba_role_privs\nWHERE grantee IN (${quotedSchemas})\nORDER BY grantee, granted_role;\n\nSELECT grantee, privilege\nFROM dba_sys_privs\nWHERE grantee IN (${quotedSchemas}, ${quotedRoles})\nORDER BY grantee, privilege;`,
+      "Perform a secure connection test for each schema and confirm the accounts are OPEN. Do not capture password values in evidence."
+    ].join("\n\n") },
+    { id: "returnPoint", title: "Return Point / Contingency", content: [
+      "If any profile, role, user creation, grant, or validation step fails, stop and capture the Oracle error without exposing secrets.",
+      "For unused newly created schemas, backout may revoke the newly granted roles/privileges and disable or remove the account only after DBA and owner approval.",
+      "Never execute DROP USER ... CASCADE automatically. If objects or data exist, block the account and escalate for a DBA-approved recovery plan.",
+      "Do not attempt to recover or disclose prior password values."
+    ].join("\n\n") },
+    { id: "evidence", title: "Evidence", content: [
+      "Attach the following evidence to the RFC/change record:",
+      "1. RFC approval and target PDB/service confirmation.",
+      "2. Pre-execution checks showing the requested users, profiles and roles did not exist.",
+      "3. Redacted execution result for profile, role, user, quota and grant creation.",
+      "4. Final DBA_USERS, DBA_TS_QUOTAS, DBA_ROLE_PRIVS and DBA_SYS_PRIVS validation.",
+      "5. Secure confirmation of initial credential delivery and first-login validation, without password values."
+    ].join("\n") }
+  ];
+}
+
 function buildProfilePasswordLifeTimePlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
   const profiles = databaseProfileCandidates(text);
   const hasListedSchemaNames = profiles.some((profile) => /^[A-Z][A-Z0-9_$#.-]*(?:_[A-Z0-9_$#.-]+)+$/i.test(profile));
@@ -1731,6 +1812,7 @@ LIMIT PASSWORD_LIFE_TIME 180;`).join("\n\n");
 }
 
 export function buildDatabaseSqlPlan(text: string, selectedEnvironment: string): ManualActionPhase[] {
+  if (hasDatabaseSchemaCreationRequest(text)) return buildDatabaseSchemaCreationPlan(text, selectedEnvironment);
   if (hasDatabaseBackupPurgeInstructions(text)) return buildDatabaseBackupPurgePlan(text, selectedEnvironment);
   if (hasDatabaseDiscoveryInstructions(text)) return buildDatabaseDiscoveryPlan(text, selectedEnvironment);
   if (hasLaclsFiscalEventsDbPatchUpdate(text)) return buildLaclsFiscalEventsDbPatchUpdatePlan(text, selectedEnvironment);

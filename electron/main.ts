@@ -7,11 +7,56 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { inflateRawSync, inflateSync } from "node:zlib";
+import electronUpdater from "electron-updater";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const maxActionDocumentTextLength = 120000;
+const { autoUpdater } = electronUpdater;
+
+type AppUpdateStatus = {
+  state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "not-available" | "error";
+  version?: string;
+  percent?: number;
+  error?: string;
+};
+
+let appUpdateStatus: AppUpdateStatus = { state: "idle" };
+
+function setAppUpdateStatus(next: AppUpdateStatus) {
+  appUpdateStatus = next;
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("app-update-status", appUpdateStatus);
+  }
+}
+
+function configureAppUpdater() {
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("checking-for-update", () => setAppUpdateStatus({ state: "checking" }));
+  autoUpdater.on("update-available", (info) => setAppUpdateStatus({ state: "available", version: info.version }));
+  autoUpdater.on("download-progress", (progress) => setAppUpdateStatus({ state: "downloading", percent: Math.round(progress.percent) }));
+  autoUpdater.on("update-not-available", () => setAppUpdateStatus({ state: "not-available" }));
+  autoUpdater.on("error", (error) => setAppUpdateStatus({ state: "error", error: error.message }));
+  autoUpdater.on("update-downloaded", async (info) => {
+    setAppUpdateStatus({ state: "downloaded", version: info.version, percent: 100 });
+    const response = await dialog.showMessageBox({
+      type: "info",
+      buttons: ["Reiniciar y actualizar", "Más tarde"],
+      defaultId: 0,
+      cancelId: 1,
+      title: appDisplayName,
+      message: `La versión ${info.version} está lista para instalarse.`,
+      detail: "La aplicación se cerrará y aplicará la actualización de forma segura."
+    });
+    if (response.response === 0) autoUpdater.quitAndInstall();
+  });
+
+  void autoUpdater.checkForUpdates().catch(() => undefined);
+}
 
 type RepositoryInfo = {
   name: string;
@@ -335,6 +380,7 @@ app.whenReady().then(async () => {
     app.dock?.setIcon(nativeImage.createFromPath(appIconPath()));
   }
   createWindow();
+  configureAppUpdater();
 });
 app.whenReady().then(() => {
   const menu = Menu.buildFromTemplate([
@@ -2307,5 +2353,19 @@ ipcMain.handle("open-external", async (_event, url: string) => {
 
 ipcMain.handle("show-item-in-folder", async (_event, path: string) => {
   shell.showItemInFolder(path);
+  return true;
+});
+
+ipcMain.handle("get-app-update-status", () => appUpdateStatus);
+
+ipcMain.handle("check-app-update", async () => {
+  if (!app.isPackaged) return { state: "idle", error: "Las actualizaciones se comprueban desde una aplicación instalada." } satisfies AppUpdateStatus;
+  await autoUpdater.checkForUpdates();
+  return appUpdateStatus;
+});
+
+ipcMain.handle("restart-to-install-update", () => {
+  if (appUpdateStatus.state !== "downloaded") return false;
+  autoUpdater.quitAndInstall();
   return true;
 });

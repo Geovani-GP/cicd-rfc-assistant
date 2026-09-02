@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "knowledgeVersion": "2026.05.24-01",
+  "knowledgeVersion": "2026.09.02-01",
   "source": "embedded",
   "minAppVersion": "0.1.0",
   "products": [
@@ -21,9 +21,9 @@
     {
       "id": "database",
       "name": "Oracle Database",
-      "version": "2026.05.19-02",
-      "previous": "2026.05.19-01",
-      "modules": ["manual-action-plan", "sql-safety"]
+      "version": "2026.09.02-01",
+      "previous": "2026.05.19-02",
+      "modules": ["manual-action-plan", "sql-safety", "schema-creation"]
     },
     {
       "id": "odi",
